@@ -24,18 +24,6 @@ version = 2
 if (len(sys.argv) > 5):
 	version = int(sys.argv[5])
 
-# convert hue to closest wavelength match (linear)
-#def hue_to_wavelength(hue):
-#	# spectral colors
-#	if (hue <= 240):
-#		w = 625 - hue * 175/240 # using wavelengths 450-625
-#		return int(w) # round off
-#	# extra-spectral colors (purple/magenta/pink)
-#	else:
-#		r = hue/120 - 2
-#		b = -hue/120 + 3
-#		return [r, b]
-
 # non-linear (piecewise) version based on sRGB primaries
 def hue_to_wavelength(hue):
 	#print(hue)
@@ -54,11 +42,9 @@ def hue_to_wavelength(hue):
 	# blue-violet: 240-269 -> 470-400
 	elif (240 <= hue < 270):
 		w = 470 - (hue - 240) * (470 - 420)/30
-	# purple-magenta: 270-360
+	# purple-magenta: 270-360 -- just convert it to RGB and use the R and B values
 	else:
-		r = hue/120 - 2
-		b = -hue/120 + 3
-		return [r, b]
+		return colorsys.hls_to_rgb(hue / 360, 0.5, 1)
 #	print(w)
 	return w
 
@@ -138,214 +124,198 @@ def wl_to_rgb_1(wl, l, m, s):
 # less accurate version: cone response ratios
 # we find the wavelengths that produce ratios matching those for the sRGB primaries and
 # secondaries in human vision, then use those to convert the wavelength to a hue as the
-# reverse of the piecewise hue_to_wavelength. To account for differences in the range of
-# ratios depending on LM overlap, we find the ratios at the L and M peaks for human vision
-# and the target and use them to scale the "red", "yellow" and "green" ratios to the
-# target's range.
+# reverse of the piecewise hue_to_wavelength. The current version uses the sensitivity
+# of each cone relative to all three and finds the closest match for these three values
+# between 300 and 700 nm.
 # When used with the images from studies that used CVS (see also "Experimental evidence that
 # primate trichromacy is well suited for detecting primate social colour signals", Hiramatsu
-# et al. 2017) this version gives results very similar to the actual CVS output shown in these
+# et al. 2017) this version gives results similar to the actual CVS output shown in these
 # papers besides not accounting for saturation. Melin et al. says CVS uses a table of
-# "relative sensitivities", so my method is probably roughly what it does besides using
-# fewer points and more linear interpolation.
-# Note that I've used the Stockton and Sharpe values of 440-540-565 instead of
-# 420-530-560 as used in the studies, so using these values produces a red-shifted image.
-# (Using the Stockton and Sharpe values produces a nearly 1:1 transformation.)
-# A cone spacing of less than 10 nm usually produces a math overflow error. Fortunately there
-# are not many species with this kind of arrangement (but there are some).
+# "relative sensitivities", so my method should be similar to what it does besides using
+# fewer points and more linear interpolation. However, the location of "yellow" is far more
+# red-shifted, resulting in a green/blue shift where CVS output shows a red shift.
+# Note that I've used the Stockton and Sharpe values of 440-540-565 whereas the studies
+# assume 420-530-560 is the unaltered default. Inputting these values produces a red-shifted
+# image. (Using the Stockton and Sharpe values produces a 1:1 transformation, as it
+# should.)
+# In earlier versions, a cone spacing of less than about 8-10 nm (as in uakari vision,
+# 420-550-556) usually produced a math overflow error. Now the program will run with this
+# type of input but produces a counterintuitive result due to "yellow" being so red-shifted
+# that it crosses "red".
+# The results are probably not accurate for marsupial-type vision with "yellow-green",
+# "cyan" and UV cones (leaving aside the obvious UV issue). Arrese et al. give the primary
+# wavelengths for the fat-tailed dunnart as 350, 450 and 620, but inputting its sensitivities
+# (363-509-535) gives "red" as 580.5 and "green" as 520.
+
+# match wavelength to sensitivity ratios
+def find_match(w, l, m, s):
+	lp = wl_to_s(w, 565) / (wl_to_s(w, 565) + wl_to_s(w, 540) + wl_to_s(w, 440))
+	mp = wl_to_s(w, 540) / (wl_to_s(w, 565) + wl_to_s(w, 540) + wl_to_s(w, 440))
+	sp = wl_to_s(w, 440) / (wl_to_s(w, 565) + wl_to_s(w, 540) + wl_to_s(w, 440))
+	
+	p0 = 700
+	p1 = 300
+	
+	while (abs(lp - wl_to_s(p0, l) / (wl_to_s(p0, l) + wl_to_s(p0, m) + wl_to_s(p0, s)))
+		+ abs(mp - wl_to_s(p0, m) / (wl_to_s(p0, l) + wl_to_s(p0, m) + wl_to_s(p0, s)))
+		+ abs(sp - wl_to_s(p0, s) / (wl_to_s(p0, l) + wl_to_s(p0, m) + wl_to_s(p0, s))) > 0.001
+		and p0 > 300):
+		p0 -= 1
+	while (abs(lp - wl_to_s(p1, l) / (wl_to_s(p1, l) + wl_to_s(p1, m) + wl_to_s(p1, s)))
+		+ abs(mp - wl_to_s(p1, m) / (wl_to_s(p1, l) + wl_to_s(p1, m) + wl_to_s(p1, s)))
+		+ abs(sp - wl_to_s(p1, s) / (wl_to_s(p1, l) + wl_to_s(p1, m) + wl_to_s(p1, s))) > 0.001
+		and p1 < 700):
+		p1 += 1
+	# lower precision
+	if (p0 == 300 or p1 == 700):
+		print("0.005")
+		p0 = 700
+		p1 = 300
+		while (abs(lp - wl_to_s(p0, l) / (wl_to_s(p0, l) + wl_to_s(p0, m) + wl_to_s(p0, s)))
+			+ abs(mp - wl_to_s(p0, m) / (wl_to_s(p0, l) + wl_to_s(p0, m) + wl_to_s(p0, s)))
+			+ abs(sp - wl_to_s(p0, s) / (wl_to_s(p0, l) + wl_to_s(p0, m) + wl_to_s(p0, s))) > 0.005
+			and p0 > 300):
+			p0 -= 1
+		while (abs(lp - wl_to_s(p1, l) / (wl_to_s(p1, l) + wl_to_s(p1, m) + wl_to_s(p1, s)))
+			+ abs(mp - wl_to_s(p1, m) / (wl_to_s(p1, l) + wl_to_s(p1, m) + wl_to_s(p1, s)))
+			+ abs(sp - wl_to_s(p1, s) / (wl_to_s(p1, l) + wl_to_s(p1, m) + wl_to_s(p1, s))) > 0.005
+			and p1 < 700):
+			p1 += 1
+	# lower precision
+	if (p0 == 300 or p1 == 700):
+		print("0.01")
+		p0 = 700
+		p1 = 300
+		while (abs(lp - wl_to_s(p0, l) / (wl_to_s(p0, l) + wl_to_s(p0, m) + wl_to_s(p0, s)))
+			+ abs(mp - wl_to_s(p0, m) / (wl_to_s(p0, l) + wl_to_s(p0, m) + wl_to_s(p0, s)))
+			+ abs(sp - wl_to_s(p0, s) / (wl_to_s(p0, l) + wl_to_s(p0, m) + wl_to_s(p0, s))) > 0.01
+			and p0 > 300):
+			p0 -= 1
+		while (abs(lp - wl_to_s(p1, l) / (wl_to_s(p1, l) + wl_to_s(p1, m) + wl_to_s(p1, s)))
+			+ abs(mp - wl_to_s(p1, m) / (wl_to_s(p1, l) + wl_to_s(p1, m) + wl_to_s(p1, s)))
+			+ abs(sp - wl_to_s(p1, s) / (wl_to_s(p1, l) + wl_to_s(p1, m) + wl_to_s(p1, s))) > 0.01
+			and p1 < 700):
+			p1 += 1
+	# lower precision
+	if (p0 == 300 or p1 == 700):
+		print("0.05")
+		p0 = 700
+		p1 = 300
+		while (abs(lp - wl_to_s(p0, l) / (wl_to_s(p0, l) + wl_to_s(p0, m) + wl_to_s(p0, s)))
+			+ abs(mp - wl_to_s(p0, m) / (wl_to_s(p0, l) + wl_to_s(p0, m) + wl_to_s(p0, s)))
+			+ abs(sp - wl_to_s(p0, s) / (wl_to_s(p0, l) + wl_to_s(p0, m) + wl_to_s(p0, s))) > 0.05
+			and p0 > 300):
+			p0 -= 1
+		while (abs(lp - wl_to_s(p1, l) / (wl_to_s(p1, l) + wl_to_s(p1, m) + wl_to_s(p1, s)))
+			+ abs(mp - wl_to_s(p1, m) / (wl_to_s(p1, l) + wl_to_s(p1, m) + wl_to_s(p1, s)))
+			+ abs(sp - wl_to_s(p1, s) / (wl_to_s(p1, l) + wl_to_s(p1, m) + wl_to_s(p1, s))) > 0.05
+			and p1 < 700):
+			p1 += 1
+	# lower precision
+	if (p0 == 300 or p1 == 700):
+		print("0.1")
+		p0 = 700
+		p1 = 300
+		while (abs(lp - wl_to_s(p0, l) / (wl_to_s(p0, l) + wl_to_s(p0, m) + wl_to_s(p0, s)))
+			+ abs(mp - wl_to_s(p0, m) / (wl_to_s(p0, l) + wl_to_s(p0, m) + wl_to_s(p0, s)))
+			+ abs(sp - wl_to_s(p0, s) / (wl_to_s(p0, l) + wl_to_s(p0, m) + wl_to_s(p0, s))) > 0.1
+			and p0 > 300):
+			p0 -= 1
+		while (abs(lp - wl_to_s(p1, l) / (wl_to_s(p1, l) + wl_to_s(p1, m) + wl_to_s(p1, s)))
+			+ abs(mp - wl_to_s(p1, m) / (wl_to_s(p1, l) + wl_to_s(p1, m) + wl_to_s(p1, s)))
+			+ abs(sp - wl_to_s(p1, s) / (wl_to_s(p1, l) + wl_to_s(p1, m) + wl_to_s(p1, s))) > 0.1
+			and p1 < 700):
+			p1 += 1
+	# lower precision
+	if (p0 == 300 or p1 == 700):
+		print("0.5")
+		p0 = 700
+		p1 = 300
+		while (abs(lp - wl_to_s(p0, l) / (wl_to_s(p0, l) + wl_to_s(p0, m) + wl_to_s(p0, s)))
+			+ abs(mp - wl_to_s(p0, m) / (wl_to_s(p0, l) + wl_to_s(p0, m) + wl_to_s(p0, s)))
+			+ abs(sp - wl_to_s(p0, s) / (wl_to_s(p0, l) + wl_to_s(p0, m) + wl_to_s(p0, s))) > 0.5
+			and p0 > 300):
+			p0 -= 1
+		while (abs(lp - wl_to_s(p1, l) / (wl_to_s(p1, l) + wl_to_s(p1, m) + wl_to_s(p1, s)))
+			+ abs(mp - wl_to_s(p1, m) / (wl_to_s(p1, l) + wl_to_s(p1, m) + wl_to_s(p1, s)))
+			+ abs(sp - wl_to_s(p1, s) / (wl_to_s(p1, l) + wl_to_s(p1, m) + wl_to_s(p1, s))) > 0.5
+			and p1 < 700):
+			p1 += 1
+	
+	print(p0)
+	print(p1)
+	p = (p0 + p1) / 2
+	
+	return p
 
 def find_primaries(l, m, s):
 	# find ratios to match
-	rr = wl_to_s(620, 565) / wl_to_s(620, 540)
+	
+	# red: L/M
+	#rr = wl_to_s(620, 565) / wl_to_s(620, 540)
 	ry = wl_to_s(580, 565) / wl_to_s(580, 540)
-	rg = wl_to_s(550, 565) / wl_to_s(550, 540)
+	#rg = wl_to_s(550, 565) / wl_to_s(550, 540)
+	
+	# yellow: L/(M+S)
+	#ry = wl_to_s(580, 565) / (wl_to_s(580, 540) + wl_to_s(580, 440))
+	
+	# green: (L+M)/S
+	rg = (wl_to_s(550, 565) + wl_to_s(550, 540)) / wl_to_s(550, 440)
+	
+	# cyan and blue: M/S
 	rc = wl_to_s(500, 540) / wl_to_s(500, 440)
 	rb = wl_to_s(470, 540) / wl_to_s(470, 440)
-	rv = wl_to_s(420, 565) / wl_to_s(420, 540)
+	
+	# violet: L/S
+	rv = wl_to_s(420, 565) / wl_to_s(420, 440)
 	
 	# scale ratios
-	rr1 = wl_to_s(565, 565) / wl_to_s(540, 565) # LM ratio at L peak
-	rg1 = wl_to_s(540, 540) / wl_to_s(565, 540) # ML ratio at M peak
-	rr2 = wl_to_s(l, l) / wl_to_s(m, l) # LM ratio at target L peak
-	rg2 = wl_to_s(m, m) / wl_to_s(l, m) # ML ratio at target M peak
+	#rr1 = wl_to_s(565, 565) / wl_to_s(565, 540) # LM ratio at L peak
+	#rg1 = wl_to_s(540, 540) / wl_to_s(540, 565) # ML ratio at M peak
+	#rr2 = wl_to_s(l, l) / wl_to_s(l, m) # LM ratio at target L peak
+	#rg2 = wl_to_s(m, m) / wl_to_s(m, l) # ML ratio at target M peak
 	
 	# find "red" L primary
-	red = 650
-	ratio = wl_to_s(red, l) / wl_to_s(red, m)
-	while (ratio > rr * rr2 / rr1):
-		red -= 1
-		ratio = wl_to_s(red, l) / wl_to_s(red, m)
+	#red = 650
+	#while (wl_to_s(red, l) / wl_to_s(red, m) > rr * rr2 / rr1):
+	#while (wl_to_s(red, l) / wl_to_s(red, m) > rr):
+	red = find_match(620, l, m, s)
 	
 	# find "yellow" LM secondary
-	yellow = red
-	ratio = wl_to_s(yellow, l) / wl_to_s(yellow, m)
-	while (ratio > ry * rr2 / rr1):
-		yellow -= 1
-		ratio = wl_to_s(yellow, l) / wl_to_s(yellow, m)
+	#yellow = red
+	#while (wl_to_s(yellow, l) / wl_to_s(yellow, m) > ry * rr2 / rr1):
+	#while (wl_to_s(yellow, l) / wl_to_s(yellow, m) > ry):
+	yellow = find_match(580, l, m, s)
 	
 	# find "green" M primary
-	green = yellow
-	ratio = wl_to_s(green, l) / wl_to_s(green, m)
-	while (ratio > 1): # count back to the crossover point
-		green -= 1
-		ratio = wl_to_s(green, l) / wl_to_s(green, m)
-	while (ratio > rg * rg2 / rg1): # continue on the other side
-		green -= 1
-		ratio = wl_to_s(green, l) / wl_to_s(green, m)
+	#green = yellow
+	#while (wl_to_s(green, l) / wl_to_s(green, m) > rg * rg2 / rg1):
+	#while ((wl_to_s(green, l) + wl_to_s(green, m)) / wl_to_s(green, s) > rg):
+	green = find_match(550, l, m, s)
 	
 	# find "cyan" MS secondary
-	cyan = m
-	ratio = wl_to_s(cyan, m) / wl_to_s(cyan, s)
-	while (ratio > rc):
-		cyan -= 1
-		ratio = wl_to_s(cyan, m) / wl_to_s(cyan, s)
+	#cyan = m
+	#while (wl_to_s(cyan, m) / wl_to_s(cyan, s) > rc):
+	cyan = find_match(500, l, m, s)
 	
 	# find "blue" S primary
-	blue = cyan
-	ratio = wl_to_s(blue, m) / wl_to_s(blue, s)
-	while (ratio > rb):
-		blue -= 1
-		ratio = wl_to_s(blue, m) / wl_to_s(blue, s)
+	#blue = cyan
+	#while (wl_to_s(blue, m) / wl_to_s(blue, s) > rb):
+	blue = find_match(470, l, m, s)
 	
 	# find "violet" LS secondary
-	violet = blue
-	ratio = wl_to_s(violet, l) / wl_to_s(violet, m)
-	while (ratio < rv):
-		violet -= 1
-		ratio = wl_to_s(violet, l) / wl_to_s(violet, m)
-	print([red, yellow, green, cyan, blue, violet])
-	return [red, yellow, green, cyan, blue, violet]
+	#violet = s
+	#print(rv)
+	#while (wl_to_s(violet, l) / wl_to_s(violet, s) < rv):
+	violet = find_match(420, l, m, s)
 	
-# second less accurate version: nearby cone sensitivities
-# Instead of using ratios, we find the points where a type of cone "falls off" and gives way
-# to another color. This blue-shifts the "yellow point" and "green point" more significantly
-# when L and M approach each other and fixes the "cyan point" at the S cutoff, which may be
-# more realistic. However, the red-green difference is overestimated relative to actual CVS
-# output.
-
-def find_primaries_1(l, m, s):
-	# find sensitivities to match
-	sr = wl_to_s(620, 540)
-	sy = wl_to_s(580, 540)
-	sg = wl_to_s(550, 565)
-	sc = wl_to_s(500, 440)
-	sb = wl_to_s(470, 540)
-	sv = wl_to_s(420, 565)
-	
-	# find "red" L primary
-	red = 650
-	r = wl_to_s(red, m)
-	while (r < sr):
-		red -= 5
-		r = wl_to_s(red, m)
-	
-	# find "yellow" LM secondary
-	yellow = red
-	y = wl_to_s(yellow, m)
-	while (y < sy):
-		yellow -= 5
-		y = wl_to_s(yellow, m)
-	
-	# find "green" M primary
-	green = l # count backwards from L
-	g = wl_to_s(green, l)
-	while (g > sg):
-		green -= 5
-		g = wl_to_s(green, l)
-		print(green)
-	
-	# if yellow and green are in impossible places, switch L and M
-	if (yellow - green < 5):
-		sy = wl_to_s(580, 565)
-		sg = wl_to_s(550, 540)
-		
-		y = wl_to_s(yellow, l)
-		while (y < sy):
-			yellow += 5
-			y = wl_to_s(yellow, l)
-		
-		g = wl_to_s(green, m)
-		while (g < sg):
-			green -= 5
-			g = wl_to_s(green, m)
-	
-	# find "cyan" MS secondary
-	cyan = s # count forwards from S
-	c = wl_to_s(cyan, s)
-	while (c > sc):
-		cyan += 5
-		c = wl_to_s(cyan, s)
-	
-	# find "blue" S primary
-	blue = cyan
-	b = wl_to_s(blue, m)
-	while (b > sb):
-		blue -= 5
-		b = wl_to_s(blue, m)
-	
-	# find "violet" LS secondary
-	violet = blue
-	v = wl_to_s(violet, l)
-	while (v < sv):
-		violet -= 5
-		v = wl_to_s(violet, l)
-	
-	return [red, yellow, green, cyan, blue, violet]
-
-# third less accurate version: cone response differences (doesn't work)
-def find_primaries_2(l, m, s):
-	# find ratios to match
-	dr = wl_to_s(620, 565) - wl_to_s(620, 540)
-	dy = wl_to_s(580, 565) - wl_to_s(580, 540)
-	dg = wl_to_s(550, 565) - wl_to_s(550, 540)
-	dc = wl_to_s(500, 540) - wl_to_s(500, 440)
-	db = wl_to_s(470, 540) - wl_to_s(470, 440)
-	dv = wl_to_s(420, 565) - wl_to_s(420, 540)
-	
-	# find "red" L primary
-	red = 650
-	d = wl_to_s(red, l) - wl_to_s(red, m)
-	print(d)
-	print(dr)
-	while (d < dr):
-		red -= 5
-		d = wl_to_s(red, l) - wl_to_s(red, m)
-		print(red)
-	
-	# find "yellow" LM secondary
-	yellow = red
-	d = wl_to_s(yellow, l) - wl_to_s(yellow, m)
-	while (d > dy):
-		yellow -= 5
-		d = wl_to_s(yellow, l) - wl_to_s(yellow, m)
-	
-	# find "green" M primary
-	green = yellow
-	d = wl_to_s(green, l) - wl_to_s(green, m)
-	while (d > dg):
-		green -= 5
-		d = wl_to_s(green, l) - wl_to_s(green, m)
-	
-	# find "cyan" MS secondary
-	cyan = m
-	d = wl_to_s(cyan, m) - wl_to_s(cyan, s)
-	while (d > dc):
-		cyan -= 5
-		d = wl_to_s(cyan, m) - wl_to_s(cyan, s)
-	
-	# find "blue" S primary
-	blue = cyan
-	d = wl_to_s(blue, m) - wl_to_s(blue, s)
-	while (d > db):
-		blue -= 5
-		d = wl_to_s(blue, m) - wl_to_s(blue, s)
-	
-	# find "violet" LS secondary
-	violet = blue
-	d = wl_to_s(violet, l) - wl_to_s(violet, m)
-	while (d < dv):
-		violet -= 5
-		d = wl_to_s(violet, l) - wl_to_s(violet, m)
+	# print out colors
+	print("red: " + str(red))
+	print("yellow: " + str(yellow))
+	print("green: " + str(green))
+	print("cyan: " + str(cyan))
+	print("blue: " + str(blue))
+	print("violet: " + str(violet))
 	
 	return [red, yellow, green, cyan, blue, violet]
 
@@ -366,11 +336,7 @@ def wl_to_rgb_2(wl, l, m, s, p):
 		hue = 180 + (p[3] - wl) * 60/(p[3] - p[4])
 	# blue-violet: 240-269
 	elif (wl <= p[4]):
-		# if S is at a shorter wavelength, "violet" probably isn't seen
-		if (p[5] >= s):
-			hue = 240
-		else:
-			hue = 240 + (p[4] - wl) * 30/(p[4] - p[5])
+		hue = 240 + (p[4] - wl) * 30/(p[4] - p[5])
 	else:
 		hue = 0
 	
@@ -386,15 +352,11 @@ img_hls = cv2.cvtColor(img, cv2.COLOR_BGR2HLS)
 # default is 2 (cone response ratios)
 if (version == 2):
 	primaries = find_primaries(lcone, mcone, scone) # save some time
-elif (version == 3):
-	primaries = find_primaries_1(lcone, mcone, scone)
-elif (version == 4):
-	primaries = find_primaries_2(lcone, mcone, scone)
 
 def wl_to_rgb(w, l, m, s):
 	if (version == 1):
 		return wl_to_rgb_1(w, l, m, s)
-	elif (version == 2 or version == 3 or version == 4):
+	elif (version == 2):
 		return wl_to_rgb_2(w, l, m, s, primaries)
 	else:
 		return wl_to_rgb_0(w, l, m, s)
@@ -402,7 +364,6 @@ def wl_to_rgb(w, l, m, s):
 # transform hues for each pixel
 for x in range(img.shape[0]):
 	for y in range(img.shape[1]):
-		#print("pixel: " + str(x) + ", " + str(y))
 		# find pixel
 		hls = img_hls[x][y]
 		
@@ -412,13 +373,13 @@ for x in range(img.shape[0]):
 		# convert hue to predominant wavelength(s)
 		wl = hue_to_wavelength(hue)
 		
-		if (type(wl) != list):
+		if (type(wl) != tuple):
 			hue_target = wl_to_rgb(wl, lcone, mcone, scone)
 		else:
 			hue_r = wl_to_rgb(620, lcone, mcone, scone)
 			hue_b = wl_to_rgb(470, lcone, mcone, scone)
 			# sum the amounts of "red" and "blue"
-			hue_target = [hue_r[0] * wl[0] + hue_b[0] * wl[1], hue_r[1] * wl[0] + hue_b[1] * wl[1], hue_r[2] * wl[0] + hue_b[2] * wl[1]]
+			hue_target = [hue_r[0] * wl[0] + hue_b[0] * wl[2], hue_r[1] * wl[0] + hue_b[1] * wl[2], hue_r[2] * wl[0] + hue_b[2] * wl[2]]
 		
 		# convert predominant wavelengths back into a hue
 		hls_target = colorsys.rgb_to_hls(hue_target[0], hue_target[1], hue_target[2])
@@ -441,14 +402,3 @@ img_result = cv2.cvtColor(img_result_lab, cv2.COLOR_LAB2BGR)
 
 # display result
 cv2.imwrite("colorvisionpy-result.png", img_result)
-
-# testing
-#foo = wl_to_rgb(650, 565, 535, 450)
-#print(foo)
-#print(colorsys.rgb_to_hls(foo[0], foo[1], foo[2]))
-#bar = wl_to_rgb(530, 565, 535, 450)
-#print(bar)
-#print(colorsys.rgb_to_hls(bar[0], bar[1], bar[2]))
-#baz = wl_to_rgb(450, 565, 535, 450)
-#print(baz)
-#print(colorsys.rgb_to_hls(baz[0], baz[1], baz[2]))
