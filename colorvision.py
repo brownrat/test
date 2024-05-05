@@ -25,6 +25,10 @@ import sys
 import colorsys
 import math
 import numpy as np
+import time
+
+# execution time
+start_time = time.time()
 
 # image
 imagename = sys.argv[1]
@@ -33,6 +37,19 @@ imagename = sys.argv[1]
 lcone = int(sys.argv[2])
 mcone = int(sys.argv[3])
 scone = int(sys.argv[4])
+
+# default reference cone peaks
+l0 = 565
+m0 = 540
+s0 = 440
+
+# default reference primary/secondary wavelengths
+r0 = 650
+y0 = 570
+g0 = 525
+c0 = 490
+b0 = 470
+v0 = 420
 
 # method to use
 version = 2
@@ -45,23 +62,23 @@ if (len(sys.argv) > 5):
 # to more closely match the CIE color space so these colors stand in for "perceptual red",
 # etc. rather than the limitations of a monitor. This produces a result closer to both CVS
 # output and the fat-tailed dunnart color space (Arrese et al.).
-def hue_to_wavelength(hue):
+def hue_to_wavelength_0(hue):
 	#print(hue)
-	# red-yellow: 0-59 -> 650-571
+	# red-yellow: 0-59
 	if (0 <= hue < 60):
-		w = 650 - hue * (650 - 571)/60
-	# yellow-green: 60-119 -> 570-551
+		w = r0 - hue * (r0 - (y0 + 1))/60
+	# yellow-green: 60-119
 	elif (60 <= hue < 120):
-		w = 570 - (hue - 60) * (570 - 526)/60
-	# green-cyan: 120-179 -> 525-491
+		w = y0 - (hue - 60) * (y0 - (g0 + 1))/60
+	# green-cyan: 120-179
 	elif (120 <= hue < 180):
-		w = 525 - (hue - 120) * (525 - 491)/60
-	# cyan-blue: 180-239 -> 490-471
+		w = g0 - (hue - 120) * (g0 - (c0 + 1))/60
+	# cyan-blue: 180-239
 	elif (180 <= hue < 240):
-		w = 490 - (hue - 180) * (490 - 471)/60
-	# blue-violet: 240-269 -> 470-420
+		w = c0 - (hue - 180) * (c0 - (b0 + 1))/60
+	# blue-violet: 240-269
 	elif (240 <= hue < 270):
-		w = 470 - (hue - 240) * (470 - 420)/30
+		w = b0 - (hue - 240) * (b0 - v0)/30
 	# purple-magenta: 270-360 -- just convert it to RGB and use the R and B values
 	else:
 		return colorsys.hls_to_rgb(hue / 360, 0.5, 1)
@@ -72,7 +89,7 @@ def hue_to_wavelength(hue):
 # This does not use the same function as CVS. The function comes from a paper describing
 # templates for visual pigment absorbance that are meant to fit both vertebrates and
 # invertebrates (Stavenga 2010), whereas CVS uses shifted versions of the 10° human cone
-# fundamentals.
+# fundamentals. This is probably close enough and better for non-primates.
 def wl_to_s(wl, peak):
 	value = (math.exp(69.7*(0.8795+0.0459*math.exp(-(peak-300)**2/11940)-(peak/wl)))+math.exp(28*(0.922-(peak/wl)))+math.exp(-14.9*(1.104-(peak/wl)))+0.674)**-1 + 0.26*math.exp(-((wl-(189+0.315*peak))/(-40.5+0.195*peak))**2)
 	return value
@@ -85,10 +102,11 @@ def wl_to_s(wl, peak):
 
 # version 0: use unaltered cone fundamentals
 # This just takes the sensitivity values for all three cones and uses them as the R, G and B
-# values. For wide spacing (> 40 nm) as in birds, insects and some marsupials, where the
+# values. For wide spacing (>40 nm) as in birds, insects and some marsupials, where the
 # primary wavelengths are received almost exclusively by one type of cone, this is probably
 # pretty close and may be better than the other versions. For narrower spacing as in primates,
-# it's way off because the interactions become more complex.
+# it's way off because the interactions become more complex. (This means there are no values
+# that produce a 1:1 transformation.)
 def wl_to_rgb_0(wl, l, m, s):
 	red = wl_to_s(wl, l)
 	green = wl_to_s(wl, m)
@@ -96,59 +114,141 @@ def wl_to_rgb_0(wl, l, m, s):
 	return [red, green, blue]
 
 # version 1: use color matching functions
-# This was the first attempt to create a proper color space, based on the equations on the
-# Horizon Lab page. It doesn't work for reasons I don't entirely understand. The most obvious
-# problem is it has no way to find the primary wavelengths.
-def wl_to_rgb_1(wl, l, m, s):
-	# primaries
-	red = l + 40 - (535 - m) # roughly shift red primary depending on M and L peaks: less distance -> "red" is farther away from L peak
-	green = m
-	blue = s
+# This is an attempt to create a proper color space, based on the equations on the
+# Horizon Lab page. Horizon Lab says primaries can be arbitrary, and I don't know a way to
+# find them "directly", so we use the method in find_match/find_primaries (matching ratios).
+# Since we can directly convert between hues and wavelengths once we have the primaries, we
+# don't use a linear approximation (this doesn't work properly).
+# This has been fixed to the point where the input "565 540 440" produces a 1:1
+# transformation for most hues, but there are gaps in the yellow/green and cyan regions,
+# and any significant shifting just doesn't work.
+def cmf_match(w, l, m, s, r, g, b):
 
 	# sensitivity of cones to primaries
 	matrix_a = np.array([
-		[wl_to_s(red, l), wl_to_s(green, l), wl_to_s(blue, l)],
-		[wl_to_s(red, m), wl_to_s(green, m), wl_to_s(blue, m)],
-		[wl_to_s(red, s), wl_to_s(green, s), wl_to_s(blue, s)]
+		[wl_to_s(r, l), wl_to_s(g, l), wl_to_s(b, l)],
+		[wl_to_s(r, m), wl_to_s(g, m), wl_to_s(b, m)],
+		[wl_to_s(r, s), wl_to_s(g, s), wl_to_s(b, s)]
 	])
-	print(matrix_a)
 
-	# sensitivity of cones to each wavelength
-	matrix_c = np.empty((251, 3))
-	for i in range(0, 250):
-		matrix_c[i][0] = wl_to_s(i + 400, l)
-		matrix_c[i][1] = wl_to_s(i + 400, m)
-		matrix_c[i][2] = wl_to_s(i + 400, s)
+	# sensitivity of cones to each wavelength from 300 to 800 nm in 1 nm increments
+	matrix_c = np.empty((3, 501)) # 100x3 matrix -- this is height x width, not width x height
+	
+	# red row
+	for i in range(0, 500):
+		matrix_c[0][i] = wl_to_s(i + 300, l)
+	# green row
+	for i in range(0, 500):
+		matrix_c[1][i] = wl_to_s(i + 300, m)
+	# blue row
+	for i in range(0, 500):
+		matrix_c[2][i] = wl_to_s(i + 300, s)
 
 	# initial color match matrix
-	matrix_m = np.matmul(matrix_c, np.linalg.inv(matrix_a)) # A x M = C, so M = C x A^-1 (if I remember right)
-
-	# white matching
-
-	# initialize (do you need to do this?)
+	matrix_m = np.matmul(np.linalg.inv(matrix_a), matrix_c) # A x M = C, so M = A^-1 x C
+	
+	# sum every row of the matrix to find the response to equal energy white (I don't know
+	# how to find D50)
 	rw = 0.0
 	gw = 0.0
 	bw = 0.0
-
-	# there's probably a better way to find these sums, but whatever
-	for i in range (0, 250):
-		rw += matrix_m[i][0]
-		gw += matrix_m[i][1]
-		bw += matrix_m[i][2]
-	#print(rw)
+	for i in range (0, 500):
+		rw += matrix_m[0][i]
+		gw += matrix_m[1][i]
+		bw += matrix_m[2][i]
 
 	# final color match matrix
-	matrix_cmf = np.empty((251, 3))
-	for i in range(0, 250):
-		matrix_cmf[i][0] = matrix_m[i][0] / rw
-		matrix_cmf[i][1] = matrix_m[i][1] / gw
-		matrix_cmf[i][2] = matrix_m[i][2] / bw
+	matrix_cmf = np.empty((3, 501))
+	for i in range(0, 500):
+		matrix_cmf[0][i] = matrix_m[0][i] / rw
+		matrix_cmf[1][i] = matrix_m[1][i] / gw
+		matrix_cmf[2][i] = matrix_m[2][i] / bw
 
 	# find match given a wavelength
-	#rgb = [matrix_cmf[wl - 400][0], matrix_cmf[wl - 400][1], matrix_cmf[wl - 400][2]]
-	#print(rgb)
-	rgb = [matrix_m[wl - 400][0], matrix_m[wl - 400][1], matrix_m[wl - 400][2]]
+	index = int(w - 300) # find index from wavelength (has to be an integer)
+	rgb = [matrix_cmf[0][index],
+		matrix_cmf[1][index],
+		matrix_cmf[2][index]]
 	return rgb
+
+# tables
+def cs_tables_1(l, m, s):
+	cs_source = np.empty((501, 3))
+	cs_target = np.empty((501, 3))
+	
+	# primaries
+	r = find_match(r0, l, m, s)
+	g = find_match(g0, l, m, s)
+	b = find_match(b0, l, m, s)
+	
+	r = (r[0] + r[1]) / 2
+	g = (g[0] + g[1]) / 2
+	b = (b[0] + b[1]) / 2
+	
+	for i in range(0, 500):
+		rgb_source = cmf_match(i + 300, l, m, s, r0, g0, b0)
+		rgb_target = cmf_match(i + 300, l, m, s, r, g, b)
+		
+		# clip to 0
+		if (rgb_source[0] < 0):
+			rgb_source[0] = 0
+		if (rgb_source[1] < 0):
+			rgb_source[1] = 0
+		if (rgb_source[2] < 0):
+			rgb_source[2] = 0
+		
+		if (rgb_target[0] < 0):
+			rgb_target[0] = 0
+		if (rgb_target[1] < 0):
+			rgb_target[1] = 0
+		if (rgb_target[2] < 0):
+			rgb_target[2] = 0
+		
+		if (rgb_source[0] + rgb_source[1] + rgb_source[2] == 0):
+			cs_source[i] = [0, 0, 0]
+		else:
+			cs_source[i][0] = rgb_source[0] / (rgb_source[0] + rgb_source[1] + rgb_source[2])
+			cs_source[i][1] = rgb_source[1] / (rgb_source[0] + rgb_source[1] + rgb_source[2])
+			cs_source[i][2] = rgb_source[2] / (rgb_source[0] + rgb_source[1] + rgb_source[2])
+		
+		if (rgb_target[0] + rgb_target[1] + rgb_target[2] == 0):
+			cs_target[i] = [0, 0, 0]
+		else:
+			cs_target[i][0] = rgb_target[0] / (rgb_target[0] + rgb_target[1] + rgb_target[2])
+			cs_target[i][1] = rgb_target[1] / (rgb_target[0] + rgb_target[1] + rgb_target[2])
+			cs_target[i][2] = rgb_target[2] / (rgb_target[0] + rgb_target[1] + rgb_target[2])
+		
+	return [cs_source, cs_target]
+
+def hue_to_wavelength_1(h, source):
+	if (0 <= h <= 270):
+		i = 0
+		match = False
+		
+		while (i < 500 and match == False):
+			#print(i)
+			#print("source wavelength: " + str(i + 300))
+			#print(source[i])
+			h_source = colorsys.rgb_to_hls(source[i][0], source[i][1], source[i][2])
+			#print(h_source)
+			#print("hue: " + str(h))
+			#print("source hue: " + str(int(h_source[0] * 360)))
+			if (int(h_source[0] * 360) == int(h)):
+				#print("hue: " + str(h))
+				#print("source hue: " + str(int(h_source[0] * 360)))
+				#print("true")
+				#print(i)
+				match = True
+			else:
+				i += 1
+		#print(i)
+		return i + 300
+	else:
+		return colorsys.hls_to_rgb(hue / 360, 0.5, 1)
+
+def wl_to_rgb_1(w, target):
+	#print(w)
+	return target[int(w) - 300]
 
 # version 2: cone response ratios
 # we find the wavelengths that produce ratios matching those for the primaries and
@@ -183,9 +283,9 @@ def wl_to_rgb_1(wl, l, m, s):
 
 # match wavelength to sensitivity ratios
 def find_match(w, l, m, s, d=0.001):
-	lp = wl_to_s(w, 565) / (wl_to_s(w, 565) + wl_to_s(w, 540) + wl_to_s(w, 440))
-	mp = wl_to_s(w, 540) / (wl_to_s(w, 565) + wl_to_s(w, 540) + wl_to_s(w, 440))
-	sp = wl_to_s(w, 440) / (wl_to_s(w, 565) + wl_to_s(w, 540) + wl_to_s(w, 440))
+	lp = wl_to_s(w, l0) / (wl_to_s(w, l0) + wl_to_s(w, m0) + wl_to_s(w, s0))
+	mp = wl_to_s(w, m0) / (wl_to_s(w, l0) + wl_to_s(w, m0) + wl_to_s(w, s0))
+	sp = wl_to_s(w, s0) / (wl_to_s(w, l0) + wl_to_s(w, m0) + wl_to_s(w, s0))
 	
 	p0 = 800
 	p1 = 300
@@ -215,28 +315,28 @@ def find_match(w, l, m, s, d=0.001):
 
 def find_primaries(l, m, s):
 	# find "red" L primary
-	red = (find_match(650, l, m, s)[0] + find_match(650, l, m, s)[1]) / 2
+	red = (find_match(r0, l, m, s)[0] + find_match(r0, l, m, s)[1]) / 2
 	
 	# find "yellow" LM secondary
-	yellow = (find_match(570, l, m, s)[0] + find_match(570, l, m, s)[1]) / 2
+	yellow = (find_match(y0, l, m, s)[0] + find_match(y0, l, m, s)[1]) / 2
 	
 	# find "green" M primary
-	green = (find_match(525, l, m, s)[0] + find_match(525, l, m, s)[1]) / 2
+	green = (find_match(g0, l, m, s)[0] + find_match(g0, l, m, s)[1]) / 2
 	
 	# find "cyan" MS secondary
-	cyan = (find_match(490, l, m, s)[0] + find_match(490, l, m, s)[1]) / 2
+	cyan = (find_match(c0, l, m, s)[0] + find_match(c0, l, m, s)[1]) / 2
 	
 	# find "blue" S primary
-	blue = (find_match(470, l, m, s)[0] + find_match(470, l, m, s)[1]) / 2
+	blue = (find_match(b0, l, m, s)[0] + find_match(b0, l, m, s)[1]) / 2
 	
 	# find "violet" LS secondary
-	violet = (find_match(420, l, m, s)[0] + find_match(420, l, m, s)[1]) / 2
+	violet = (find_match(v0, l, m, s)[0] + find_match(v0, l, m, s)[1]) / 2
 	
 	# patch results if they're out of order
 	if (red < yellow):
 		red = 800
-	if (cyan < blue):
-		cyan = (green + blue) / 2
+	if (cyan < s):
+		cyan = (green + s) / 2
 	if (blue < violet):
 		violet = 300
 	
@@ -278,26 +378,32 @@ def wl_to_rgb_2(wl, l, m, s, p):
 # instead of finding specific "primary colors" and filling in the gaps linearly. It doesn't
 # fully solve the yellow/green issue, but for very narrow spacing the results are significantly
 # better because it doesn't force a "green point". For wider spacing, on the other hand, the
-# shifting of red/yellow (in either direction) seems to be underestimated.
+# shifting of red/yellow (in either direction) seems to be underestimated. Running this version
+# takes >100 times longer than version 2 because it has to search a table with 500 entries for
+# every pixel.
 def cs_tables(l, m, s):
 	# source color space table
-	cs_source = np.empty([270, 3])
+	cs_source = np.empty([501, 4])
 	for i in range(cs_source.shape[0]):
-		w = hue_to_wavelength(i)
-		cs_source[i][0] = wl_to_s(w, 565) / (wl_to_s(w, 565) + wl_to_s(w, 540) + wl_to_s(w, 440))
-		cs_source[i][1] = wl_to_s(w, 540) / (wl_to_s(w, 565) + wl_to_s(w, 540) + wl_to_s(w, 440))
-		cs_source[i][2] = wl_to_s(w, 440) / (wl_to_s(w, 565) + wl_to_s(w, 540) + wl_to_s(w, 440))
+		w = i + 300
+		rgb = wl_to_rgb_2(w, l0, m0, s0, [r0, y0, g0, c0, b0, v0])
+		cs_source[i][0] = wl_to_s(w, l0) / (wl_to_s(w, l0) + wl_to_s(w, m0) + wl_to_s(w, s0))
+		cs_source[i][1] = wl_to_s(w, m0) / (wl_to_s(w, l0) + wl_to_s(w, m0) + wl_to_s(w, s0))
+		cs_source[i][2] = wl_to_s(w, s0) / (wl_to_s(w, l0) + wl_to_s(w, m0) + wl_to_s(w, s0))
+		cs_source[i][3] = colorsys.rgb_to_hls(rgb[0], rgb[1], rgb[2])[0] * 360
 	
 	# target color space table (doesn't work, I don't know why)
-	cs_target = np.empty([501, 3])
-	for i in range(cs_target.shape[0]):
-		w = i + 300
-		cs_target[i][0] = wl_to_s(w, l) / (wl_to_s(w, l) + wl_to_s(w, m) + wl_to_s(w, s))
-		cs_target[i][1] = wl_to_s(w, m) / (wl_to_s(w, l) + wl_to_s(w, m) + wl_to_s(w, s))
-		cs_target[i][2] = wl_to_s(w, s) / (wl_to_s(w, l) + wl_to_s(w, m) + wl_to_s(w, s))
+	#cs_target = np.empty([501, 3])
+	#for i in range(cs_target.shape[0]):
+	#	w = i + 300
+	#	cs_target[i][0] = wl_to_s(w, l) / (wl_to_s(w, l) + wl_to_s(w, m) + wl_to_s(w, s))
+	#	cs_target[i][1] = wl_to_s(w, m) / (wl_to_s(w, l) + wl_to_s(w, m) + wl_to_s(w, s))
+	#	cs_target[i][2] = wl_to_s(w, s) / (wl_to_s(w, l) + wl_to_s(w, m) + wl_to_s(w, s))
 	
-	return [cs_source, cs_target]
-	
+	#return [cs_source, cs_target]
+	return cs_source
+
+# Note this now returns a position in the source table rather than a hue.
 def find_match_1(w, source, l, m, s, d=0.001):
 	# target sensitivities
 	#lw = target[int(w) - 300][0]
@@ -325,13 +431,13 @@ def find_match_1(w, source, l, m, s, d=0.001):
 	
 	# find nearest match
 	i = 0
-	j = 269
+	j = 500
 	
 	# forward
 	while (abs(source[i][0] - lw)
 		+ abs(source[i][1] - mw)
 		+ abs(source[i][2] - sw) > d
-		and i < 269):
+		and i < 500):
 		i += 1
 		#print(source[i])
 		#print(abs(source[i][0] - l)
@@ -351,7 +457,7 @@ def find_match_1(w, source, l, m, s, d=0.001):
 	#print(j)
 	
 	# lower precision if not found
-	if (i == 269 and j == 0):
+	if (i == 500 and j == 0):
 		#print("recursion")
 		# recursion
 		match = find_match_1(w, source, l, m, s, d*2) # avoid running this twice
@@ -370,23 +476,34 @@ img_hls = cv2.cvtColor(img, cv2.COLOR_BGR2HLS)
 # default is 2 (cone response ratios)
 
 # save some time by taking these out of wl_to_rgb so we don't call them for every pixel
-if (version == 2):
+if (version == 1):
+	tables = cs_tables_1(lcone, mcone, scone)
+elif (version == 2):
 	primaries = find_primaries(lcone, mcone, scone)
 elif (version == 3):
 	tables = cs_tables(lcone, mcone, scone)
 
-# wrapper function
+# wrapper functions
 def wl_to_rgb(w, l, m, s):
 	if (version == 1):
-		return wl_to_rgb_1(w, l, m, s)
+		#return wl_to_rgb_1(w, l, m, s, primaries)
+		return wl_to_rgb_1(w, tables[1])
 	elif (version == 2):
 		return wl_to_rgb_2(w, l, m, s, primaries)
 	elif (version == 3):
-		match = find_match_1(w, tables[0], l, m, s)
-		hue = (match[0] + match[1]) / 2
+		#match = find_match_1(w, tables[0], l, m, s)
+		match = find_match_1(w, tables, l, m, s)
+		#hue = (match[0] + match[1]) / 2
+		hue = (tables[match[0]][3] + tables[match[1]][3]) / 2
 		return colorsys.hls_to_rgb(hue / 360, 0.5, 1)
 	else:
 		return wl_to_rgb_0(w, l, m, s)
+
+def hue_to_wavelength(h):
+	if (version == 1):
+		return hue_to_wavelength_1(h, tables[0])
+	else:
+		return hue_to_wavelength_0(h)
 
 # transform hues for each pixel
 for x in range(img.shape[0]):
@@ -400,12 +517,13 @@ for x in range(img.shape[0]):
 		
 		# convert hue to predominant wavelength(s)
 		wl = hue_to_wavelength(hue)
+		#print(hue)
 		
 		if (type(wl) != tuple):
 			hue_target = wl_to_rgb(wl, lcone, mcone, scone)
 		else:
-			hue_r = wl_to_rgb(650, lcone, mcone, scone)
-			hue_b = wl_to_rgb(470, lcone, mcone, scone)
+			hue_r = wl_to_rgb(r0, lcone, mcone, scone)
+			hue_b = wl_to_rgb(b0, lcone, mcone, scone)
 			# sum the amounts of "red" and "blue"
 			hue_target = [hue_r[0] * wl[0] + hue_b[0] * wl[2], hue_r[1] * wl[0] + hue_b[1] * wl[2], hue_r[2] * wl[0] + hue_b[2] * wl[2]]
 		
@@ -431,3 +549,6 @@ img_result = cv2.cvtColor(img_hls, cv2.COLOR_HLS2BGR)
 
 # display result
 cv2.imwrite("colorvisionpy-result.png", img_result)
+
+# print execution time
+print("%s seconds" % (time.time() - start_time))
