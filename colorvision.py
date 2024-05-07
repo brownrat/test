@@ -1,9 +1,4 @@
 # This is an attempt to create something similar to Color Vision Simulator (Melin et al. 2013).
-# Unlike CVS, it only alters the hue and doesn't account for saturation. I don't know (yet)
-# how to determine the distance of a color from the white point of a color space.
-# Like CVS, it also doesn't account for differences in lightness/intensity. This could be
-# done by finding the global photopic sensitivity curve and dividing by the human version. It
-# would also be nice to use LCh instead of HSL so the lightness result would make sense.
 #
 # References:
 # A.D. Melin, D.W. Kline, C.M. Hickey, L.M. Fedigan, Food search through the eyes of a monkey: A functional substitution approach for assessing the ecology of primate color vision, Vision Research, Volume 86, 2013, Pages 87-96, ISSN 0042-6989, https://doi.org/10.1016/j.visres.2013.04.013. (https://www.sciencedirect.com/science/article/pii/S0042698913001119)
@@ -30,7 +25,7 @@ import numpy as np
 import time
 import argparse
 import colormath
-from colormath.color_objects import HSLColor, LabColor, sRGBColor
+from colormath.color_objects import LCHabColor, sRGBColor
 from colormath.color_conversions import convert_color
 
 # execution time
@@ -44,6 +39,12 @@ parser.add_argument("-s", "--sw", type=int, help="shortwave cone sensitivity")
 parser.add_argument("--slw", type=int, default=560, help="source longwave cone sensitivity")
 parser.add_argument("--smw", type=int, default=530, help="source mediumwave cone sensitivity")
 parser.add_argument("--ssw", type=int, default=420, help="source shortwave cone sensitivity")
+parser.add_argument("-r", "--red", type=int, default=650, help="reference red")
+parser.add_argument("-y", "--yellow", type=int, default=570, help="reference yellow")
+parser.add_argument("-g", "--green", type=int, default=545, help="reference green")
+parser.add_argument("-c", "--cyan", type=int, default=490, help="reference cyan")
+parser.add_argument("-b", "--blue", type=int, default=460, help="reference blue")
+parser.add_argument("--violet", type=int, default=420, help="reference violet")
 parser.add_argument("-i", "--image", help="image name")
 parser.add_argument("-v", "--version", type=int, default=2, help="color conversion method")
 args = parser.parse_args()
@@ -62,12 +63,12 @@ m0 = args.smw
 s0 = args.ssw
 
 # default reference primary/secondary wavelengths
-r0 = 650
-y0 = 570
-g0 = 545
-c0 = 490
-b0 = 460
-v0 = 420
+r0 = args.red
+y0 = args.yellow
+g0 = args.green
+c0 = args.cyan
+b0 = args.blue
+v0 = args.violet
 
 # method to use
 version = args.version
@@ -115,13 +116,18 @@ def wl_to_s(wl, peak):
 # "Using the idealized cone fundamentals, and based on standard daylight (D65) illumination, the program generates a color space table for the source and target phenotypes that lists the relative sensitivities of the component photopigments to each wavelength in 1 nm increments – intermediate values are derived from the table via linear interpolation. For each image in the trial, the starting RGB values for each pixel are converted to chromaticity and intensity (luminance) values. The chromaticity values are located in the source color space table to find the predominant hue (wavelength); the saturation value is determined by the relative distance of the chromaticity value from the white point. The hue value is then located in the target color space table, and the target saturation value is projected from the white point, to find the modified chromaticity values. An inverse transformation to the new RGB color space generates the task stimulus. The luminance values are held constant during this process. In the case of monochromatic simulations, only the luminance values of each pixel are used to generate gray-scale images."
 
 # version 0: use unaltered cone fundamentals
-# This just takes the sensitivity values for all three cones and uses them as the R, G and B
-# values. For wide spacing (>40 nm) as in birds, insects and some marsupials, where the
-# primary wavelengths are received almost exclusively by one type of cone, this is probably
-# pretty close and may be better than the other versions. For narrower spacing as in primates,
-# it's way off because the interactions become more complex. There are no values that produce
-# a 1:1 transformation because the hue-wavelength conversion is done completely differently
-# using the linear hue_to_wavelength_0().
+# This is a conversion to "LMS color space": it just takes the sensitivity values for all three
+# cones and uses them as the R, G and B values. For wide spacing (>40 nm) as in birds, insects
+# and some marsupials, where the primary wavelengths are received almost exclusively by one type
+# of cone, this is probably pretty close and may be better than the other versions. For narrower
+# spacing as in primates, it's way off because the interactions become more complex. There are no
+# values that produce a 1:1 transformation because the hue-wavelength conversion is done completely
+# differently using the linear hue_to_wavelength_0().
+# This produces a passable simulation of dichromacy or monochromacy if two or all of the LMS
+# values are identical. Dichromacy is slightly wrong because of the "beta-band" causing blue
+# hues to appear desaturated. Monochromacy should be identical to CVS because it only uses
+# the original lightness values, but the method for determining lightness/intensity is
+# evidently slightly different and produces darker shadows.
 def wl_to_rgb_0(w, l, m, s):
 	red = wl_to_s(w, l)
 	green = wl_to_s(w, m)
@@ -501,8 +507,21 @@ def find_match_1(w, source, l, m, s, d=0.001):
 # version 4
 # Another attempt at constructing a color space. This is my best guess at what CVS does:
 # a color space based on the L-M and (L+M)-S differences, using these as X and Y coordinates.
-# The results are surprisingly close for red/green hues, but blue/violet isn't handled properly
-# and converts into unrelated colors.
+# The origin is set as the white point based on equal energy white, and the values are scaled
+# based on arbitrary "red" and "yellow" primary wavelengths. The transformation to RGB from
+# this "RGYB" space is assumed to be linear.
+# Results with similar input are noticeably different but surprisingly close and better than
+# any of the other versions, particularly with very narrow spacing; this is the only version
+# that gets uakari trichromacy right. It can also produce a passable simulation of dichromacy
+# if the target L and M values are identical. However, with other arrangements such as the
+# 420-490-560 example, the blue/green region disintegrates and red becomes pink. Some
+# blue/violet hues can't be processed properly regardless of input and are assigned red or
+# cyan.
+# "Dichromatic" output is much less blue than what CVS produces. Based on other simulations
+# of dichromacy, I think CVS heavily overestimates the amount of blue, possibly because
+# it cuts the "yellow" number in half by reducing the number of cone types and then tries
+# to use the resulting (L+M) - S value the same way. Giving the L/M cone double weight by
+# treating it as "identical L and M cones" is probably closer to the truth.
 def rg(w, l, m, s):
 	return (wl_to_s(w, l) - wl_to_s(w, m)) / (wl_to_s(w, l) + wl_to_s(w, m) + wl_to_s(w, s))
 
@@ -542,9 +561,7 @@ def cs_tables_2(l, m, s):
 	# coordinates of "primary colors"
 	red = ((rg(r0, l0, m0, s0) - white_rg) / abs(red_rg - white_rg), (yb(r0, l0, m0, s0) - white_yb) / abs(yellow_yb - white_yb))
 	green = ((rg(g0, l0, m0, s0) - white_rg) / abs(red_rg - white_rg), (yb(g0, l0, m0, s0) - white_yb) / abs(yellow_yb - white_yb))
-	yellow = ((rg(y0, l0, m0, s0) - white_rg) / abs(red_rg - white_rg), (yb(y0, l0, m0, s0) - white_yb) / abs(yellow_yb - white_yb))
 	blue = ((rg(b0, l0, m0, s0) - white_rg) / abs(red_rg - white_rg), (yb(b0, l0, m0, s0) - white_yb) / abs(yellow_yb - white_yb))
-	cyan = ((rg(c0, l0, m0, s0) - white_rg) / abs(red_rg - white_rg), (yb(c0, l0, m0, s0) - white_yb) / abs(yellow_yb - white_yb))
 	
 	# find and scale RG and YB coordinates for wavelengths 300-800
 	for i in range(0, 500):
@@ -579,8 +596,8 @@ def cs_tables_2(l, m, s):
 		cs_target[i][1] = yb_target
 		
 		# convert from RGYB to RGB
-		rgb_source = rgyb_to_rgb(cs_source[i][0], cs_source[i][1], red, green, blue, (white_rg, white_yb))
-		rgb_target = rgyb_to_rgb(cs_target[i][0], cs_target[i][1], red, green, blue, (white_rg, white_yb))
+		rgb_source = rgyb_to_rgb(cs_source[i][0], cs_source[i][1], red, blue)
+		rgb_target = rgyb_to_rgb(cs_target[i][0], cs_target[i][1], red, blue)
 		#print(rgb_source)
 		#print(rgb_target)
 		cs_source[i][2] = colorsys.rgb_to_hls(rgb_source[0], rgb_source[1], rgb_source[2])[0] * 360
@@ -591,45 +608,26 @@ def cs_tables_2(l, m, s):
 	
 	return [cs_source, cs_target]
 
-def rgyb_to_rgb(rg, yb, red, green, blue, white):
+def rgyb_to_rgb(rg, yb, red, blue):
 	#print(values)
 	# clamp
-	if (rg < blue[0]):
-		rg = blue[0]
-	if (yb < blue[1]):
-		yb = blue[1]
-	if (rg > red[0]):
-		rg = red[0]
-	if (yb > red[1]):
-		yb = red[1]
+	#if (rg < blue[0]):
+	#	rg = blue[0]
+	#if (yb < blue[1]):
+	#	yb = blue[1]
+	#if (rg > red[0]):
+	#	rg = red[0]
+	#if (yb > red[1]):
+	#	yb = red[1]
 	
 	r = 1
 	g = 1
 	b = 1
 	
-	# This doesn't work that way. "Blue" is way off to the left of "green".
-	# first quadrant
-	#if (rg > 0 and yb > 0):
 	if (yb > 0):
 		r = abs(1 + rg)
 		g = abs(1 - rg)
 		b = abs(1 - yb)
-	#print([r, g, b])
-	# second quadrant
-	#elif (rg > 0 and yb < 0):
-	#	r = math.dist(blue, (rg, yb)) # distance from blue
-	#	g = 1 - math.dist((0, 0), (rg, yb)) # distance from white
-	#	b = 1 - math.dist(blue, (rg, yb)) / 2*math.sqrt(2) # negative distance from blue
-	# third quadrant
-	#elif (rg < 0 and yb < 0):
-	#	r = 1 - math.dist((0, 0), (rg, yb)) # distance from white
-	#	g = math.dist(blue, (rg, yb)) # distance from blue
-	#	b = 1 - math.dist(blue, (rg, yb)) / 2*math.sqrt(2) # negative distance from blue
-	# fourth quadrant
-	#elif (rg < 0 and yb > 0):
-	#	r = 1 + rg
-	#	g = 1
-	#	b = 1 - yb
 	elif (yb < 0):
 		r = abs(1 + rg + yb)
 		g = abs(1 - rg + yb)
@@ -646,58 +644,65 @@ def rgyb_to_rgb(rg, yb, red, green, blue, white):
 		r = r / b
 		g = g / b
 		b = 1
-
-	# distance to lines defining the color space (this probably doesn't work that way either
-	# because non-linear, but it should be closer)
-	#dist_r = abs((blue[0] - green[0]) * (red[1] - green[1]) - (red[0] - green[0]) * (blue[1] - green[1])) / math.sqrt((blue[0] - green[0])**2 + (blue[1] - green[1])**2)
-	#dist_g = abs((blue[0] - red[0]) * (green[1] - red[1]) - (green[0] - red[0]) * (blue[1] - red[1])) / math.sqrt((blue[0] - red[0])**2 + (blue[1] - red[1])**2)
-	#dist_b = abs((red[0] - green[0]) * (blue[1] - green[1]) - (blue[0] - green[0]) * (red[1] - green[1])) / math.sqrt((red[0] - green[0])**2 + (red[1] - green[1])**2)
-	
-	#r = (abs((blue[0] - green[0]) * (yb - green[1]) - (rg - green[0]) * (blue[1] - green[1])) / math.sqrt((blue[0] - green[0])**2 + (blue[1] - green[1])**2)) / dist_r
-	#g = (abs((blue[0] - red[0]) * (yb - red[1]) - (rg - red[0]) * (blue[1] - red[1])) / math.sqrt((blue[0] - red[0])**2 + (blue[1] - red[1])**2)) / dist_g
-	#b = (abs((red[0] - green[0]) * (yb - green[1]) - (rg - green[0]) * (red[1] - green[1])) / math.sqrt((red[0] - green[0])**2 + (red[1] - green[1])**2)) / dist_b
 	
 	return [r, g, b]
 
 def hue_to_wavelength_2(h, source):
-	#hsl = HSLColor(h, 0.5, 0.5)
-	#lab = convert_color(hsl, LabColor).get_value_tuple()
-	#a = round(lab[1])
-	#b = round(lab[2])
-	
-	for i in range(0, 500):
-		h_cur = source[i][2]
-		h_next = source[i + 1][2]
-		#print(rgb_cur)
+	if (0 <= h <= 270):
+		for i in range(0, 500):
+			h_cur = source[i][2]
+			h_next = source[i + 1][2]
+			
+			# exact match
+			if (round(h) == round(h_cur)):
+				return i + 300
+			# intermediate match
+			elif (h_next <= h <= h_cur or h_cur <= h <= h_next):
+				return i + 0.5 + 300
 		
-		
-		# exact match
-		if (round(h) == round(h_cur)):
-			#print(i)
-			return i + 300
-		# intermediate match
-		elif (h_next <= h <= h_cur or h_cur <= h <= h_next):
-			#print(i)
-			return i + 0.5 + 300
-	
-	# not found
-	#print(i)
-	return 800
+		return 800
+	else:
+		return colorsys.hls_to_rgb(hue / 360, 0.5, 1)
 
 def wl_to_rgb_4(w, target):
-	#print(w)
 	if (w == round(w)):
 		return colorsys.hls_to_rgb(target[round(w) - 300][2] / 360, 0.5, 1)
 	else:
 		return colorsys.hls_to_rgb(((target[round(w) - 301][2] + target[round(w) - 300][2]) / 2) / 360, 0.5, 1)
+
+# It's not clear how exactly CVS alters the saturation. What I've done here is compare the
+# distances from the white point for a wavelength's entries in the source and target tables.
+# The results of this are a bit patchy but broadly resemble CVS output.
+def saturation(w, source, target):
+	if (type(w) != tuple):
+		if (w == round(w)):
+			sx = source[round(w) - 300][0]
+			sy = source[round(w) - 300][1]
+			tx = target[round(w) - 300][0]
+			ty = target[round(w) - 300][1]
+		else:
+			sx = (source[round(w) - 301][0] + source[round(w) - 300][0]) / 2
+			sy = (source[round(w) - 301][1] + target[round(w) - 300][1]) / 2
+			tx = (source[round(w) - 301][0] + source[round(w) - 300][0]) / 2
+			ty = (source[round(w) - 301][1] + target[round(w) - 300][1]) / 2
+	else:
+		sx = source[r0 - 300][0] * w[0] + source[b0 - 300][0] * w[1]
+		sy = source[r0 - 300][1] * w[0] + source[b0 - 300][1] * w[1]
+		tx = target[r0 - 300][0] * w[0] + target[b0 - 300][0] * w[1]
+		ty = target[r0 - 300][1] * w[0] + target[b0 - 300][1] * w[1]
 	
-	#return convert_color(LabColor(50, ab[0], ab[1]), sRGBColor).get_value_tuple()
+	sat_s = math.dist((0, 0), (sx, sy))
+	sat_t = math.dist((0, 0), (tx, ty))
+	if (sat_s == 0):
+		return 0
+	return sat_t / sat_s
 
 # Convert image from BGR to HLS. We use BGR because this is how OpenCV reads images.
 # If we use RGB, the output appears normal with settings approximating human vision,
 # but shifting the cones produces the opposite of the expected result.
 img = cv2.imread(imagename)
 img_hls = cv2.cvtColor(img, cv2.COLOR_BGR2HLS)
+img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
 # switch method used based on input -- this function calls the desired version of wl_to_rgb
 # default is 2 (cone response ratios)
@@ -745,13 +750,17 @@ for x in range(img.shape[0]):
 		#print("pixel: " + str(x) + ", " + str(y))
 		# find pixel
 		hls = img_hls[x][y]
+		#lch = convert_color(sRGBColor(img_rgb[x][y][0], img_rgb[x][y][1], img_rgb[x][y][2]), LCHabColor).get_value_tuple()
 		
 		# convert hue from 0-180 (OpenCV format) to 0-360
 		hue = hls[0]*2
-		
+		#hue = lch[2]
+		#print("hue")
+		#print(hue)
+		#print(img_hls[x][y][0]*2)
+		#
 		# convert hue to predominant wavelength(s)
 		wl = hue_to_wavelength(hue)
-		#print(hue)
 		
 		if (type(wl) != tuple):
 			hue_target = wl_to_rgb(wl, lcone, mcone, scone)
@@ -760,26 +769,37 @@ for x in range(img.shape[0]):
 			hue_b = wl_to_rgb(b0, lcone, mcone, scone)
 			# sum the amounts of "red" and "blue"
 			hue_target = [hue_r[0] * wl[0] + hue_b[0] * wl[2], hue_r[1] * wl[0] + hue_b[1] * wl[2], hue_r[2] * wl[0] + hue_b[2] * wl[2]]
+			#print(hue_target)
 		
 		# convert predominant wavelengths back into a hue
-		#print(hue_target)
 		hls_target = colorsys.rgb_to_hls(hue_target[0], hue_target[1], hue_target[2])
-		#print(hls_target)
+		#lch_target = convert_color(sRGBColor(hue_target[0], hue_target[1], hue_target[2]), LCHabColor).get_value_tuple()
+		
+		if (version == 4):
+			sat_diff = saturation(wl, tables[0], tables[1])
+			#sat_diff = 1
+		else:
+			sat_diff = hls_target[2]
+			#sat_diff = lch_target[1]
+		
 		# shift hue in our pixel. Colorsys uses 0-1, so we have to convert back to
 		# OpenCV format.
-		img_hls[x][y] = [hls_target[0]*180, hls[1], hls[2]]
+		img_hls[x][y] = [hls_target[0]*180, hls[1], hls[2] * sat_diff]
+		#lch_final = LCHabColor(lch[0], lch[1] * sat_diff, lch_target[2])
+		#img_rgb[x][y] = convert_color(lch_final, sRGBColor).get_value_tuple()
 
 # convert back to BGR
 img_result = cv2.cvtColor(img_hls, cv2.COLOR_HLS2BGR)
+#img_result = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
 
 # fix brightness
-#img_lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
-#img_result_lab = cv2.cvtColor(img_result, cv2.COLOR_BGR2LAB)
-#for x in range(img.shape[0]):
-#	for y in range(img.shape[1]):
-#		img_result_lab[x][y][0] = img_lab[x][y][0]
+img_lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+img_result_lab = cv2.cvtColor(img_result, cv2.COLOR_BGR2LAB)
+for x in range(img.shape[0]):
+	for y in range(img.shape[1]):
+		img_result_lab[x][y][0] = img_lab[x][y][0]
 
-#img_result = cv2.cvtColor(img_result_lab, cv2.COLOR_LAB2BGR)
+img_result = cv2.cvtColor(img_result_lab, cv2.COLOR_LAB2BGR)
 
 # display result
 cv2.imwrite("colorvisionpy-result.png", img_result)
