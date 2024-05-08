@@ -25,7 +25,7 @@ import numpy as np
 import time
 import argparse
 import colormath
-from colormath.color_objects import LCHabColor, sRGBColor
+from colormath.color_objects import LabColor, LCHabColor, sRGBColor, XYZColor, HSLColor
 from colormath.color_conversions import convert_color
 
 # execution time
@@ -39,6 +39,7 @@ parser.add_argument("-s", "--sw", type=int, help="shortwave cone sensitivity")
 parser.add_argument("--slw", type=int, default=560, help="source longwave cone sensitivity")
 parser.add_argument("--smw", type=int, default=530, help="source mediumwave cone sensitivity")
 parser.add_argument("--ssw", type=int, default=420, help="source shortwave cone sensitivity")
+parser.add_argument("--cutoff", type=int, default=300, help="lower limit of lens transmission")
 parser.add_argument("-r", "--red", type=int, default=650, help="reference red")
 parser.add_argument("-y", "--yellow", type=int, default=570, help="reference yellow")
 parser.add_argument("-g", "--green", type=int, default=545, help="reference green")
@@ -49,13 +50,10 @@ parser.add_argument("-i", "--image", help="image name")
 parser.add_argument("-v", "--version", type=int, default=2, help="color conversion method")
 args = parser.parse_args()
 
-# image
-imagename = args.image
-
 # cone peak sensitivities
-lcone = args.lw
-mcone = args.mw
-scone = args.sw
+l1 = args.lw
+m1 = args.mw
+s1 = args.sw
 
 # default reference cone peaks
 l0 = args.slw
@@ -73,12 +71,28 @@ v0 = args.violet
 # method to use
 version = args.version
 
+# relative wavelength sensitivity
+# This is not derived from any specific source. Instead we add the L, M and S functions weighted
+# by the proportion of L, M and S cones, assumed to be 10:5:1, and multiply this by a function
+# resembling a graph of typical lens transmission adjusted to reach 1 at 800 nm. The result
+# for human-like values is similar (but not identical) to the CIE luminous efficiency function.
+def sensitivity(w, l, m, s, c=300):
+	value = (wl_to_s(w, l) + wl_to_s(w, m) / 2 + wl_to_s(w, s) / 10) * np.log(w - c) / np.log(800 - c)
+	if (value > 0): # a log function has the wrong shape near the cutoff point
+		return value
+	return 0
+
+# black body
+# This doesn't work because Python doesn't like small numbers and the denominator is rounded
+# to 1 - 1 = 0. This is probably also why Gnuplot refuses to plot a black body curve.
+#def blackbody(w, t):
+#	h = 6.62607015e-34
+#	c = 299792458
+#	k = 1.380649e-23
+	#print(math.exp(h*c / w*k*t))
+#	return w**-4 / (math.exp(0.1) - 1)
+
 # convert hue to wavelength based on location of primary and secondary colors
-# Originally I used primary colors based on an sRGB monitor display and my observations
-# of white light through a spectroscope (620, 580, 550, 500, 470, 420). I've changed it
-# to more closely match the CIE color space so these colors stand in for "perceptual red",
-# etc. rather than the limitations of a monitor. This produces a result closer to both CVS
-# output and the fat-tailed dunnart color space (Arrese et al.).
 def hue_to_wavelength_0(hue):
 	#print(hue)
 	# red-yellow: 0-59
@@ -297,14 +311,8 @@ def wl_to_rgb_1(w, target):
 # When used with the images from studies that used CVS (see also "Experimental evidence that
 # primate trichromacy is well suited for detecting primate social colour signals", Hiramatsu
 # et al. 2017) this version gives results similar to the actual CVS output shown in these
-# papers besides not accounting for saturation. Melin et al. says CVS uses a table of
-# "relative sensitivities", so my method should be similar to what it does besides using
-# fewer points and more linear interpolation. However, the location of "yellow" is far more
+# papers besides not accounting for saturation. However, the location of "yellow" is far more
 # red-shifted, resulting in a green/blue shift where CVS output shows a red shift.
-# Note that I've used the Stockton and Sharpe values of 440-540-565 whereas the studies
-# assume 420-530-560 is the unaltered default. Inputting these values produces a red-shifted
-# image. (Using the Stockton and Sharpe values produces a 1:1 transformation, as it
-# should.)
 # In earlier versions, a cone spacing of less than about 8-10 nm (as in uakari vision,
 # 420-550-556) usually produced a math overflow error. Now the program will run with this
 # type of input but produces a counterintuitive result due to the green/blue shift.
@@ -379,12 +387,12 @@ def find_primaries(l, m, s):
 		violet = 300
 	
 	# print out colors
-	print("red: " + str(red))
-	print("yellow: " + str(yellow))
-	print("green: " + str(green))
-	print("cyan: " + str(cyan))
-	print("blue: " + str(blue))
-	print("violet: " + str(violet))
+	#print("red: " + str(red))
+	#print("yellow: " + str(yellow))
+	#print("green: " + str(green))
+	#print("cyan: " + str(cyan))
+	#print("blue: " + str(blue))
+	#print("violet: " + str(violet))
 	
 	return [red, yellow, green, cyan, blue, violet]
 
@@ -697,25 +705,192 @@ def saturation(w, source, target):
 		return 0
 	return sat_t / sat_s
 
-# Convert image from BGR to HLS. We use BGR because this is how OpenCV reads images.
-# If we use RGB, the output appears normal with settings approximating human vision,
-# but shifting the cones produces the opposite of the expected result.
-img = cv2.imread(imagename)
-img_hls = cv2.cvtColor(img, cv2.COLOR_BGR2HLS)
-img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+# version 5
+# This converts LMS values to CIE XYZ and then to HLS. See https://en.wikipedia.org/wiki/LMS_color_space for the conversion matrix.
+# The results are very similar to CVS and to version 4 aside from a slight green shift for
+# narrow spacing, probably for the same reason as in version 2. The main problem is the
+# range of hues provided for integer wavelengths is full of holes you could drive a truck
+# through. These gaps can be filled in convincingly with some careful calculations (probably
+# the reason for the long execution time) for primate-like values, but for other arrangements
+# it doesn't work as well.
+# XYZ conversion can also simulate dichromacy in the same way as v0 and v4. Tritanopia is a
+# bit odd-looking as red becomes purple for some reason.
+def cs_tables_3(l, m, s):
+	cs_source = np.empty([501, 4])
+	cs_target = np.empty([501, 4])
+	lms_to_xyz = np.array([
+		[1.91020, -1.11212, 0.20191],
+		[0.37095, 0.62905, 0],
+		[0, 0, 1]
+	])
+	
+	for i in range(0, 500):
+		cs_source[i][0] = wl_to_s(i + 300, l0) / (wl_to_s(i + 300, l0) + wl_to_s(i + 300, m0) + wl_to_s(i + 300, s0))
+		cs_source[i][1] = wl_to_s(i + 300, m0) / (wl_to_s(i + 300, l0) + wl_to_s(i + 300, m0) + wl_to_s(i + 300, s0))
+		cs_source[i][2] = wl_to_s(i + 300, s0) / (wl_to_s(i + 300, l0) + wl_to_s(i + 300, m0) + wl_to_s(i + 300, s0))
+		lms_array = np.empty([3, 1])
+		lms_array[0] = cs_source[i][0]
+		lms_array[1] = cs_source[i][1]
+		lms_array[2] = cs_source[i][2]
+		xyz_array = np.matmul(lms_to_xyz, lms_array)
+		xyz = XYZColor(xyz_array[0], xyz_array[1], xyz_array[2])
+		hsl = convert_color(xyz, HSLColor)
+		cs_source[i][3] = hsl.get_value_tuple()[0]
+		
+		cs_target[i][0] = wl_to_s(i + 300, l) / (wl_to_s(i + 300, l) + wl_to_s(i + 300, m) + wl_to_s(i + 300, s))
+		cs_target[i][1] = wl_to_s(i + 300, m) / (wl_to_s(i + 300, l) + wl_to_s(i + 300, m) + wl_to_s(i + 300, s))
+		cs_target[i][2] = wl_to_s(i + 300, s) / (wl_to_s(i + 300, l) + wl_to_s(i + 300, m) + wl_to_s(i + 300, s))
+		lms_array1 = np.empty([3, 1])
+		lms_array1[0] = cs_target[i][0]
+		lms_array1[1] = cs_target[i][1]
+		lms_array1[2] = cs_target[i][2]
+		xyz_array1 = np.matmul(lms_to_xyz, lms_array1)
+		xyz1 = XYZColor(xyz_array1[0], xyz_array1[1], xyz_array1[2])
+		hsl1 = convert_color(xyz1, HSLColor)
+		cs_target[i][3] = hsl1.get_value_tuple()[0]
+	
+	return [cs_source, cs_target]
+
+# As with version 1, this one does some intense gap-filling to ensure the result looks sensible.
+def hue_to_wavelength_3(h, source):
+	if (0 <= h <= 270):
+		i = 0
+		while (i < 500):
+			h_cur = round(source[i][3])
+			h_next = round(source[i + 1][3])
+			
+			# exact match
+			if (round(h) == round(h_cur)):
+				return i + 300
+			# intermediate match
+			elif (h_next <= h <= h_cur):
+				return i + 1 - (h - h_next) / (h_cur - h_next) + 300
+			else:
+				i += 1
+		
+		return 800
+	else:
+		return colorsys.hls_to_rgb(hue / 360, 0.5, 1)
+
+def wl_to_rgb_5(w, target):
+	if (w == round(w)):
+		return colorsys.hls_to_rgb(target[round(w) - 300][3] / 360, 0.5, 1)
+	else: # if non-integer value, use a weighted average
+		d = w - int(w)
+		return colorsys.hls_to_rgb((target[math.floor(w) - 300][3] * (1 - d) + target[math.ceil(w) - 300][3] * d) / 360, 0.5, 1)
+
+# An XYZ version of the saturation function. The shift is similar to CVS and smoother than
+# version 4 but less noticeable. Averaging the "white" LMS values or turning them into
+# ratios produces a much more extreme shift. The issue may be E vs. D65.
+def saturation_1(w, source, target, l, m, s):
+	if (type(w) != tuple):
+		if (w == round(w)):
+			sx = source[round(w) - 300][0]
+			sy = source[round(w) - 300][1]
+			sz = source[round(w) - 300][2]
+			tx = target[round(w) - 300][0]
+			ty = target[round(w) - 300][1]
+			tz = target[round(w) - 300][2]
+		else:
+			sx = (source[round(w) - 301][0] + source[round(w) - 300][0]) / 2
+			sy = (source[round(w) - 301][1] + source[round(w) - 300][1]) / 2
+			sz = (source[round(w) - 301][2] + source[round(w) - 300][2]) / 2
+			tx = (source[round(w) - 301][0] + target[round(w) - 300][0]) / 2
+			ty = (source[round(w) - 301][1] + target[round(w) - 300][1]) / 2
+			tz = (source[round(w) - 301][2] + target[round(w) - 300][2]) / 2
+	else:
+		sx = source[r0 - 300][0] * w[0] + source[b0 - 300][0] * w[1]
+		sy = source[r0 - 300][1] * w[0] + source[b0 - 300][1] * w[1]
+		sz = source[r0 - 300][2] * w[0] + source[b0 - 300][2] * w[1]
+		tx = target[r0 - 300][0] * w[0] + target[b0 - 300][0] * w[1]
+		ty = target[r0 - 300][1] * w[0] + target[b0 - 300][1] * w[1]
+		tz = target[r0 - 300][2] * w[0] + target[b0 - 300][2] * w[1]
+	
+	# source white point
+	white_l = 0
+	white_m = 0
+	white_s = 0
+	for i in range(300, 800):
+		white_l += wl_to_s(i, l0)
+		white_m += wl_to_s(i, m0)
+		white_s += wl_to_s(i, s0)
+	
+	#white_l = white_l / 500
+	#white_m = white_m / 500
+	#white_s = white_s / 500
+	#white_total = white_l + white_m + white_s
+	#white_l = white_l / white_total
+	#white_m = white_m / white_total
+	#white_s = white_s / white_total
+	
+	# target white point
+	white_l1 = 0
+	white_m1 = 0
+	white_s1 = 0
+	for i in range(300, 800):
+		white_l1 += wl_to_s(i, l)
+		white_m1 += wl_to_s(i, m)
+		white_s1 += wl_to_s(i, s)
+	
+	#white_l1 = white_l1 / 500
+	#white_m1 = white_m1 / 500
+	#white_s1 = white_s1 / 500
+	#white_total1 = white_l1 + white_m1 + white_s1
+	#white_l1 = white_l1 / white_total1
+	#white_m1 = white_m1 / white_total1
+	#white_s1 = white_s1 / white_total1
+	
+	# convert to XYZ
+	lms_to_xyz = np.array([
+		[1.91020, -1.11212, 0.20191],
+		[0.37095, 0.62905, 0],
+		[0, 0, 1]
+	])
+	white_lms = np.array([
+		[white_l],
+		[white_m],
+		[white_s]
+	])
+	white_lms1 = np.array([
+		[white_l1],
+		[white_m1],
+		[white_s1]
+	])
+	s = np.array([
+		[sx],
+		[sy],
+		[sz]
+	])
+	t = np.array([
+		[tx],
+		[ty],
+		[tz]
+	])
+	white_xyz = np.matmul(lms_to_xyz, white_lms)
+	white_xyz1 = np.matmul(lms_to_xyz, white_lms1)
+	s_xyz = np.matmul(lms_to_xyz, s)
+	t_xyz = np.matmul(lms_to_xyz, t)
+	
+	sat_s = math.dist(white_xyz, s_xyz)
+	sat_t = math.dist(white_xyz1, t_xyz)
+	if (sat_s == 0):
+		return 0
+	return sat_t / sat_s
 
 # switch method used based on input -- this function calls the desired version of wl_to_rgb
 # default is 2 (cone response ratios)
 
 # save some time by taking these out of wl_to_rgb so we don't call them for every pixel
 if (version == 1):
-	tables = cs_tables_1(lcone, mcone, scone)
+	tables = cs_tables_1(l1, m1, s1)
 elif (version == 2):
-	primaries = find_primaries(lcone, mcone, scone)
+	primaries = find_primaries(l1, m1, s1)
 elif (version == 3):
-	tables = cs_tables(lcone, mcone, scone)
+	tables = cs_tables(l1, m1, s1)
 elif (version == 4):
-	tables = cs_tables_2(lcone, mcone, scone)
+	tables = cs_tables_2(l1, m1, s1)
+elif (version == 5):
+	tables = cs_tables_3(l1, m1, s1)
 
 # wrapper functions
 def wl_to_rgb(w, l, m, s):
@@ -732,6 +907,8 @@ def wl_to_rgb(w, l, m, s):
 		return colorsys.hls_to_rgb(hue / 360, 0.5, 1)
 	elif (version == 4):
 		return wl_to_rgb_4(w, tables[1])
+	elif (version == 5):
+		return wl_to_rgb_5(w, tables[1])
 	else:
 		return wl_to_rgb_0(w, l, m, s)
 
@@ -740,69 +917,301 @@ def hue_to_wavelength(h):
 		return hue_to_wavelength_1(h, tables[0])
 	elif (version == 4):
 		return hue_to_wavelength_2(h, tables[0])
+	elif (version == 5):
+		return hue_to_wavelength_3(h, tables[0])
 	else:
 		return hue_to_wavelength_0(h)
 
-# transform hues for each pixel
-for x in range(img.shape[0]):
-	for y in range(img.shape[1]):
-		# report current pixel to determine whether there's an infinite loop
-		#print("pixel: " + str(x) + ", " + str(y))
-		# find pixel
-		hls = img_hls[x][y]
-		#lch = convert_color(sRGBColor(img_rgb[x][y][0], img_rgb[x][y][1], img_rgb[x][y][2]), LCHabColor).get_value_tuple()
-		
-		# convert hue from 0-180 (OpenCV format) to 0-360
-		hue = hls[0]*2
-		#hue = lch[2]
-		#print("hue")
-		#print(hue)
-		#print(img_hls[x][y][0]*2)
-		#
-		# convert hue to predominant wavelength(s)
-		wl = hue_to_wavelength(hue)
-		
-		if (type(wl) != tuple):
-			hue_target = wl_to_rgb(wl, lcone, mcone, scone)
-		else:
-			hue_r = wl_to_rgb(r0, lcone, mcone, scone)
-			hue_b = wl_to_rgb(b0, lcone, mcone, scone)
-			# sum the amounts of "red" and "blue"
-			hue_target = [hue_r[0] * wl[0] + hue_b[0] * wl[2], hue_r[1] * wl[0] + hue_b[1] * wl[2], hue_r[2] * wl[0] + hue_b[2] * wl[2]]
-			#print(hue_target)
-		
-		# convert predominant wavelengths back into a hue
-		hls_target = colorsys.rgb_to_hls(hue_target[0], hue_target[1], hue_target[2])
-		#lch_target = convert_color(sRGBColor(hue_target[0], hue_target[1], hue_target[2]), LCHabColor).get_value_tuple()
-		
-		if (version == 4):
-			sat_diff = saturation(wl, tables[0], tables[1])
-			#sat_diff = 1
-		else:
-			sat_diff = hls_target[2]
-			#sat_diff = lch_target[1]
-		
-		# shift hue in our pixel. Colorsys uses 0-1, so we have to convert back to
-		# OpenCV format.
-		img_hls[x][y] = [hls_target[0]*180, hls[1], hls[2] * sat_diff]
-		#lch_final = LCHabColor(lch[0], lch[1] * sat_diff, lch_target[2])
-		#img_rgb[x][y] = convert_color(lch_final, sRGBColor).get_value_tuple()
+# image processing
+if (args.image):
+	imagename = args.image
+	# Convert image from BGR to HLS. We use BGR because this is how OpenCV reads images.
+	# If we use RGB, the output appears normal with settings approximating human vision,
+	# but shifting the cones produces the opposite of the expected result.
+	img = cv2.imread(imagename)
+	img_hls = cv2.cvtColor(img, cv2.COLOR_BGR2HLS)
+	img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-# convert back to BGR
-img_result = cv2.cvtColor(img_hls, cv2.COLOR_HLS2BGR)
-#img_result = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
+	# transform hues for each pixel
+	for x in range(img.shape[0]):
+		for y in range(img.shape[1]):
+			# report current pixel to determine whether there's an infinite loop
+			#print("pixel: " + str(x) + ", " + str(y))
+			# find pixel
+			hls = img_hls[x][y]
+			#lch = convert_color(sRGBColor(img_rgb[x][y][0], img_rgb[x][y][1], img_rgb[x][y][2]), LCHabColor).get_value_tuple()
+			
+			# convert hue from 0-180 (OpenCV format) to 0-360
+			hue = hls[0]*2
+			#hue = lch[2]
+			#print("hue")
+			#print(hue)
+			#print(img_hls[x][y][0]*2)
+			#
+			# convert hue to predominant wavelength(s)
+			wl = hue_to_wavelength(hue)
+			
+			if (type(wl) != tuple):
+				hue_target = wl_to_rgb(wl, l1, m1, s1)
+			else:
+				hue_r = wl_to_rgb(r0, l1, m1, s1)
+				hue_b = wl_to_rgb(b0, l1, m1, s1)
+				# sum the amounts of "red" and "blue"
+				hue_target = [hue_r[0] * wl[0] + hue_b[0] * wl[2], hue_r[1] * wl[0] + hue_b[1] * wl[2], hue_r[2] * wl[0] + hue_b[2] * wl[2]]
+				#print(hue_target)
+			
+			# convert predominant wavelengths back into a hue
+			hls_target = colorsys.rgb_to_hls(hue_target[0], hue_target[1], hue_target[2])
+			#lch_target = convert_color(sRGBColor(hue_target[0], hue_target[1], hue_target[2]), LCHabColor).get_value_tuple()
+			
+			if (version == 4):
+				sat_diff = saturation(wl, tables[0], tables[1])
+				#sat_diff = 1
+			elif (version == 5):
+				sat_diff = saturation_1(wl, tables[0], tables[1], l1, m1, s1)
+			else:
+				sat_diff = hls_target[2]
+				#sat_diff = lch_target[1]
+			
+			# shift hue in our pixel. Colorsys uses 0-1, so we have to convert back to
+			# OpenCV format.
+			img_hls[x][y] = [hls_target[0]*180, hls[1], hls[2] * sat_diff]
+			#lch_final = LCHabColor(lch[0], lch[1] * sat_diff, lch_target[2])
+			#img_rgb[x][y] = convert_color(lch_final, sRGBColor).get_value_tuple()
 
-# fix brightness
-img_lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
-img_result_lab = cv2.cvtColor(img_result, cv2.COLOR_BGR2LAB)
-for x in range(img.shape[0]):
-	for y in range(img.shape[1]):
-		img_result_lab[x][y][0] = img_lab[x][y][0]
+	# convert back to BGR
+	img_result = cv2.cvtColor(img_hls, cv2.COLOR_HLS2BGR)
+	#img_result = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
 
-img_result = cv2.cvtColor(img_result_lab, cv2.COLOR_LAB2BGR)
+	# fix brightness
+	# I tried using LCh instead of HLS, but it doesn't work the way I expected. This extra step
+	# doesn't add much time.
+	img_lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+	img_result_lab = cv2.cvtColor(img_result, cv2.COLOR_BGR2LAB)
+	for x in range(img.shape[0]):
+		for y in range(img.shape[1]):
+			img_result_lab[x][y][0] = img_lab[x][y][0]
 
-# display result
-cv2.imwrite("colorvisionpy-result.png", img_result)
+	img_result = cv2.cvtColor(img_result_lab, cv2.COLOR_LAB2BGR)
+
+	# display result
+	cv2.imwrite("colorvisionpy-result.png", img_result)
+
+# print general information
+else:
+	print("L: " + str(l1) + ", M: " + str(m1) + ", S: " + str(s1))
+	print("")
+	
+	# primary/secondary colors
+	primaries = find_primaries(l1, m1, s1)
+	print("Estimated primary and secondary wavelengths based on cone response ratios:")
+	print("red: " + str(primaries[0]))
+	print("yellow: " + str(primaries[1]))
+	print("green: " + str(primaries[2]))
+	print("cyan: " + str(primaries[3]))
+	print("blue: " + str(primaries[4]))
+	print("violet: " + str(primaries[5]))
+	print("")
+	
+	# white
+	white_l = 0
+	white_m = 0
+	white_s = 0
+	for i in range(300, 800):
+		white_l += wl_to_s(i, l1) * sensitivity(i, l1, m1, s1, args.cutoff)
+		white_m += wl_to_s(i, m1) * sensitivity(i, l1, m1, s1, args.cutoff)
+		white_s += wl_to_s(i, s1) * sensitivity(i, l1, m1, s1, args.cutoff)
+	
+	white_l = white_l / (white_l + white_m + white_s)
+	white_m = white_m / (white_l + white_m + white_s)
+	white_s = white_s / (white_l + white_m + white_s)
+	
+	print("LMS response to white (equal-energy or \"E\"): l=" + str(white_l)
+		+ ", m=" + str(white_m) + ", s=" + str(white_s))
+	
+	white_lms = np.array([
+		[white_l],
+		[white_m],
+		[white_s]
+	])
+	lms_to_xyz = np.array([
+		[1.91020, -1.11212, 0.20191],
+		[0.37095, 0.62905, 0],
+		[0, 0, 1]
+	])
+	white_xyz = np.matmul(lms_to_xyz, white_lms)
+	xyz = XYZColor(white_xyz[0], white_xyz[1], white_xyz[2], illuminant="e")
+	print("Color space coordinates of white (with E illuminant):")
+	print("CIE XYZ: " + str(xyz.get_value_tuple()))
+	print("sRGB: " + str(convert_color(xyz, sRGBColor).get_value_tuple()))
+	print("HSL: " + str(convert_color(xyz, HSLColor).get_value_tuple()))
+	print("CIE LAB: " + str(convert_color(xyz, LabColor).get_value_tuple()))
+	print("LCh (LCHab): " + str(convert_color(xyz, LCHabColor).get_value_tuple()))
+	print("")
+	
+	# non-UV white
+	white_l = 0
+	white_m = 0
+	white_s = 0
+	for i in range(400, 800):
+		white_l += wl_to_s(i, l1) * sensitivity(i, l1, m1, s1, args.cutoff)
+		white_m += wl_to_s(i, m1) * sensitivity(i, l1, m1, s1, args.cutoff)
+		white_s += wl_to_s(i, s1) * sensitivity(i, l1, m1, s1, args.cutoff)
+	
+	#white_l = white_l / 500
+	#white_m = white_m / 500
+	#white_s = white_s / 500
+	
+	print("LMS response to non-UV white (cut off at 400 nm): l=" + str(white_l)
+		+ ", m=" + str(white_m) + ", s=" + str(white_s))
+	
+	white_lms = np.array([
+		[white_l],
+		[white_m],
+		[white_s]
+	])
+	white_matrix = np.matmul(lms_to_xyz, white_lms)
+	white_xyz = XYZColor(white_matrix[0], white_matrix[1], white_matrix[2], illuminant="e")
+	print("Color space coordinates of non-UV white:")
+	print("CIE XYZ: " + str(white_xyz.get_value_tuple()))
+	print("sRGB: " + str(convert_color(white_xyz, sRGBColor).get_value_tuple()))
+	print("HSL: " + str(convert_color(white_xyz, HSLColor).get_value_tuple()))
+	print("CIE LAB: " + str(convert_color(white_xyz, LabColor).get_value_tuple()))
+	print("LCh (LCHab): " + str(convert_color(white_xyz, LCHabColor).get_value_tuple()))
+	print("")
+	
+	# leaves
+	
+	# reflectance spectrum of green maple leaves estimated from this graph:
+	# https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEgKwT9GhKlvdbOROD_JtEEym7Ovzq8GPfSCORiVcKklEQI9DSTuNjoaIJMWMdpJpc4ijq0T1m_PXF2seWczauKLz-4VPIY9TSXQqXdp1B80vu4w5O4lWaAF0k2kaA5ThrJrjCzlck8Ez1fF/s1600/LeafSpectra.jpg
+	# The graph has information for 300-400 but appears to be roughly 0 there.
+	leaf_l = 0
+	leaf_m = 0
+	leaf_s = 0
+	leaf_l += wl_to_s(400, l1) * sensitivity(400, l1, m1, s1, args.cutoff) * 0.01
+	leaf_m += wl_to_s(400, m1) * sensitivity(400, l1, m1, s1, args.cutoff) * 0.01
+	leaf_s += wl_to_s(400, s1) * sensitivity(400, l1, m1, s1, args.cutoff) * 0.01
+	leaf_l += wl_to_s(410, l1) * sensitivity(410, l1, m1, s1, args.cutoff) * 0.01
+	leaf_m += wl_to_s(410, m1) * sensitivity(410, l1, m1, s1, args.cutoff) * 0.01
+	leaf_s += wl_to_s(410, s1) * sensitivity(410, l1, m1, s1, args.cutoff) * 0.01
+	leaf_l += wl_to_s(420, l1) * sensitivity(420, l1, m1, s1, args.cutoff) * 0.01
+	leaf_m += wl_to_s(420, m1) * sensitivity(420, l1, m1, s1, args.cutoff) * 0.01
+	leaf_s += wl_to_s(420, s1) * sensitivity(420, l1, m1, s1, args.cutoff) * 0.01
+	leaf_l += wl_to_s(430, l1) * sensitivity(430, l1, m1, s1, args.cutoff) * 0.02
+	leaf_m += wl_to_s(430, m1) * sensitivity(430, l1, m1, s1, args.cutoff) * 0.02
+	leaf_s += wl_to_s(430, s1) * sensitivity(430, l1, m1, s1, args.cutoff) * 0.02
+	leaf_l += wl_to_s(440, l1) * sensitivity(440, l1, m1, s1, args.cutoff) * 0.02
+	leaf_m += wl_to_s(440, m1) * sensitivity(440, l1, m1, s1, args.cutoff) * 0.02
+	leaf_s += wl_to_s(440, s1) * sensitivity(440, l1, m1, s1, args.cutoff) * 0.02
+	leaf_l += wl_to_s(450, l1) * sensitivity(450, l1, m1, s1, args.cutoff) * 0.02
+	leaf_m += wl_to_s(450, m1) * sensitivity(450, l1, m1, s1, args.cutoff) * 0.02
+	leaf_s += wl_to_s(450, s1) * sensitivity(450, l1, m1, s1, args.cutoff) * 0.02
+	leaf_l += wl_to_s(460, l1) * sensitivity(460, l1, m1, s1, args.cutoff) * 0.02
+	leaf_m += wl_to_s(460, m1) * sensitivity(460, l1, m1, s1, args.cutoff) * 0.02
+	leaf_s += wl_to_s(460, s1) * sensitivity(460, l1, m1, s1, args.cutoff) * 0.02
+	leaf_l += wl_to_s(470, l1) * sensitivity(470, l1, m1, s1, args.cutoff) * 0.03
+	leaf_m += wl_to_s(470, m1) * sensitivity(470, l1, m1, s1, args.cutoff) * 0.03
+	leaf_s += wl_to_s(470, s1) * sensitivity(470, l1, m1, s1, args.cutoff) * 0.03
+	leaf_l += wl_to_s(480, l1) * sensitivity(480, l1, m1, s1, args.cutoff) * 0.04
+	leaf_m += wl_to_s(480, m1) * sensitivity(480, l1, m1, s1, args.cutoff) * 0.04
+	leaf_s += wl_to_s(480, s1) * sensitivity(480, l1, m1, s1, args.cutoff) * 0.04
+	leaf_l += wl_to_s(490, l1) * sensitivity(490, l1, m1, s1, args.cutoff) * 0.04
+	leaf_m += wl_to_s(490, m1) * sensitivity(490, l1, m1, s1, args.cutoff) * 0.04
+	leaf_s += wl_to_s(490, s1) * sensitivity(490, l1, m1, s1, args.cutoff) * 0.04
+	leaf_l += wl_to_s(500, l1) * sensitivity(500, l1, m1, s1, args.cutoff) * 0.05
+	leaf_m += wl_to_s(500, m1) * sensitivity(500, l1, m1, s1, args.cutoff) * 0.05
+	leaf_s += wl_to_s(500, s1) * sensitivity(500, l1, m1, s1, args.cutoff) * 0.05
+	leaf_l += wl_to_s(510, l1) * sensitivity(510, l1, m1, s1, args.cutoff) * 0.08
+	leaf_m += wl_to_s(510, m1) * sensitivity(510, l1, m1, s1, args.cutoff) * 0.08
+	leaf_s += wl_to_s(510, s1) * sensitivity(510, l1, m1, s1, args.cutoff) * 0.08
+	leaf_l += wl_to_s(520, l1) * sensitivity(520, l1, m1, s1, args.cutoff) * 0.15
+	leaf_m += wl_to_s(520, m1) * sensitivity(520, l1, m1, s1, args.cutoff) * 0.15
+	leaf_s += wl_to_s(520, s1) * sensitivity(520, l1, m1, s1, args.cutoff) * 0.15
+	leaf_l += wl_to_s(530, l1) * sensitivity(530, l1, m1, s1, args.cutoff) * 0.2
+	leaf_m += wl_to_s(530, m1) * sensitivity(530, l1, m1, s1, args.cutoff) * 0.2
+	leaf_s += wl_to_s(530, s1) * sensitivity(530, l1, m1, s1, args.cutoff) * 0.2
+	leaf_l += wl_to_s(540, l1) * sensitivity(540, l1, m1, s1, args.cutoff) * 0.22
+	leaf_m += wl_to_s(540, m1) * sensitivity(540, l1, m1, s1, args.cutoff) * 0.22
+	leaf_s += wl_to_s(540, s1) * sensitivity(540, l1, m1, s1, args.cutoff) * 0.22
+	leaf_l += wl_to_s(550, l1) * sensitivity(550, l1, m1, s1, args.cutoff) * 0.26
+	leaf_m += wl_to_s(550, m1) * sensitivity(550, l1, m1, s1, args.cutoff) * 0.26
+	leaf_s += wl_to_s(550, s1) * sensitivity(550, l1, m1, s1, args.cutoff) * 0.26
+	leaf_l += wl_to_s(560, l1) * sensitivity(560, l1, m1, s1, args.cutoff) * 0.25
+	leaf_m += wl_to_s(560, m1) * sensitivity(560, l1, m1, s1, args.cutoff) * 0.25
+	leaf_s += wl_to_s(560, s1) * sensitivity(560, l1, m1, s1, args.cutoff) * 0.25
+	leaf_l += wl_to_s(570, l1) * sensitivity(570, l1, m1, s1, args.cutoff) * 0.2
+	leaf_m += wl_to_s(570, m1) * sensitivity(570, l1, m1, s1, args.cutoff) * 0.2
+	leaf_s += wl_to_s(570, s1) * sensitivity(570, l1, m1, s1, args.cutoff) * 0.2
+	leaf_l += wl_to_s(580, l1) * sensitivity(580, l1, m1, s1, args.cutoff) * 0.19
+	leaf_m += wl_to_s(580, m1) * sensitivity(580, l1, m1, s1, args.cutoff) * 0.19
+	leaf_s += wl_to_s(580, s1) * sensitivity(580, l1, m1, s1, args.cutoff) * 0.19
+	leaf_l += wl_to_s(590, l1) * sensitivity(590, l1, m1, s1, args.cutoff) * 0.18
+	leaf_m += wl_to_s(590, m1) * sensitivity(590, l1, m1, s1, args.cutoff) * 0.18
+	leaf_s += wl_to_s(590, s1) * sensitivity(590, l1, m1, s1, args.cutoff) * 0.18
+	leaf_l += wl_to_s(600, l1) * sensitivity(600, l1, m1, s1, args.cutoff) * 0.17
+	leaf_m += wl_to_s(600, m1) * sensitivity(600, l1, m1, s1, args.cutoff) * 0.17
+	leaf_s += wl_to_s(600, s1) * sensitivity(600, l1, m1, s1, args.cutoff) * 0.17
+	leaf_l += wl_to_s(610, l1) * sensitivity(610, l1, m1, s1, args.cutoff) * 0.15
+	leaf_m += wl_to_s(610, m1) * sensitivity(610, l1, m1, s1, args.cutoff) * 0.15
+	leaf_s += wl_to_s(610, s1) * sensitivity(610, l1, m1, s1, args.cutoff) * 0.15
+	leaf_l += wl_to_s(620, l1) * sensitivity(620, l1, m1, s1, args.cutoff) * 0.15
+	leaf_m += wl_to_s(620, m1) * sensitivity(620, l1, m1, s1, args.cutoff) * 0.15
+	leaf_s += wl_to_s(620, s1) * sensitivity(620, l1, m1, s1, args.cutoff) * 0.15
+	leaf_l += wl_to_s(630, l1) * sensitivity(630, l1, m1, s1, args.cutoff) * 0.14
+	leaf_m += wl_to_s(630, m1) * sensitivity(630, l1, m1, s1, args.cutoff) * 0.14
+	leaf_s += wl_to_s(630, s1) * sensitivity(630, l1, m1, s1, args.cutoff) * 0.14
+	leaf_l += wl_to_s(640, l1) * sensitivity(640, l1, m1, s1, args.cutoff) * 0.13
+	leaf_m += wl_to_s(640, m1) * sensitivity(640, l1, m1, s1, args.cutoff) * 0.13
+	leaf_s += wl_to_s(640, s1) * sensitivity(640, l1, m1, s1, args.cutoff) * 0.13
+	leaf_l += wl_to_s(650, l1) * sensitivity(650, l1, m1, s1, args.cutoff) * 0.09
+	leaf_m += wl_to_s(650, m1) * sensitivity(650, l1, m1, s1, args.cutoff) * 0.09
+	leaf_s += wl_to_s(650, s1) * sensitivity(650, l1, m1, s1, args.cutoff) * 0.09
+	leaf_l += wl_to_s(660, l1) * sensitivity(660, l1, m1, s1, args.cutoff) * 0.05
+	leaf_m += wl_to_s(660, m1) * sensitivity(660, l1, m1, s1, args.cutoff) * 0.05
+	leaf_s += wl_to_s(660, s1) * sensitivity(660, l1, m1, s1, args.cutoff) * 0.05
+	leaf_l += wl_to_s(670, l1) * sensitivity(670, l1, m1, s1, args.cutoff) * 0.04
+	leaf_m += wl_to_s(670, m1) * sensitivity(670, l1, m1, s1, args.cutoff) * 0.04
+	leaf_s += wl_to_s(670, s1) * sensitivity(670, l1, m1, s1, args.cutoff) * 0.04
+	leaf_l += wl_to_s(680, l1) * sensitivity(680, l1, m1, s1, args.cutoff) * 0.05
+	leaf_m += wl_to_s(680, m1) * sensitivity(680, l1, m1, s1, args.cutoff) * 0.05
+	leaf_s += wl_to_s(680, s1) * sensitivity(680, l1, m1, s1, args.cutoff) * 0.05
+	leaf_l += wl_to_s(690, l1) * sensitivity(690, l1, m1, s1, args.cutoff) * 0.09
+	leaf_m += wl_to_s(690, m1) * sensitivity(690, l1, m1, s1, args.cutoff) * 0.09
+	leaf_s += wl_to_s(690, s1) * sensitivity(690, l1, m1, s1, args.cutoff) * 0.09
+	leaf_l += wl_to_s(700, l1) * sensitivity(700, l1, m1, s1, args.cutoff) * 0.27
+	leaf_m += wl_to_s(700, m1) * sensitivity(700, l1, m1, s1, args.cutoff) * 0.27
+	leaf_s += wl_to_s(700, s1) * sensitivity(700, l1, m1, s1, args.cutoff) * 0.27
+	leaf_l += wl_to_s(710, l1) * sensitivity(710, l1, m1, s1, args.cutoff) * 0.35
+	leaf_m += wl_to_s(710, m1) * sensitivity(710, l1, m1, s1, args.cutoff) * 0.35
+	leaf_s += wl_to_s(710, s1) * sensitivity(710, l1, m1, s1, args.cutoff) * 0.35
+	leaf_l += wl_to_s(720, l1) * sensitivity(720, l1, m1, s1, args.cutoff) * 0.4
+	leaf_m += wl_to_s(720, m1) * sensitivity(720, l1, m1, s1, args.cutoff) * 0.4
+	leaf_s += wl_to_s(720, s1) * sensitivity(720, l1, m1, s1, args.cutoff) * 0.4
+	leaf_l += wl_to_s(730, l1) * sensitivity(730, l1, m1, s1, args.cutoff) * 0.5
+	leaf_m += wl_to_s(730, m1) * sensitivity(730, l1, m1, s1, args.cutoff) * 0.5
+	leaf_s += wl_to_s(730, s1) * sensitivity(730, l1, m1, s1, args.cutoff) * 0.5
+	leaf_l += wl_to_s(740, l1) * sensitivity(740, l1, m1, s1, args.cutoff) * 0.55
+	leaf_m += wl_to_s(740, m1) * sensitivity(740, l1, m1, s1, args.cutoff) * 0.55
+	leaf_s += wl_to_s(740, s1) * sensitivity(740, l1, m1, s1, args.cutoff) * 0.55
+	leaf_l += wl_to_s(750, l1) * sensitivity(750, l1, m1, s1, args.cutoff) * 0.6
+	leaf_m += wl_to_s(750, m1) * sensitivity(750, l1, m1, s1, args.cutoff) * 0.6
+	leaf_s += wl_to_s(750, s1) * sensitivity(750, l1, m1, s1, args.cutoff) * 0.6
+	
+	print("LMS response to green maple leaf: l=" + str(leaf_l) +", m=" + str(leaf_m) + ", s=" + str(leaf_s))
+	leaf_lms = np.array([
+		[leaf_l],
+		[leaf_m],
+		[leaf_s]
+	])
+	leaf_matrix = np.matmul(lms_to_xyz, leaf_lms)
+	leaf_xyz = XYZColor(leaf_matrix[0], leaf_matrix[1], leaf_matrix[2], illuminant="d65")
+	print("Color coordinates of green maple leaf (with D65):")
+	print("CIE XYZ: " + str(leaf_xyz.get_value_tuple()))
+	print("sRGB: " + str(convert_color(leaf_xyz, sRGBColor).get_value_tuple()))
+	print("HSL: " + str(convert_color(leaf_xyz, HSLColor).get_value_tuple()))
+	print("CIE LAB: " + str(convert_color(leaf_xyz, LabColor).get_value_tuple()))
+	print("LCh (LCHab): " + str(convert_color(leaf_xyz, LCHabColor).get_value_tuple()))
+	print("")
 
 # print execution time
 print("%s seconds" % (time.time() - start_time))
