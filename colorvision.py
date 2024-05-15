@@ -34,9 +34,9 @@ start_time = time.time()
 
 # arguments
 parser = argparse.ArgumentParser()
-parser.add_argument("-l", "--lw", type=int, help="longwave cone sensitivity")
-parser.add_argument("-m", "--mw", type=int, help="mediumwave cone sensitivity")
-parser.add_argument("-s", "--sw", type=int, help="shortwave cone sensitivity")
+parser.add_argument("-l", "--lw", type=int, default=0, help="longwave cone sensitivity")
+parser.add_argument("-m", "--mw", type=int, default=0, help="mediumwave cone sensitivity")
+parser.add_argument("-s", "--sw", type=int, default=0, help="shortwave cone sensitivity")
 parser.add_argument("--slw", type=int, default=560, help="source longwave cone sensitivity")
 parser.add_argument("--smw", type=int, default=530, help="source mediumwave cone sensitivity")
 parser.add_argument("--ssw", type=int, default=420, help="source shortwave cone sensitivity")
@@ -55,6 +55,12 @@ args = parser.parse_args()
 l1 = args.lw
 m1 = args.mw
 s1 = args.sw
+if (l1 == 0 and m1 != 0):
+	l1 = m1
+if (m1 == 0 and l1 != 0):
+	m1 = l1
+if (s1 == 0 and m1 != 0):
+	s1 = m1
 
 # default reference cone peaks
 l0 = args.slw
@@ -71,6 +77,9 @@ v0 = args.violet
 
 # method to use
 version = args.version
+	
+# I finally found D65.
+d65 = spectral_constants.REF_ILLUM_TABLE["d65"]
 
 # relative wavelength sensitivity
 # This is not derived from any specific source. Instead we add the L, M and S functions weighted
@@ -78,24 +87,25 @@ version = args.version
 # resembling a graph of typical lens transmission adjusted to reach 1 at 800 nm. The result
 # for human-like values is similar (but not identical) to the CIE luminous efficiency function.
 def lens_filter(w, c=300):
-	value = np.log(w - c) / np.log(800 - c)
-	if (value > 0): # a log function has the wrong shape near the cutoff point
-		return value
+	# setting the cutoff to 0 removes the filter
+	if (c == 0):
+		return 1
+	else:
+		value = np.log(w - c) / np.log(800 - c)
+		if (value > 0): # a log function has the wrong shape near the cutoff point
+			return value
 	return 0
 
-def sensitivity(w, l, m, s, c=300):
+def sensitivity(w, l=l1, m=m1, s=s1, c=300):
 	value = (wl_to_s(w, l) + wl_to_s(w, m) / 2 + wl_to_s(w, s) / 10) * lens_filter(w, c)
 	return value
 
 # black body
-# This doesn't work because Python doesn't like small numbers and the denominator is rounded
-# to 1 - 1 = 0. This is probably also why Gnuplot refuses to plot a black body curve.
-#def blackbody(w, t):
-#	h = 6.62607015e-34
-#	c = 299792458
-#	k = 1.380649e-23
-	#print(math.exp(h*c / w*k*t))
-#	return w**-4 / (math.exp(0.1) - 1)
+# Note this expects a wavelength in meters.
+def blackbody(w, t):
+	c1 = 3.74183e-16
+	c2 = 1.4388e-2
+	return c1*w**-5 / (math.exp(c2/(w*t)) - 1)
 
 # convert hue to wavelength based on location of primary and secondary colors
 def hue_to_wavelength_0(hue):
@@ -126,8 +136,13 @@ def hue_to_wavelength_0(hue):
 # templates for visual pigment absorbance that are meant to fit both vertebrates and
 # invertebrates (Stavenga 2010), whereas CVS uses shifted versions of the 10° human cone
 # fundamentals. This is probably close enough and better for non-primates.
-def wl_to_s(wl, peak):
-	value = (math.exp(69.7*(0.8795+0.0459*math.exp(-(peak-300)**2/11940)-(peak/wl)))+math.exp(28*(0.922-(peak/wl)))+math.exp(-14.9*(1.104-(peak/wl)))+0.674)**-1 + 0.26*math.exp(-((wl-(189+0.315*peak))/(-40.5+0.195*peak))**2)
+def wl_to_s(w, lmax):
+	try:
+		value = 1 / (math.exp(69.7*(0.8795 + 0.0459*math.exp(-(lmax - 300)**2 / 11940) - lmax/w)) + math.exp(28*(0.922 - lmax/w)) + math.exp(-14.9*(1.104 - lmax/w)) + 0.674) + 0.26*math.exp(-((w - (189 + 0.315*lmax))/(-40.5 + 0.195*lmax))**2)
+	except OverflowError:
+		print("Warning: math overflow, clipping to 2.2250738585072014e-308")
+		return 2.2250738585072014e-308
+	
 	return value
 
 # convert wavelength to RGB values for target color space
@@ -715,7 +730,7 @@ def saturation(w, source, target):
 	return sat_t / sat_s
 
 # version 5
-# This converts LMS values to CIE XYZ and then to HLS. See https://en.wikipedia.org/wiki/CIE_1931_color_space#Meaning_of_X,_Y_and_Z for the conversion matrix.
+# This converts LMS values to CIE XYZ and then to HLS. See https://en.wikipedia.org/wiki/LMS_color_space#physiological_CMFs for the conversion matrix.
 # The results are very similar to CVS and to version 4 aside from a slight green shift for
 # narrow spacing, probably for the same reason as in version 2. The main problem is the
 # range of hues provided for integer wavelengths is full of holes you could drive a truck
@@ -724,9 +739,11 @@ def saturation(w, source, target):
 # it doesn't work as well.
 # XYZ conversion can also simulate dichromacy in the same way as v0 and v4. Tritanopia is a
 # bit odd-looking as red becomes purple for some reason.
-# Looking at what's actually in the tables this generates reveals that the conversion from
-# XYZ to sRGB/HSL is extremely wrong and it only looks good because it goes back the same
-# way it came in. I don't know why.
+# I've fixed some of the problems, but it's still not appropriate for non-primate vision.
+# Almost everything ends up as pure red/green. This is probably because (a) the "threshold"
+# for pure hues is based on a system with strong overlap, (b) a hue may be represented by
+# a range of wavelengths in the source but one or none in the target and the inevitable
+# averaging leads to posterization.
 lms_to_xyz = np.array([
 	[1.94735469, -1.41445123, 0.36476327],
 	[0.68990272, 0.34832189, 0],
@@ -736,11 +753,6 @@ lms_to_xyz = np.array([
 def cs_tables_3(l, m, s):
 	cs_source = np.empty([501, 4])
 	cs_target = np.empty([501, 4])
-#	lms_to_xyz = np.array([
-#		[1.91020, -1.11212, 0.20191],
-#		[0.37095, 0.62905, 0],
-#		[0, 0, 1]
-#	])
 	
 	for i in range(0, 500):
 		cs_source[i][0] = wl_to_s(i + 300, l0) / (wl_to_s(i + 300, l0) + wl_to_s(i + 300, m0) + wl_to_s(i + 300, s0))
@@ -754,8 +766,8 @@ def cs_tables_3(l, m, s):
 		xyz = XYZColor(*xyz_array)
 		hsl = convert_color(xyz, HSLColor)
 		cs_source[i][3] = hsl.get_value_tuple()[0]
-		#lch = convert_color(xyz, LCHabColor)
-		#cs_source[i][3] = lch.get_value_tuple()[2]
+		#print(i+300)
+		#print(hsl)
 		
 		cs_target[i][0] = wl_to_s(i + 300, l) / (wl_to_s(i + 300, l) + wl_to_s(i + 300, m) + wl_to_s(i + 300, s))
 		cs_target[i][1] = wl_to_s(i + 300, m) / (wl_to_s(i + 300, l) + wl_to_s(i + 300, m) + wl_to_s(i + 300, s))
@@ -768,112 +780,61 @@ def cs_tables_3(l, m, s):
 		xyz1 = XYZColor(*xyz_array1)
 		hsl1 = convert_color(xyz1, HSLColor)
 		cs_target[i][3] = hsl1.get_value_tuple()[0]
-		#lch1 = convert_color(xyz1, LCHabColor)
-		#cs_target[i][3] = lch1.get_value_tuple()[2]
-	
-	return [cs_source, cs_target]
-
-# An LCHab version. This produces more reasonable hue values, but image transformations
-# look worse. (See below for what's going on with this)
-def cs_tables_4(l, m, s):
-	cs_source = np.empty([501, 4])
-	cs_target = np.empty([501, 4])
-#	lms_to_xyz = np.array([
-#		[1.91020, -1.11212, 0.20191],
-#		[0.37095, 0.62905, 0],
-#		[0, 0, 1]
-#	])
-	
-	for i in range(0, 500):
-		cs_source[i][0] = wl_to_s(i + 300, l0) / (wl_to_s(i + 300, l0) + wl_to_s(i + 300, m0) + wl_to_s(i + 300, s0))
-		cs_source[i][1] = wl_to_s(i + 300, m0) / (wl_to_s(i + 300, l0) + wl_to_s(i + 300, m0) + wl_to_s(i + 300, s0))
-		cs_source[i][2] = wl_to_s(i + 300, s0) / (wl_to_s(i + 300, l0) + wl_to_s(i + 300, m0) + wl_to_s(i + 300, s0))
-		lms_array = np.empty([3, 1])
-		lms_array[0] = cs_source[i][0]
-		lms_array[1] = cs_source[i][1]
-		lms_array[2] = cs_source[i][2]
-		xyz_array = np.matmul(lms_to_xyz, lms_array)
-		xyz = XYZColor(*xyz_array)
-		#hsl = convert_color(xyz, HSLColor)
-		#cs_source[i][3] = hsl.get_value_tuple()[0]
-		lch = convert_color(xyz, LCHabColor)
-		cs_source[i][3] = lch.get_value_tuple()[2]
-		
-		cs_target[i][0] = wl_to_s(i + 300, l) / (wl_to_s(i + 300, l) + wl_to_s(i + 300, m) + wl_to_s(i + 300, s))
-		cs_target[i][1] = wl_to_s(i + 300, m) / (wl_to_s(i + 300, l) + wl_to_s(i + 300, m) + wl_to_s(i + 300, s))
-		cs_target[i][2] = wl_to_s(i + 300, s) / (wl_to_s(i + 300, l) + wl_to_s(i + 300, m) + wl_to_s(i + 300, s))
-		lms_array1 = np.empty([3, 1])
-		lms_array1[0] = cs_target[i][0]
-		lms_array1[1] = cs_target[i][1]
-		lms_array1[2] = cs_target[i][2]
-		xyz_array1 = np.matmul(lms_to_xyz, lms_array1)
-		xyz1 = XYZColor(*xyz_array1)
-		#hsl1 = convert_color(xyz1, HSLColor)
-		#cs_target[i][3] = hsl1.get_value_tuple()[0]
-		lch1 = convert_color(xyz1, LCHabColor)
-		cs_target[i][3] = lch1.get_value_tuple()[2]
-	
-	return [cs_source, cs_target]
-
-# LCHuv version
-def cs_tables_5(l, m, s):
-	cs_source = np.empty([501, 4])
-	cs_target = np.empty([501, 4])
-#	lms_to_xyz = np.array([
-#		[1.91020, -1.11212, 0.20191],
-#		[0.37095, 0.62905, 0],
-#		[0, 0, 1]
-#	])
-	
-	for i in range(0, 500):
-		cs_source[i][0] = wl_to_s(i + 300, l0) / (wl_to_s(i + 300, l0) + wl_to_s(i + 300, m0) + wl_to_s(i + 300, s0))
-		cs_source[i][1] = wl_to_s(i + 300, m0) / (wl_to_s(i + 300, l0) + wl_to_s(i + 300, m0) + wl_to_s(i + 300, s0))
-		cs_source[i][2] = wl_to_s(i + 300, s0) / (wl_to_s(i + 300, l0) + wl_to_s(i + 300, m0) + wl_to_s(i + 300, s0))
-		lms_array = np.empty([3, 1])
-		lms_array[0] = cs_source[i][0]
-		lms_array[1] = cs_source[i][1]
-		lms_array[2] = cs_source[i][2]
-		xyz_array = np.matmul(lms_to_xyz, lms_array)
-		xyz = XYZColor(xyz_array[0], xyz_array[1], xyz_array[2])
-		#hsl = convert_color(xyz, HSLColor)
-		#cs_source[i][3] = hsl.get_value_tuple()[0]
-		lch = convert_color(xyz, LCHuvColor)
-		cs_source[i][3] = lch.get_value_tuple()[2]
-		
-		cs_target[i][0] = wl_to_s(i + 300, l) / (wl_to_s(i + 300, l) + wl_to_s(i + 300, m) + wl_to_s(i + 300, s))
-		cs_target[i][1] = wl_to_s(i + 300, m) / (wl_to_s(i + 300, l) + wl_to_s(i + 300, m) + wl_to_s(i + 300, s))
-		cs_target[i][2] = wl_to_s(i + 300, s) / (wl_to_s(i + 300, l) + wl_to_s(i + 300, m) + wl_to_s(i + 300, s))
-		lms_array1 = np.empty([3, 1])
-		lms_array1[0] = cs_target[i][0]
-		lms_array1[1] = cs_target[i][1]
-		lms_array1[2] = cs_target[i][2]
-		xyz_array1 = np.matmul(lms_to_xyz, lms_array1)
-		xyz1 = XYZColor(xyz_array1[0], xyz_array1[1], xyz_array1[2])
-		#hsl1 = convert_color(xyz1, HSLColor)
-		#cs_target[i][3] = hsl1.get_value_tuple()[0]
-		lch1 = convert_color(xyz1, LCHabColor)
-		cs_target[i][3] = lch1.get_value_tuple()[2]
+		#print(i+300)
+		#print(hsl1)
 	
 	return [cs_source, cs_target]
 
 # As with version 1, this one does some intense gap-filling to ensure the result looks sensible.
 def hue_to_wavelength_3(h, source):
-	if (0 <= h <= 270):
+	if (0 <= h < 260): # XYZ does not produce any hues greater than this, so we cut off here
+		w1 = 0
+		w2 = 0
+		
 		i = 0
 		while (i < 500):
-			h_cur = round(source[i][3])
-			h_next = round(source[i + 1][3])
+			h_cur = round(source[i][3], 1)
+			h_next = round(source[i + 1][3], 1)
 			
 			# exact match
-			if (round(h) == round(h_cur)):
-				return i + 300
+			if (round(h, 1) == round(h_cur, 1)):
+				w1 = i + 300
+				break
 			# intermediate match
 			elif (h_next <= h <= h_cur):
-				return i + 1 - (h - h_next) / (h_cur - h_next) + 300
+				w1 = i + 1 - (h - h_next) / (h_cur - h_next) + 300
+				break
 			else:
 				i += 1
 		
-		return 800
+		j = 500
+		while (j > 0):
+			h_cur = round(source[j][3], 1)
+			h_next = round(source[j - 1][3], 1)
+			
+			# exact match
+			if (round(h, 1) == round(h_cur, 1)):
+				w2 = j + 300
+				break
+			# intermediate match
+			elif (h_next >= h >= h_cur):
+				w2 = j - 1 + (h - h_next) / (h_cur - h_next) + 300
+				break
+			else:
+				j -= 1
+		
+		#print("foo")
+		#print(h)
+		#print(w1)
+		#print(w2)
+		
+		# red is a cutoff point and blue has some weird behavior
+		if (h == 0):
+			return w1
+		elif (200 <= h < 260):
+			return w2
+		else:
+			return (w1 + w2) / 2
 	else:
 		return colorsys.hls_to_rgb(hue / 360, 0.5, 1)
 
@@ -982,6 +943,133 @@ def saturation_1(w, source, target, l, m, s):
 		return 0
 	return sat_t / sat_s
 
+# version 6: dichromacy
+# 0, 4 and 5 can produce something like a dichromatic simulation but aren't really built
+# for it. This uses a similar method to v2. The results are more realistic, but with L/M
+# values < 560 the neutral point is placed at an unexpectedly short wavelength.
+def find_primaries_dc(l=l1, m=m1, s=s1):
+
+	# yellow/blue
+	if (l == m):
+		# find white/neutral point
+		white_l = 0
+		white_s = 0
+		for i in range(300, 800):
+			white_l += wl_to_s(i, l) * lens_filter(i, args.cutoff)
+			white_s += wl_to_s(i, s) * lens_filter(i, args.cutoff)
+		
+		white_ratio = white_l / white_s
+		
+		n = s
+		for i in range(s, l):
+			diff0 = abs(white_ratio - wl_to_s(n, l) / wl_to_s(n, s))
+			diff1 = abs(white_ratio - wl_to_s(i, l) / wl_to_s(i, s))
+			if (diff1 < diff0):
+				n = i
+		
+		# find "yellow" and "blue" points based on reference green and violet
+		y_ratio = (wl_to_s(g0, l0) + wl_to_s(g0, m0)) / wl_to_s(g0, s0) 
+		b_ratio = (wl_to_s(v0, l0) + wl_to_s(v0, m0) ) / wl_to_s(v0, s0)
+		
+		y = n
+		for i in range(n, 800):
+			diff0 = abs(y_ratio - wl_to_s(y, l) / wl_to_s(y, s))
+			diff1 = abs(y_ratio - wl_to_s(i, l) / wl_to_s(i, s))
+			if (diff1 < diff0):
+				y = i
+		
+		b = s
+		for i in range(s, n):
+			diff0 = abs(b_ratio - wl_to_s(b, l) / wl_to_s(b, s))
+			diff1 = abs(b_ratio - wl_to_s(i, l) / wl_to_s(i, s))
+			if (diff1 < diff0):
+				b = i
+		
+		return [n, y, b]
+	
+	# red/cyan (tritanopia)
+	elif (m == s):
+		# find white/neutral point
+		white_l = 0
+		white_m = 0
+		for i in range(300, 800):
+			white_l += wl_to_s(i, l) * lens_filter(i, args.cutoff)
+			white_m += wl_to_s(i, m) * lens_filter(i, args.cutoff)
+		
+		white_ratio = white_l / white_m
+		
+		n = m
+		for i in range(m, 800):
+			diff0 = abs(white_ratio - wl_to_s(n, l) / wl_to_s(n, m))
+			diff1 = abs(white_ratio - wl_to_s(i, l) / wl_to_s(i, m))
+			if (diff1 < diff0):
+				n = i
+		
+		# find "red" and "cyan" points based on reference red and green
+		r_ratio = wl_to_s(r0, l0) / (wl_to_s(r0, m0) + wl_to_s(r0, s0)) 
+		c_ratio = wl_to_s(g0, l0) / (wl_to_s(g0, m0) + wl_to_s(g0, s0))
+		
+		r = n
+		for i in range(n, 800):
+			diff0 = abs(r_ratio - wl_to_s(r, l) / wl_to_s(r, s))
+			diff1 = abs(r_ratio - wl_to_s(i, l) / wl_to_s(i, s))
+			if (diff1 < diff0):
+				r = i
+		
+		c = m
+		for i in range(m, n):
+			diff0 = abs(c_ratio - wl_to_s(c, l) / wl_to_s(c, s))
+			diff1 = abs(c_ratio - wl_to_s(i, l) / wl_to_s(i, s))
+			if (diff1 < diff0):
+				c = i
+		
+		return [n, r, c]
+	
+	else:
+		print("Please specify a valid dichromatic phenotype.")
+		return False
+
+def hue_saturation_dc(w, p):
+	if (l1 == m1):
+		n = p[0]
+		y = p[1]
+		b = p[2]
+		
+		if (w > n): # yellow
+			if (w <= y):
+				return [60, (w - n) / (y - n)] # desaturate
+			else:
+				return [60, 1]
+		elif (w == n): # neutral
+			return [0, 0]
+		else: # blue
+			if (w >= b):
+				return [240, (w - n) / (b - n)]
+			else:
+				return [240, 1]
+		
+	elif (m1 == s1):
+		n = p[0]
+		r = p[1]
+		c = p[2]
+	
+		if (w > n): # red
+			if (w <= r):
+				return [0, (w - n) / (r - n)] # desaturate
+			else:
+				return [0, 1]
+		elif (w == n): # neutral
+			return [0, 0]
+		else: # cyan
+			if (w >= c):
+				return [180, (w - n) / (c - n)]
+			else:
+				return [180, 1]
+	
+	else:
+		print("Please specify a valid dichromatic phenotype.")
+		return False
+
 # switch method used based on input -- this function calls the desired version of wl_to_rgb
 # default is 2 (cone response ratios)
 
@@ -996,6 +1084,8 @@ elif (version == 4):
 	tables = cs_tables_2(l1, m1, s1)
 elif (version == 5):
 	tables = cs_tables_3(l1, m1, s1)
+elif (version == 6):
+	primaries = find_primaries_dc(l1, m1, s1)
 
 # wrapper functions
 def wl_to_rgb(w, l, m, s):
@@ -1027,6 +1117,138 @@ def hue_to_wavelength(h):
 	else:
 		return hue_to_wavelength_0(h)
 
+# estimate hue, saturation and lightness for a spectral power distribution
+def spectral_rendering(table, normalize=False, light_source=np.array([0])):
+	table_l = 0
+	table_m = 0
+	table_s = 0
+	for i in range(0, table.shape[0]):
+		f = lens_filter(table[i][0], args.cutoff)
+		table_l += wl_to_s(table[i][0], l1) * table[i][1] * f
+		table_m += wl_to_s(table[i][0], m1) * table[i][1] * f
+		table_s += wl_to_s(table[i][0], s1) * table[i][1] * f
+	
+	# ratio comparison
+	similar = 0
+	for i in range(300, 800):
+		ratio0 = round(wl_to_s(i, l0) / wl_to_s(i, m0), 2)
+		ratio1 = round(table_l / table_m, 2)
+		ratio2 = round(wl_to_s(i + 1, l0) / wl_to_s(i + 1, m0), 2)
+		if (ratio0 == ratio1):
+			similar = i
+		elif (ratio0 <= ratio1 <= ratio2
+			or ratio0 >= ratio1 >= ratio2):
+			similar = i + 0.5
+	
+	similar1 = 0
+	for i in range(300, 800):
+		ratio0 = round(wl_to_s(i, m0) / wl_to_s(i, s0), 2)
+		ratio1 = round(table_m / table_s, 2)
+		ratio2 = round(wl_to_s(i + 1, m0) / wl_to_s(i + 1, s0), 2)
+		if (ratio0 == ratio1):
+			similar1 = i
+		elif (ratio0 <= ratio1 <= ratio2
+			or ratio0 >= ratio1 >= ratio2):
+			similar1 = i + 0.5
+	
+	# normalize according to LMS total
+	if (normalize):
+		total = table_l + table_m + table_s
+		table_l = table_l / total
+		table_m = table_m / total
+		table_s = table_s / total
+	
+	# normalize according to provided light source: the total sensitivity of the
+	# target phenotype to this light spectrum is "1"
+	if (light_source.shape[0] > 1):
+		n = 0
+		for i in range(0, light_source.shape[0]):
+			n += light_source[i][1] * sensitivity(light_source[i][0])
+		print(n)
+		table_l = table_l / n
+		table_m = table_m / n
+		table_s = table_s / n
+	
+	print("LMS response: l=" + str(table_l) +", m=" + str(table_m) + ", s=" + str(table_s))
+	print("L:M ratio: " + str(table_l / table_m) + " (looks like " + str(similar) + " nm)")
+	print("M:S ratio: " + str(table_m / table_s) + " (looks like " + str(similar1) + " nm)")
+	
+	lms = np.array([
+		[table_l],
+		[table_m],
+		[table_s]
+	])
+	
+	matrix = np.matmul(lms_to_xyz, lms)
+	xyz = XYZColor(*matrix, illuminant="e")
+	print("Color coordinates:")
+	print("CIE XYZ: " + str(xyz.get_value_tuple()))
+	print("sRGB: " + str(convert_color(xyz, sRGBColor).get_value_tuple()))
+	print("HSL: " + str(convert_color(xyz, HSLColor).get_value_tuple()))
+	print("LCh (LCHab): " + str(convert_color(xyz, LCHabColor).get_value_tuple()))
+	
+	# "SpectralColor" object
+	spectral = SpectralColor(spec_340nm=table[0][1],
+	spec_350nm=table[1][1],
+	spec_360nm=table[2][1],
+	spec_370nm=table[3][1],
+	spec_380nm=table[4][1],
+	spec_390nm=table[5][1],
+	spec_400nm=table[6][1],
+	spec_410nm=table[7][1],
+	spec_420nm=table[8][1],
+	spec_430nm=table[9][1],
+	spec_440nm=table[10][1],
+	spec_450nm=table[11][1],
+	spec_460nm=table[12][1],
+	spec_470nm=table[13][1],
+	spec_480nm=table[14][1],
+	spec_490nm=table[15][1],
+	spec_500nm=table[16][1],
+	spec_510nm=table[17][1],
+	spec_520nm=table[18][1],
+	spec_530nm=table[19][1],
+	spec_540nm=table[20][1],
+	spec_550nm=table[21][1],
+	spec_560nm=table[22][1],
+	spec_570nm=table[23][1],
+	spec_580nm=table[24][1],
+	spec_590nm=table[25][1],
+	spec_600nm=table[26][1],
+	spec_610nm=table[27][1],
+	spec_620nm=table[28][1],
+	spec_630nm=table[29][1],
+	spec_640nm=table[30][1],
+	spec_650nm=table[31][1],
+	spec_660nm=table[32][1],
+	spec_670nm=table[33][1],
+	spec_680nm=table[34][1],
+	spec_690nm=table[35][1],
+	spec_700nm=table[36][1],
+	spec_710nm=table[37][1],
+	spec_720nm=table[38][1],
+	spec_730nm=table[39][1],
+	spec_740nm=table[40][1],
+	spec_750nm=table[41][1],
+	spec_760nm=table[42][1],
+	spec_770nm=table[43][1],
+	spec_780nm=table[44][1],
+	spec_790nm=table[45][1],
+	spec_800nm=table[46][1],
+	spec_810nm=table[47][1],
+	spec_820nm=table[48][1],
+	spec_830nm=table[49][1], illuminant='e')
+	
+	print("Python spectral color conversion:")
+	print(convert_color(spectral, XYZColor))
+	print(convert_color(spectral, sRGBColor))
+	print(convert_color(spectral, HSLColor))
+	print(convert_color(spectral, LabColor))
+	print(convert_color(spectral, LCHabColor))
+	
+	# break up text
+	print("")
+
 # image processing
 if (args.image):
 	imagename = args.image
@@ -1044,53 +1266,80 @@ if (args.image):
 			#print("pixel: " + str(x) + ", " + str(y))
 			# find pixel
 			hls = img_hls[x][y]
-			#lch = convert_color(sRGBColor(img_rgb[x][y][0], img_rgb[x][y][1], img_rgb[x][y][2]), LCHabColor).get_value_tuple()
 			
 			# convert hue from 0-180 (OpenCV format) to 0-360
 			hue = hls[0]*2
-			#hue = lch[2]
-			#print("hue")
-			#print(hue)
-			#print(img_hls[x][y][0]*2)
-			#
-			# convert hue to predominant wavelength(s)
-			wl = hue_to_wavelength(hue)
 			
-			if (type(wl) != tuple):
-				hue_target = wl_to_rgb(wl, l1, m1, s1)
+			# dichromacy
+			if (version == 6):
+				w = hue_to_wavelength(hue)
+				
+				if (type(w) == tuple):
+					hue_sat_r = hue_saturation_dc(r0, primaries)
+					hue_sat_b = hue_saturation_dc(b0, primaries)
+					rgb_r = colorsys.hls_to_rgb(hue_sat_r[0]/360, 0.5, hue_sat_r[1])
+					rgb_b = colorsys.hls_to_rgb(hue_sat_b[0]/360, 0.5, hue_sat_b[1])
+					
+					if (l1 == m1):
+						# "regular" dichromacy (protanopia, deuteranopia and typical
+						# placental mammal vision)
+						rg = w[0]*(rgb_r[0] + rgb_r[1]) / 4 + w[2]*(rgb_b[0] + rgb_b[1]) / 4
+						b = w[0]*rgb_r[2] + w[2]*rgb_b[2]
+						rgb = [rg, rg, b]
+					else:
+						# tritanopia
+						r = w[0]*rgb_r[0] + w[2]*rgb_b[0]
+						gb = w[0]*(rgb_r[1] + rgb_r[2]) / 4 + w[2]*(rgb_b[1] + rgb_b[2]) / 4
+						rgb = [r, gb, gb]
+					hue_sat0 = colorsys.rgb_to_hls(*rgb)
+					hue_sat = [hue_sat0[0]*360, hue_sat0[1]]
+				else:
+					hue_sat = hue_saturation_dc(w, primaries)
+				
+				# Hue is slightly shifted for a more natural appearance. The default
+				# "dark yellow" pea-soup color is really unpleasant looking and has
+				# more to do with how an sRGB display works than what real dichromacy
+				# looks like. CVS doesn't do this, but some simulations do.
+				if (l1 == m1):
+					hue1 = hue_sat[0] - 10
+				else:
+					hue1 = hue_sat[0] + 10
+				img_hls[x][y] = [hue1 / 2, hls[1], hls[2] * hue_sat[1]]
+			# trichromacy
 			else:
-				hue_r = wl_to_rgb(r0, l1, m1, s1)
-				hue_b = wl_to_rgb(b0, l1, m1, s1)
-				# sum the amounts of "red" and "blue"
-				hue_target = [hue_r[0] * wl[0] + hue_b[0] * wl[2], hue_r[1] * wl[0] + hue_b[1] * wl[2], hue_r[2] * wl[0] + hue_b[2] * wl[2]]
-				#print(hue_target)
-			
-			# convert predominant wavelengths back into a hue
-			hls_target = colorsys.rgb_to_hls(hue_target[0], hue_target[1], hue_target[2])
-			#lch_target = convert_color(sRGBColor(hue_target[0], hue_target[1], hue_target[2]), LCHabColor).get_value_tuple()
-			
-			if (version == 4):
-				sat_diff = saturation(wl, tables[0], tables[1])
-				#sat_diff = 1
-			elif (version == 5):
-				sat_diff = saturation_1(wl, tables[0], tables[1], l1, m1, s1)
-			else:
-				sat_diff = hls_target[2]
-				#sat_diff = lch_target[1]
-			
-			# shift hue in our pixel. Colorsys uses 0-1, so we have to convert back to
-			# OpenCV format.
-			img_hls[x][y] = [hls_target[0]*180, hls[1], hls[2] * sat_diff]
-			#lch_final = LCHabColor(lch[0], lch[1] * sat_diff, lch_target[2])
-			#img_rgb[x][y] = convert_color(lch_final, sRGBColor).get_value_tuple()
+				# convert hue to predominant wavelength(s)
+				wl = hue_to_wavelength(hue)
+				
+				if (type(wl) != tuple):
+					hue_target = wl_to_rgb(wl, l1, m1, s1)
+				else:
+					hue_r = wl_to_rgb(r0, l1, m1, s1)
+					hue_b = wl_to_rgb(b0, l1, m1, s1)
+					# sum the amounts of "red" and "blue"
+					hue_target = [hue_r[0] * wl[0] + hue_b[0] * wl[2], hue_r[1] * wl[0] + hue_b[1] * wl[2], hue_r[2] * wl[0] + hue_b[2] * wl[2]]
+				
+				# convert predominant wavelengths back into a hue
+				hls_target = colorsys.rgb_to_hls(*hue_target)
+				
+				if (version == 4):
+					sat_diff = saturation(wl, *tables)
+					#sat_diff = 1
+				elif (version == 5):
+					sat_diff = saturation_1(wl, *tables, l1, m1, s1)
+				else:
+					sat_diff = hls_target[2]
+				
+				# shift hue in our pixel. Colorsys uses 0-1, so we have to convert back to
+				# OpenCV format.
+				img_hls[x][y] = [hls_target[0]*180, hls[1], hls[2] * sat_diff]
 
 	# convert back to BGR
 	img_result = cv2.cvtColor(img_hls, cv2.COLOR_HLS2BGR)
-	#img_result = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
 
 	# fix brightness
-	# I tried using LCh instead of HLS, but it doesn't work the way I expected. This extra step
-	# doesn't add much time.
+	# I tried using LCh instead of HLS, but it doesn't work the way I expected. This
+	# extra step doesn't add much time. However, "fixing" the lightness may be just as
+	# misleading as keeping the HSL values.
 	img_lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
 	img_result_lab = cv2.cvtColor(img_result, cv2.COLOR_BGR2LAB)
 	for x in range(img.shape[0]):
@@ -1102,7 +1351,7 @@ if (args.image):
 	# display result
 	cv2.imwrite("colorvisionpy-result.png", img_result)
 
-# print general information
+# if no image given, print general information
 else:
 	print("L: " + str(l1) + ", M: " + str(m1) + ", S: " + str(s1))
 	print("")
@@ -1110,342 +1359,286 @@ else:
 	# maximum sensitivity
 	ms = 300
 	for i in range(300, 800):
-		if (sensitivity(i, l1, m1, s1, args.cutoff) > (sensitivity(ms, l1, m1, s1, args.cutoff))):
+		if (sensitivity(i, args.cutoff) > (sensitivity(ms, args.cutoff))):
 			ms = i
 	print("Maximum sensitivity: " + str(ms))
 	print("")
 	
 	# primary/secondary colors
-	primaries = find_primaries(l1, m1, s1)
-	print("Estimated primary and secondary wavelengths based on cone response ratios:")
-	print("red: " + str(primaries[0]))
-	print("yellow: " + str(primaries[1]))
-	print("green: " + str(primaries[2]))
-	print("cyan: " + str(primaries[3]))
-	print("blue: " + str(primaries[4]))
-	print("violet: " + str(primaries[5]))
-	print("")
-	
-	#table = cs_tables_2(l1, m1, s1)[1]
-	#print("Estimated primary and secondary wavelengths based on \"RGYB\" (L-M and LM-S differences):")
-	#print("red: " + str(hue_to_wavelength_2(0, table)))
-	#print("yellow: " + str(hue_to_wavelength_2(60, table)))
-	#print("green: " + str(hue_to_wavelength_2(120, table)))
-	#print("cyan: " + str(hue_to_wavelength_2(180, table)))
-	#print("blue: " + str(hue_to_wavelength_2(240, table)))
-	#print("violet: " + str(hue_to_wavelength_2(270, table)))
-	#print("")
-	
-	table = cs_tables_3(l1, m1, s1)[1]
-	
-	# red and violet are cutoff points
-	i = 0
-	while (i < 500):
-		h_cur = round(table[i][3])
-		h_next = round(table[i + 1][3])
-		
-		# exact match
-		if (0 == round(h_cur)):
-			break
-		# intermediate match
-		elif (h_next <= 0 <= h_cur):
-			i = i + 1 - (0 - h_next) / (h_cur - h_next)
-			break
+	if (l1 == m1 or m1 == s1): # dichromacy
+		primaries = find_primaries_dc()
+		print("Estimated primary and secondary wavelengths:")
+		if (l1 == m1):
+			print("L/M: " + str(primaries[1]))
+			print("Neutral point: " + str(primaries[0]))
+			print("S: " + str(primaries[2]))
 		else:
+			print("L: " + str(primaries[1]))
+			print("Neutral point: " + str(primaries[0]))
+			print("M: " + str(primaries[2]))
+		print("")
+	else:
+		primaries = find_primaries(l1, m1, s1)
+		print("Estimated primary and secondary wavelengths based on cone response ratios:")
+		print("red: " + str(primaries[0]))
+		print("yellow: " + str(primaries[1]))
+		print("green: " + str(primaries[2]))
+		print("cyan: " + str(primaries[3]))
+		print("blue: " + str(primaries[4]))
+		print("violet: " + str(primaries[5]))
+		print("")
+		
+		table = cs_tables_3(l1, m1, s1)[1]
+		
+		# red and violet are cutoff points
+		i = 0
+		while (i < 500):
+			h_cur = round(table[i][3])
+			h_next = round(table[i + 1][3])
+			
+			# exact match
+			if (0 == round(h_cur)):
+				break
+			# intermediate match
+			elif (h_next <= 0 <= h_cur):
+				i = i + 1 - (0 - h_next) / (h_cur - h_next)
+				break
+			else:
+				i += 1
+		
+		r = i + 300
+		
+		j = 500
+		while (j > 0):
+			h_cur = round(table[j][3])
+			h_next = round(table[j - 1][3])
+			
+			# exact match
+			if (270 == round(h_cur)):
+				break
+			# intermediate match
+			elif (h_next >= 270 >= h_cur):
+				j = j - 1 + (270 - h_next) / (h_cur - h_next)
+				break
+			else:
+				j -= 1
+		
+		v = j + 300
+		
+		# yellow through blue may be a range of hues, so we try to find the middle
+		y1 = 0
+		y2 = 0
+		i = 0
+		while (i < 500):
+			h_cur = round(table[i][3])
+			h_next = round(table[i + 1][3])
+			
+			# exact match
+			if (60 == round(h_cur)):
+				y1 = i + 300
+				break
+			# intermediate match
+			elif (h_next <= 60 <= h_cur):
+				y1 = i + 1 - (60 - h_next) / (h_cur - h_next) + 300
+				break
+			else:
+				i += 1
+		
+		j = 500
+		while (j > 0):
+			h_cur = round(table[j][3])
+			h_next = round(table[j - 1][3])
+			
+			# exact match
+			if (60 == round(h_cur)):
+				y2 = j + 300
+				break
+			# intermediate match
+			elif (h_next >= 60 >= h_cur):
+				y2 = j - 1 + (60 - h_next) / (h_cur - h_next) + 300
+				break
+			else:
+				j -= 1
+		
+		y = (y1 + y2) / 2
+		
+		g1 = 0
+		g2 = 0
+		i = 0
+		while (i < 500):
+			h_cur = round(table[i][3])
+			h_next = round(table[i + 1][3])
+			
+			# exact match
+			if (120 == round(h_cur)):
+				g1 = i + 300
+				break
+			# intermediate match
+			elif (h_next <= 120 <= h_cur):
+				g1 = i + 1 - (120 - h_next) / (h_cur - h_next) + 300
+				break
+			else:
+				i += 1
+		
+		j = 500
+		while (j > 0):
+			h_cur = round(table[j][3])
+			h_next = round(table[j - 1][3])
+			
+			# exact match
+			if (120 == round(h_cur)):
+				g2 = j + 300
+				break
+			# intermediate match
+			elif (h_next >= 120 >= h_cur):
+				g2 = j - 1 + (120 - h_next) / (h_cur - h_next) + 300
+				break
+			else:
+				j -= 1
+		
+		g = (g1 + g2) / 2
+		
+		c1 = 0
+		c2 = 0
+		i = 0
+		while (i < 500):
+			h_cur = round(table[i][3])
+			h_next = round(table[i + 1][3])
+			
+			# exact match
+			if (180 == round(h_cur)):
+				c1 = i + 300
+				break
+			# intermediate match
+			elif (h_next <= 180 <= h_cur):
+				c1 = i + 1 - (180 - h_next) / (h_cur - h_next) + 300
+				break
+			else:
+				i += 1
+		
+		j = 500
+		while (j > 0):
+			h_cur = round(table[j][3])
+			h_next = round(table[j - 1][3])
+			
+			# exact match
+			if (180 == round(h_cur)):
+				c2 = j + 300
+				break
+			# intermediate match
+			elif (h_next >= 180 >= h_cur):
+				c2 = j - 1 + (180 - h_next) / (h_cur - h_next) + 300
+				break
+			else:
+				j -= 1
+		
+		c = (c1 + c2) / 2
+		
+		b1 = 0
+		b2 = 0
+		i = 0
+		while (i < 500):
+			h_cur = round(table[i][3])
+			h_next = round(table[i + 1][3])
+			
+			# exact match
+			if (240 == round(h_cur)):
+				b1 = i + 300
+				break
+			# intermediate match
+			elif (h_next <= 240 <= h_cur):
+				b1 = i + 1 - (240 - h_next) / (h_cur - h_next) + 300
+				break
+			else:
+				i += 1
+		
+		j = 500
+		while (j > 0):
+			h_cur = round(table[j][3])
+			h_next = round(table[j - 1][3])
+			
+			# exact match
+			if (240 == round(h_cur)):
+				b2 = j + 300
+				break
+			# intermediate match
+			elif (h_next >= 240 >= h_cur):
+				b2 = j - 1 + (240 - h_next) / (h_cur - h_next) + 300
+				break
+			else:
+				j -= 1
+		
+		b = (b1 + b2) / 2
+		
+		print("Estimated primary and secondary wavelengths based on CIE XYZ (converted through sRGB):")
+		print("red: " + str(r))
+		print("yellow: " + str(y) + " (" + str(y1) + "-" + str(y2) + ")")
+		print("green: " + str(g) + " (" + str(g1) + "-" + str(g2) + ")")
+		print("cyan: " + str(c) + " (" + str(c1) + "-" + str(c2) + ")")
+		print("blue: " + str(b) + " (" + str(b1) + "-" + str(b2) + ")")
+		print("violet: " + str(v))
+		print("")
+		
+		# crossover points
+		# These seem like they should correspond to secondary colors but don't really, as
+		# discussed earlier. The reason for this is probably that combinations of primary
+		# and/or complementary wavelengths have to appear "white" and white light does not
+		# excite all three cones equally. Thus "yellow" and "cyan" have L:M and M:S ratios
+		# much higher than 1:1. The location of yellow/green also seems to be influenced
+		# by overlap with "blue".
+		# Crossover points can only tell us this much:
+		# * The actual secondary wavelengths are longer.
+		# * The less overlap, the closer the secondary wavelengths are to the crossover points.
+		
+		# "cyan"
+		i = s1
+		while (i < m1 and wl_to_s(i, s1) / wl_to_s(i, m1) > 1):
 			i += 1
-	
-	r = i + 300
-	
-	j = 500
-	while (j > 0):
-		h_cur = round(table[j][3])
-		h_next = round(table[j - 1][3])
-		
-		# exact match
-		if (270 == round(h_cur)):
-			break
-		# intermediate match
-		elif (h_next >= 270 >= h_cur):
-			j = j - 1 + (270 - h_next) / (h_cur - h_next)
-			break
-		else:
+		j = m1
+		while (j > s1 and wl_to_s(j, s1) / wl_to_s(j, m1) < 1):
 			j -= 1
-	
-	v = j + 300
-	
-	# yellow through blue may be a range of hues, so we try to find the middle
-	y1 = 0
-	y2 = 0
-	i = 0
-	while (i < 500):
-		h_cur = round(table[i][3])
-		h_next = round(table[i + 1][3])
+		c = (i + j) / 2
 		
-		# exact match
-		if (60 == round(h_cur)):
-			y1 = i + 300
-			break
-		# intermediate match
-		elif (h_next <= 60 <= h_cur):
-			y1 = i + 1 - (60 - h_next) / (h_cur - h_next) + 300
-			break
-		else:
+		# "yellow"
+		i = m1
+		while (i < 800 and wl_to_s(i, m1) / wl_to_s(i, l1) > 1):
 			i += 1
-	
-	j = 500
-	while (j > 0):
-		h_cur = round(table[j][3])
-		h_next = round(table[j - 1][3])
-		
-		# exact match
-		if (60 == round(h_cur)):
-			y2 = j + 300
-			break
-		# intermediate match
-		elif (h_next >= 60 >= h_cur):
-			y2 = j - 1 + (60 - h_next) / (h_cur - h_next) + 300
-			break
-		else:
+		j = 800
+		while (j > m1 and wl_to_s(j, m1) / wl_to_s(j, l1) < 1):
 			j -= 1
-	
-	y = (y1 + y2) / 2
-	
-	g1 = 0
-	g2 = 0
-	i = 0
-	while (i < 500):
-		h_cur = round(table[i][3])
-		h_next = round(table[i + 1][3])
+		y = (i + j) / 2
 		
-		# exact match
-		if (120 == round(h_cur)):
-			g1 = i + 300
-			break
-		# intermediate match
-		elif (h_next <= 120 <= h_cur):
-			g1 = i + 1 - (120 - h_next) / (h_cur - h_next) + 300
-			break
-		else:
+		# blue/violet
+		i = 300
+		while (i < 800 and wl_to_s(i, m1) / wl_to_s(i, l1) > 1):
 			i += 1
-	
-	j = 500
-	while (j > 0):
-		h_cur = round(table[j][3])
-		h_next = round(table[j - 1][3])
-		
-		# exact match
-		if (120 == round(h_cur)):
-			g2 = j + 300
-			break
-		# intermediate match
-		elif (h_next >= 120 >= h_cur):
-			g2 = j - 1 + (120 - h_next) / (h_cur - h_next) + 300
-			break
-		else:
+		j = s1
+		while (j > m1 and wl_to_s(j, m1) / wl_to_s(j, l1) < 1):
 			j -= 1
-	
-	g = (g1 + g2) / 2
-	
-	c1 = 0
-	c2 = 0
-	i = 0
-	while (i < 500):
-		h_cur = round(table[i][3])
-		h_next = round(table[i + 1][3])
+		b = (i + j) / 2
 		
-		# exact match
-		if (180 == round(h_cur)):
-			c1 = i + 300
-			break
-		# intermediate match
-		elif (h_next <= 180 <= h_cur):
-			c1 = i + 1 - (180 - h_next) / (h_cur - h_next) + 300
-			break
-		else:
-			i += 1
-	
-	j = 500
-	while (j > 0):
-		h_cur = round(table[j][3])
-		h_next = round(table[j - 1][3])
-		
-		# exact match
-		if (180 == round(h_cur)):
-			c2 = j + 300
-			break
-		# intermediate match
-		elif (h_next >= 180 >= h_cur):
-			c2 = j - 1 + (180 - h_next) / (h_cur - h_next) + 300
-			break
-		else:
-			j -= 1
-	
-	c = (c1 + c2) / 2
-	
-	b1 = 0
-	b2 = 0
-	i = 0
-	while (i < 500):
-		h_cur = round(table[i][3])
-		h_next = round(table[i + 1][3])
-		
-		# exact match
-		if (240 == round(h_cur)):
-			b1 = i + 300
-			break
-		# intermediate match
-		elif (h_next <= 240 <= h_cur):
-			b1 = i + 1 - (240 - h_next) / (h_cur - h_next) + 300
-			break
-		else:
-			i += 1
-	
-	j = 500
-	while (j > 0):
-		h_cur = round(table[j][3])
-		h_next = round(table[j - 1][3])
-		
-		# exact match
-		if (240 == round(h_cur)):
-			b2 = j + 300
-			break
-		# intermediate match
-		elif (h_next >= 240 >= h_cur):
-			b2 = j - 1 + (240 - h_next) / (h_cur - h_next) + 300
-			break
-		else:
-			j -= 1
-	
-	b = (b1 + b2) / 2
-	
-	print("Estimated primary and secondary wavelengths based on CIE XYZ (converted through sRGB):")
-	print("red: " + str(r))
-	print("yellow: " + str(y) + " (" + str(y1) + "-" + str(y2) + ")")
-	print("green: " + str(g) + " (" + str(g1) + "-" + str(g2) + ")")
-	print("cyan: " + str(c) + " (" + str(c1) + "-" + str(c2) + ")")
-	print("blue: " + str(b) + " (" + str(b1) + "-" + str(b2) + ")")
-	print("violet: " + str(v))
-	print("")
-	
-	#table1 = cs_tables_4(l1, m1, s1)[1]
-	#print("Estimated primary and secondary wavelengths based on CIE XYZ (converted through LCHab):")
-	#print("red: " + str(hue_to_wavelength_3(0, table1)))
-	#print("yellow: " + str(hue_to_wavelength_3(60, table1)))
-	#print("green: " + str(hue_to_wavelength_3(120, table1)))
-	#print("cyan: " + str(hue_to_wavelength_3(180, table1)))
-	#print("blue: " + str(hue_to_wavelength_3(240, table1)))
-	#print("violet: " + str(hue_to_wavelength_3(270, table1)))
-	#print("")
-	
-	#table2 = cs_tables_5(l1, m1, s1)[1]
-	#print("Estimated primary and secondary wavelengths based on CIE XYZ (converted through LCHuv):")
-	#print("red: " + str(hue_to_wavelength_3(0, table2)))
-	#print("yellow: " + str(hue_to_wavelength_3(60, table2)))
-	#print("green: " + str(hue_to_wavelength_3(120, table2)))
-	#print("cyan: " + str(hue_to_wavelength_3(180, table2)))
-	#print("blue: " + str(hue_to_wavelength_3(240, table2)))
-	#print("violet: " + str(hue_to_wavelength_3(270, table2)))
-	#print("")
-	
-	# estimated chromatic distances based on formula in Arrese et al. (2005) without the
-	# noise terms. The idea was to produce something similar to wavelength discrimination
-	# functions, which show secondary colors fairly well, but the results are not what
-	# one would expect.
-	#table1 = np.empty((501, 1))
-	#for i in range(0, 500):
-	#	la = wl_to_s(i + 299, l1) / (wl_to_s(i + 299, l1) + wl_to_s(i + 299, m1) + wl_to_s(i + 299, s1))
-	#	ma = wl_to_s(i + 299, m1) / (wl_to_s(i + 299, l1) + wl_to_s(i + 299, m1) + wl_to_s(i + 299, s1))
-	#	sa = wl_to_s(i + 299, s1) / (wl_to_s(i + 299, l1) + wl_to_s(i + 299, m1) + wl_to_s(i + 299, s1))
-	#	lb = wl_to_s(i + 300, l1) / (wl_to_s(i + 300, l1) + wl_to_s(i + 300, m1) + wl_to_s(i + 300, s1))
-	#	mb = wl_to_s(i + 300, m1) / (wl_to_s(i + 300, l1) + wl_to_s(i + 300, m1) + wl_to_s(i + 300, s1))
-	#	sb = wl_to_s(i + 300, s1) / (wl_to_s(i + 300, l1) + wl_to_s(i + 300, m1) + wl_to_s(i + 300, s1))
-	#	lc = wl_to_s(i + 301, l1) / (wl_to_s(i + 301, l1) + wl_to_s(i + 301, m1) + wl_to_s(i + 301, s1))
-	#	mc = wl_to_s(i + 301, m1) / (wl_to_s(i + 301, l1) + wl_to_s(i + 301, m1) + wl_to_s(i + 301, s1))
-	#	sc = wl_to_s(i + 301, s1) / (wl_to_s(i + 301, l1) + wl_to_s(i + 301, m1) + wl_to_s(i + 301, s1))
-	#	dl0 = abs(lb - la)
-	#	dm0 = abs(mb - ma)
-	#	ds0 = abs(sb - sa)
-	#	d0 = (dl0 - dm0)**2 + (dl0 - ds0)**2 + (ds0 - dm0)**2
-	#	#d0 = math.dist((la, ma, sa), (lb, mb, sb))
-	#	dl1 = abs(lc - lb)
-	#	dm1 = abs(mc - mb)
-	#	ds1 = abs(sc - sb)
-	#	d1 = (dl1 - dm1)**2 + (dl1 - ds1)**2 + (ds1 - dm1)**2
-	#	#d1 = math.dist((lb, mb, sb), (lc, mc, sc))
-	#	table1[i][0] = d0 + d1
-		#print(i + 300)
-		#print(d0)
-		#print(d1)
-	
-	#d0 = table[0][0]
-	#w0 = 300
-#	for i in range(s1, m1):
-#		if (table[i - 300][0] > d0):
-#			d0 = table[i - 300][0]
-#			w0 = i
-#	
-#	d1 = table[m1 - 300][0]
-#	w1 = m1 - 300
-#	for i in range(m1, 800):
-#		if (table[i - 300][0] > d1):
-#			d1 = table[i - 300][0]
-#			w1 = i
-	
-	#print("Wavelengths with maximum chromatic separation:")
-	#print("L-M: " + str(w1))
-	#print("M-S: " + str(w0))
-	#print("")
-	
-	# crossover points
-	# These seem like they should correspond to secondary colors but don't really, as
-	# discussed earlier. The reason for this is probably that combinations of primary
-	# and/or complementary wavelengths have to appear "white" and white light does not
-	# excite all three cones equally. Thus "yellow" and "cyan" have L:M and M:S ratios
-	# much higher than 1:1. The location of yellow/green also seems to be influenced
-	# by overlap with "blue".
-	# Crossover points can only tell us this much:
-	# * The actual secondary wavelengths are longer.
-	# * The less overlap, the closer the secondary wavelengths are to the crossover points.
-	
-	# "cyan"
-	i = s1
-	while (i < m1 and wl_to_s(i, s1) / wl_to_s(i, m1) > 1):
-		i += 1
-	j = m1
-	while (j > s1 and wl_to_s(j, s1) / wl_to_s(j, m1) < 1):
-		j -= 1
-	c = (i + j) / 2
-	
-	# "yellow"
-	i = m1
-	while (i < 800 and wl_to_s(i, m1) / wl_to_s(i, l1) > 1):
-		i += 1
-	j = 800
-	while (j > m1 and wl_to_s(j, m1) / wl_to_s(j, l1) < 1):
-		j -= 1
-	y = (i + j) / 2
-	
-	# blue/violet
-	i = 300
-	while (i < 800 and wl_to_s(i, m1) / wl_to_s(i, l1) > 1):
-		i += 1
-	j = s1
-	while (j > m1 and wl_to_s(j, m1) / wl_to_s(j, l1) < 1):
-		j -= 1
-	b = (i + j) / 2
-	
-	print("Crossover points:")
-	print("L-M 1: " + str(y))
-	print("L-M 2: " + str(b))
-	print("M-S: " + str(c))
-	print("")
+		print("Crossover points:")
+		print("L-M 1: " + str(y))
+		print("L-M 2: " + str(b))
+		print("M-S: " + str(c))
+		print("")
 	
 	# white
 	# HSL comes up with a negative saturation. Either Python expects something different
 	# from XYZ input or it just doesn't handle color spaces properly. Also note that for
 	# both the "white" and "maple leaf" colors, the XYZ, LAB and LCh values specify an
 	# impossibly high lightness/intensity (>100) whereas sRGB and HSL (derived from sRGB)
-	# specify a very low value. (No, it's out of 1, not 100)
+	# specify a very low value. (No, it's out of 1, not 100 or 255, so the RGB and HSL values
+	# are also impossibly high.)
+	# The negative saturation seems to happen when the input values are too high and the
+	# brightness is more than 100%. I've scaled everything so the LMS values always add
+	# up to 1, so we don't see this anymore. This means the lightness should be ignored.
+	# We still have >100% lightness sometimes because XYZ Y is determined by the L and M
+	# values and wider cone spacing means many visible wavelengths have a sky-high
+	# L:M/S or M:L/S ratio that would be impossible for a human. This is represented as
+	# "looks like 0 nm" in my estimates of which wavelengths the given L:M and M:S ratios
+	# should look like in human terms. Note this has nothing to do with which monochromatic
+	# wavelength(s) would match the given spectrum for the target species/phenotype.
 	white_l = 0
 	white_m = 0
 	white_s = 0
@@ -1453,6 +1646,11 @@ else:
 		white_l += wl_to_s(i, l1)
 		white_m += wl_to_s(i, m1)
 		white_s += wl_to_s(i, s1)
+	
+	total = white_l + white_m + white_s
+	white_l = white_l / total
+	white_m = white_m / total
+	white_s = white_s / total
 	
 	print("LMS response to white (equal-energy or \"E\"): l=" + str(white_l)
 		+ ", m=" + str(white_m) + ", s=" + str(white_s))
@@ -1462,57 +1660,13 @@ else:
 		[white_m],
 		[white_s]
 	])
-	# LMS->XYZ matrix (D65?) taken from Wikipedia
-	#lms_to_xyz = np.array([
-	#	[1.91020, -1.11212, 0.20191],
-	#	[0.37095, 0.62905, 0],
-	#	[0, 0, 1]
-	#])
-	
-	# Python's matrix from IPTColor. Very similar to the above, and may be wrong as
-	# it expects D65.
-	#lms_to_xyz = np.linalg.inv(IPTColor.conversion_matrices['xyz_to_lms'])
-	#print(IPTColor.conversion_matrices['xyz_to_lms'])
-	#print(np.linalg.inv(IPTColor.conversion_matrices['xyz_to_lms']))
-	
-	# inverse of XYZ->LMS (E) from Wikipedia
-	# This is even more wrong. On inspection, it multiplies L by a larger number and
-	# M and S by smaller (magnitude) numbers.
-	#lms_to_xyz = np.linalg.inv([
-	#	[0.38971, 0.68898, -0.07868],
-	#	[-0.22981, 1.18340, 0.04641],
-	#	[0, 0, 1]
-	#])
-	#print(np.linalg.inv([
-	#	[0.38971, 0.68898, -0.07868],
-	#	[-0.22981, 1.18340, 0.04641],
-	#	[0, 0, 1]
-	#]))
-	# another Wikipedia matrix
-	lms_to_xyz = np.array([
-		[1.94735469, -1.41445123, 0.3647327],
-		[0.68990272, 0.34832189, 0],
-		[0, 0, 1.93485343]
-	])
-	
-	#xyz_to_rgb = (1 / 3400850) * np.array([
-	#	[8041697, -3049000, -1591847],
-	#	[-1752003, 4851000, 301853],
-	#	[17697, -49000, 3432153]
-	#])
 	white_matrix = np.matmul(lms_to_xyz, white_lms)
-	#white_matrix1 = np.matmul(xyz_to_rgb, white_matrix)
 	white_xyz = XYZColor(*white_matrix, illuminant="e")
-	#white_rgb = sRGBColor(white_matrix1[0], white_matrix1[1], white_matrix1[2])
 	print("Color space coordinates of white (with E illuminant):")
 	print("CIE XYZ: " + str(white_xyz.get_value_tuple()))
-	#print("CIE RGB: " + str(white_rgb.get_value_tuple()))
-	#print("sRGB: " + str(convert_color(white_xyz, sRGBColor).get_value_tuple()))
-	#print("HSL (converted through sRGB): " + str(convert_color(white_xyz, HSLColor).get_value_tuple()))
-	#print("HSL (converted through CIE RGB): " + str(convert_color(white_rgb, HSLColor).get_value_tuple()))
-	#print("CIE LAB: " + str(convert_color(white_xyz, LabColor).get_value_tuple()))
+	print("sRGB: " + str(convert_color(white_xyz, sRGBColor).get_value_tuple()))
+	print("HSL: " + str(convert_color(white_xyz, HSLColor).get_value_tuple()))
 	print("LCh (LCHab): " + str(convert_color(white_xyz, LCHabColor).get_value_tuple()))
-	#print("LCh (LCHuv): " + str(convert_color(white_xyz, LCHuvColor).get_value_tuple()))
 	print("")
 	
 	# non-UV white
@@ -1524,9 +1678,10 @@ else:
 		white_m += wl_to_s(i, m1)
 		white_s += wl_to_s(i, s1)
 	
-	#white_l = white_l / 500
-	#white_m = white_m / 500
-	#white_s = white_s / 500
+	total = white_l + white_m + white_s
+	white_l = white_l / total
+	white_m = white_m / total
+	white_s = white_s / total
 	
 	print("LMS response to non-UV white (cut off at 400 nm): l=" + str(white_l)
 		+ ", m=" + str(white_m) + ", s=" + str(white_s))
@@ -1537,18 +1692,12 @@ else:
 		[white_s]
 	])
 	white_matrix = np.matmul(lms_to_xyz, white_lms)
-	#white_matrix1 = np.matmul(xyz_to_rgb, white_matrix)
 	white_xyz = XYZColor(*white_matrix, illuminant="e")
-	#white_rgb = sRGBColor(white_matrix1[0], white_matrix1[1], white_matrix1[2])
 	print("Color space coordinates of non-UV white:")
 	print("CIE XYZ: " + str(white_xyz.get_value_tuple()))
-	#print("CIE RGB: " + str(white_rgb.get_value_tuple()))
-	#print("sRGB: " + str(convert_color(white_xyz, sRGBColor).get_value_tuple()))
-	#print("HSL (converted through sRGB): " + str(convert_color(white_xyz, HSLColor).get_value_tuple()))
-	#print("HSL (converted through CIE RGB): " + str(convert_color(white_rgb, HSLColor).get_value_tuple()))
-	#print("CIE LAB: " + str(convert_color(white_xyz, LabColor).get_value_tuple()))
+	print("sRGB: " + str(convert_color(white_xyz, sRGBColor).get_value_tuple()))
+	print("HSL: " + str(convert_color(white_xyz, HSLColor).get_value_tuple()))
 	print("LCh (LCHab): " + str(convert_color(white_xyz, LCHabColor).get_value_tuple()))
-	#print("LCh (LCHuv): " + str(convert_color(white_xyz, LCHuvColor).get_value_tuple()))
 	print("")
 	
 	# leaves
@@ -1564,9 +1713,6 @@ else:
 	# if the luminous efficiency function should be included. Is the absorption ratio
 	# affected by the relative sensitivity and density of cone types, or are they
 	# adjusted relative to each other?
-	
-	# I finally found D65.
-	d65 = spectral_constants.REF_ILLUM_TABLE["d65"]
 	
 	# reflectance spectrum of maple leaves estimated from this graph:
 	# https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEgKwT9GhKlvdbOROD_JtEEym7Ovzq8GPfSCORiVcKklEQI9DSTuNjoaIJMWMdpJpc4ijq0T1m_PXF2seWczauKLz-4VPIY9TSXQqXdp1B80vu4w5O4lWaAF0k2kaA5ThrJrjCzlck8Ez1fF/s1600/LeafSpectra.jpg
@@ -1613,138 +1759,18 @@ else:
 		[720, 0.55],
 		[730, 0.6],
 		[740, 0.63],
-		[750, 0.65]
+		[750, 0.65],
+		[760, 0.65],
+		[770, 0.65],
+		[780, 0.65],
+		[790, 0.65],
+		[800, 0.65],
+		[810, 0.65],
+		[820, 0.65],
+		[830, 0.65]
 	])
-	leaf_l = 0
-	leaf_m = 0
-	leaf_s = 0
-	for i in range(0, leaf_table.shape[0]):
-		f = lens_filter(leaf_table[i][0], args.cutoff)
-		leaf_l += wl_to_s(leaf_table[i][0], l1) * leaf_table[i][1] * f
-		leaf_m += wl_to_s(leaf_table[i][0], m1) * leaf_table[i][1] * f
-		leaf_s += wl_to_s(leaf_table[i][0], s1) * leaf_table[i][1] * f
-	
-	# ratio comparison
-	similar = 0
-	for i in range(300, 800):
-		ratio0 = round(wl_to_s(i, l0) / wl_to_s(i, m0), 2)
-		ratio1 = round(leaf_l / leaf_m, 2)
-		ratio2 = round(wl_to_s(i + 1, l0) / wl_to_s(i + 1, m0), 2)
-		if (ratio0 == ratio1):
-			similar = i
-		elif (ratio0 <= ratio1 <= ratio2
-			or ratio0 >= ratio1 >= ratio2):
-			similar = i + 0.5
-	
-	similar1 = 0
-	for i in range(300, 800):
-		ratio0 = round(wl_to_s(i, m0) / wl_to_s(i, s0), 2)
-		ratio1 = round(leaf_m / leaf_s, 2)
-		ratio2 = round(wl_to_s(i + 1, m0) / wl_to_s(i + 1, s0), 2)
-		if (ratio0 == ratio1):
-			similar1 = i
-		elif (ratio0 <= ratio1 <= ratio2
-			or ratio0 >= ratio1 >= ratio2):
-			similar1 = i + 0.5
-	
-	# normalize
-	total = leaf_l + leaf_m + leaf_s
-	leaf_l = leaf_l / total
-	leaf_m = leaf_m / total
-	leaf_s = leaf_s / total
-	
-	print("LMS response to green maple leaf: l=" + str(leaf_l) +", m=" + str(leaf_m) + ", s=" + str(leaf_s))
-	print("L:M ratio: " + str(leaf_l / leaf_m) + " (looks like " + str(similar) + " nm)")
-	print("M:S ratio: " + str(leaf_m / leaf_s) + " (looks like " + str(similar1) + " nm)")
-	
-	leaf_lms = np.array([
-		[leaf_l],
-		[leaf_m],
-		[leaf_s]
-	])
-	
-	leaf_matrix = np.matmul(lms_to_xyz, leaf_lms)
-	#leaf_matrix1 = np.matmul(xyz_to_rgb, leaf_matrix)
-	leaf_xyz = XYZColor(*leaf_matrix, illuminant="e")
-	#leaf_rgb = sRGBColor(leaf_matrix1[0], leaf_matrix1[1], leaf_matrix1[2])
-	print("Color coordinates of green maple leaf:")
-	print("CIE XYZ: " + str(leaf_xyz.get_value_tuple()))
-	#print("CIE RGB: " + str(leaf_rgb.get_value_tuple()))
-	#print("sRGB: " + str(convert_color(leaf_xyz, sRGBColor).get_value_tuple()))
-	#print("RGB (converted through RGYB): " + str(rgyb_to_rgb((leaf_l - leaf_m) / (leaf_l + leaf_m + leaf_s), (leaf_l + leaf_m - leaf_s) / (leaf_l + leaf_m + leaf_s))))
-	print("HSL: " + str(convert_color(leaf_xyz, HSLColor).get_value_tuple()))
-	#print("HSL (converted through CIE RGB): " + str(convert_color(leaf_rgb, HSLColor).get_value_tuple()))
-	#print("CIE LAB: " + str(convert_color(leaf_xyz, LabColor).get_value_tuple()))
-	print("LCh (LCHab): " + str(convert_color(leaf_xyz, LCHabColor).get_value_tuple()))
-	#print("LCh (LCHuv): " + str(convert_color(leaf_xyz, LCHuvColor).get_value_tuple()))
-	
-	# "SpectralColor" object
-	leaf_spectral = SpectralColor(spec_340nm=leaf_table[0][1],
-	spec_350nm=leaf_table[1][1],
-	spec_360nm=leaf_table[2][1],
-	spec_370nm=leaf_table[3][1],
-	spec_380nm=leaf_table[4][1],
-	spec_390nm=leaf_table[5][1],
-	spec_400nm=leaf_table[6][1],
-	spec_410nm=leaf_table[7][1],
-	spec_420nm=leaf_table[8][1],
-	spec_430nm=leaf_table[9][1],
-	spec_440nm=leaf_table[10][1],
-	spec_450nm=leaf_table[11][1],
-	spec_460nm=leaf_table[12][1],
-	spec_470nm=leaf_table[13][1],
-	spec_480nm=leaf_table[14][1],
-	spec_490nm=leaf_table[15][1],
-	spec_500nm=leaf_table[16][1],
-	spec_510nm=leaf_table[17][1],
-	spec_520nm=leaf_table[18][1],
-	spec_530nm=leaf_table[19][1],
-	spec_540nm=leaf_table[20][1],
-	spec_550nm=leaf_table[21][1],
-	spec_560nm=leaf_table[22][1],
-	spec_570nm=leaf_table[23][1],
-	spec_580nm=leaf_table[24][1],
-	spec_590nm=leaf_table[25][1],
-	spec_600nm=leaf_table[26][1],
-	spec_610nm=leaf_table[27][1],
-	spec_620nm=leaf_table[28][1],
-	spec_630nm=leaf_table[29][1],
-	spec_640nm=leaf_table[30][1],
-	spec_650nm=leaf_table[31][1],
-	spec_660nm=leaf_table[32][1],
-	spec_670nm=leaf_table[33][1],
-	spec_680nm=leaf_table[34][1],
-	spec_690nm=leaf_table[35][1],
-	spec_700nm=leaf_table[36][1],
-	spec_710nm=leaf_table[37][1],
-	spec_720nm=leaf_table[38][1],
-	spec_730nm=leaf_table[39][1],
-	spec_740nm=leaf_table[40][1],
-	spec_750nm=leaf_table[41][1], illuminant='e')
-	
-	print("Python spectral color conversion:")
-	print(convert_color(leaf_spectral, XYZColor))
-	print(convert_color(leaf_spectral, sRGBColor))
-	print(convert_color(leaf_spectral, HSLColor))
-	print(convert_color(leaf_spectral, LabColor))
-	print(convert_color(leaf_spectral, LCHabColor))
-	print(convert_color(leaf_spectral, LCHuvColor))
-	
-	# I found Python's canonical conversion matrix. Maybe.
-	#leaf_xyz1 = np.dot(np.linalg.inv(IPTColor.conversion_matrices['xyz_to_lms']), leaf_lms)
-	#leaf_xyz2 = XYZColor(*leaf_xyz1, illuminant='d65')
-	#print(leaf_xyz2)
-	#print(convert_color(leaf_xyz2, sRGBColor))
-	#print(convert_color(leaf_xyz2, HSLColor))
-	#print(convert_color(leaf_xyz2, LabColor))
-	#print(convert_color(leaf_xyz2, LCHabColor))
-	#print(convert_color(leaf_xyz2, LCHuvColor))
-	
-	#leaf_xyz3 = np.array([*convert_color(leaf_spectral, XYZColor).get_value_tuple()])
-	#print(np.dot(IPTColor.conversion_matrices['xyz_to_lms'], leaf_xyz3))
-	#print(np.dot(IPTColor.conversion_matrices['xyz_to_lms'], leaf_matrix))
-	
-	print("")
+	print("Green maple leaf")
+	spectral_rendering(leaf_table, normalize=True)
 	
 	red_leaf_table = np.array([
 		[340, 0.0],
@@ -1788,120 +1814,18 @@ else:
 		[720, 0.55],
 		[730, 0.6],
 		[740, 0.63],
-		[750, 0.65]
+		[750, 0.65],
+		[760, 0.65],
+		[770, 0.65],
+		[780, 0.65],
+		[790, 0.65],
+		[800, 0.65],
+		[810, 0.65],
+		[820, 0.65],
+		[830, 0.65]
 	])
-	red_leaf_l = 0
-	red_leaf_m = 0
-	red_leaf_s = 0
-	for i in range(0, red_leaf_table.shape[0]):
-		f = lens_filter(red_leaf_table[i][0], args.cutoff)
-		red_leaf_l += wl_to_s(red_leaf_table[i][0], l1) * red_leaf_table[i][1] * f
-		red_leaf_m += wl_to_s(red_leaf_table[i][0], m1) * red_leaf_table[i][1] * f
-		red_leaf_s += wl_to_s(red_leaf_table[i][0], s1) * red_leaf_table[i][1] * f
-	
-	total = red_leaf_l + red_leaf_m + red_leaf_s
-	red_leaf_l = red_leaf_l / total
-	red_leaf_m = red_leaf_m / total
-	red_leaf_s = red_leaf_s / total
-	
-	# ratio comparison
-	similar = 0
-	for i in range(300, 800):
-		ratio0 = round(wl_to_s(i, l0) / wl_to_s(i, m0), 2)
-		ratio1 = round(red_leaf_l / red_leaf_m, 2)
-		ratio2 = round(wl_to_s(i + 1, l0) / wl_to_s(i + 1, m0), 2)
-		if (ratio0 == ratio1):
-			similar = i
-		elif (ratio0 <= ratio1 <= ratio2
-			or ratio0 >= ratio1 >= ratio2):
-			similar = i + 0.5
-	
-	similar1 = 0
-	for i in range(300, 800):
-		ratio0 = round(wl_to_s(i, m0) / wl_to_s(i, s0), 2)
-		ratio1 = round(red_leaf_m / red_leaf_s, 2)
-		ratio2 = round(wl_to_s(i + 1, m0) / wl_to_s(i + 1, s0), 2)
-		if (ratio0 == ratio1):
-			similar1 = i
-		elif (ratio0 <= ratio1 <= ratio2
-			or ratio0 >= ratio1 >= ratio2):
-			similar1 = i + 0.5
-	
-	print("LMS response to red maple leaf: l=" + str(red_leaf_l) +", m=" + str(red_leaf_m) + ", s=" + str(red_leaf_s))
-	red_leaf_lms = np.array([
-		[red_leaf_l],
-		[red_leaf_m],
-		[red_leaf_s]
-	])
-	print("L:M ratio: " + str(red_leaf_l / red_leaf_m) + " (looks like " + str(similar) + " nm)")
-	print("M:S ratio: " + str(red_leaf_m / red_leaf_s) + " (looks like " + str(similar1) + " nm)")
-	
-	red_leaf_matrix = np.matmul(lms_to_xyz, red_leaf_lms)
-	#red_leaf_matrix1 = np.matmul(xyz_to_rgb, red_leaf_matrix)
-	red_leaf_xyz = XYZColor(*red_leaf_matrix, illuminant="e")
-	#red_leaf_rgb = XYZColor(red_leaf_matrix[0], red_leaf_matrix[1], red_leaf_matrix[2])
-	print("Color coordinates of red maple leaf:")
-	print("CIE XYZ: " + str(red_leaf_xyz.get_value_tuple()))
-	#print("CIE RGB: " + str(red_leaf_rgb.get_value_tuple()))
-	print("sRGB: " + str(convert_color(red_leaf_xyz, sRGBColor).get_value_tuple()))
-	#print("RGB (converted through RGYB): " + str(rgyb_to_rgb((red_leaf_l - red_leaf_m) / (red_leaf_l + red_leaf_m + red_leaf_s), (red_leaf_l + red_leaf_m - red_leaf_s) / (red_leaf_l + red_leaf_m + red_leaf_s))))
-	print("HSL: " + str(convert_color(red_leaf_xyz, HSLColor).get_value_tuple()))
-	#print("CIE LAB: " + str(convert_color(red_leaf_xyz, LabColor).get_value_tuple()))
-	print("LCh (LCHab): " + str(convert_color(red_leaf_xyz, LCHabColor).get_value_tuple()))
-	#print("LCh (LCHuv): " + str(convert_color(red_leaf_xyz, LCHuvColor).get_value_tuple()))
-	
-	# "SpectralColor" object
-	red_leaf_spectral = SpectralColor(spec_340nm=red_leaf_table[0][1],
-	spec_350nm=red_leaf_table[1][1],
-	spec_360nm=red_leaf_table[2][1],
-	spec_370nm=red_leaf_table[3][1],
-	spec_380nm=red_leaf_table[4][1],
-	spec_390nm=red_leaf_table[5][1],
-	spec_400nm=red_leaf_table[6][1],
-	spec_410nm=red_leaf_table[7][1],
-	spec_420nm=red_leaf_table[8][1],
-	spec_430nm=red_leaf_table[9][1],
-	spec_440nm=red_leaf_table[10][1],
-	spec_450nm=red_leaf_table[11][1],
-	spec_460nm=red_leaf_table[12][1],
-	spec_470nm=red_leaf_table[13][1],
-	spec_480nm=red_leaf_table[14][1],
-	spec_490nm=red_leaf_table[15][1],
-	spec_500nm=red_leaf_table[16][1],
-	spec_510nm=red_leaf_table[17][1],
-	spec_520nm=red_leaf_table[18][1],
-	spec_530nm=red_leaf_table[19][1],
-	spec_540nm=red_leaf_table[20][1],
-	spec_550nm=red_leaf_table[21][1],
-	spec_560nm=red_leaf_table[22][1],
-	spec_570nm=red_leaf_table[23][1],
-	spec_580nm=red_leaf_table[24][1],
-	spec_590nm=red_leaf_table[25][1],
-	spec_600nm=red_leaf_table[26][1],
-	spec_610nm=red_leaf_table[27][1],
-	spec_620nm=red_leaf_table[28][1],
-	spec_630nm=red_leaf_table[29][1],
-	spec_640nm=red_leaf_table[30][1],
-	spec_650nm=red_leaf_table[31][1],
-	spec_660nm=red_leaf_table[32][1],
-	spec_670nm=red_leaf_table[33][1],
-	spec_680nm=red_leaf_table[34][1],
-	spec_690nm=red_leaf_table[35][1],
-	spec_700nm=red_leaf_table[36][1],
-	spec_710nm=red_leaf_table[37][1],
-	spec_720nm=red_leaf_table[38][1],
-	spec_730nm=red_leaf_table[39][1],
-	spec_740nm=red_leaf_table[40][1],
-	spec_750nm=red_leaf_table[41][1], illuminant='e')
-	
-	print("Python spectral color conversion:")
-	print(convert_color(red_leaf_spectral, XYZColor))
-	print(convert_color(red_leaf_spectral, sRGBColor))
-	print(convert_color(red_leaf_spectral, HSLColor))
-	print(convert_color(red_leaf_spectral, LabColor))
-	print(convert_color(red_leaf_spectral, LCHabColor))
-	print(convert_color(red_leaf_spectral, LCHuvColor))
-	print("")
+	print("Red (red-orange) maple leaf")
+	spectral_rendering(red_leaf_table, normalize=True)
 	
 	# corn
 	# estimated from https://www.yorku.ca/planters/photosynthesis/2014_08_15_lab_manual_static_html/images/Corn_leaf_reflectance.png. Values below 400 are estimated to be the same as 400.
@@ -1956,126 +1880,13 @@ else:
 		[770, 0.8],
 		[780, 0.8],
 		[790, 0.8],
-		[800, 0.8]
+		[800, 0.8],
+		[810, 0.8],
+		[820, 0.8],
+		[830, 0.8]
 	])
-	corn_l = 0
-	corn_m = 0
-	corn_s = 0
-	for i in range(0, corn_table.shape[0]):
-		f = lens_filter(corn_table[i][0], args.cutoff)
-		corn_l += wl_to_s(corn_table[i][0], l1) * corn_table[i][1] * f
-		corn_m += wl_to_s(corn_table[i][0], m1) * corn_table[i][1] * f
-		corn_s += wl_to_s(corn_table[i][0], s1) * corn_table[i][1] * f
-	
-	total = corn_l + corn_m + corn_s
-	corn_l = corn_l / total
-	corn_m = corn_m / total
-	corn_s = corn_s / total
-	
-	# LM ratio comparison
-	similar = 0
-	for i in range(300, 800):
-		ratio0 = round(wl_to_s(i, l0) / wl_to_s(i, m0), 2)
-		ratio1 = round(corn_l / corn_m, 2)
-		ratio2 = round(wl_to_s(i + 1, l0) / wl_to_s(i + 1, m0), 2)
-		if (ratio0 == ratio1):
-			similar = i
-		elif (ratio0 <= ratio1 <= ratio2
-			or ratio0 >= ratio1 >= ratio2):
-			similar = i + 0.5
-	
-	similar1 = 0
-	for i in range(300, 800):
-		ratio0 = round(wl_to_s(i, m0) / wl_to_s(i, s0), 2)
-		ratio1 = round(corn_m / corn_s, 2)
-		ratio2 = round(wl_to_s(i + 1, m0) / wl_to_s(i + 1, s0), 2)
-		if (ratio0 == ratio1):
-			similar1 = i
-		elif (ratio0 <= ratio1 <= ratio2
-			or ratio0 >= ratio1 >= ratio2):
-			similar1 = i + 0.5
-	
-	print("LMS response to corn leaf: l=" + str(corn_l) +", m=" + str(corn_m) + ", s=" + str(corn_s))
-	corn_lms = np.array([
-		[corn_l],
-		[corn_m],
-		[corn_s]
-	])
-	print("L:M ratio: " + str(corn_l / corn_m) + " (looks like " + str(similar) + " nm)")
-	print("M:S ratio: " + str(corn_m / corn_s) + " (looks like " + str(similar1) + " nm)")
-	
-	corn_matrix = np.matmul(lms_to_xyz, corn_lms)
-	#corn_matrix1 = np.matmul(xyz_to_rgb, corn_matrix)
-	corn_xyz = XYZColor(*corn_matrix, illuminant="e")
-	#corn_rgb = XYZColor(corn_matrix1[0], corn_matrix1[1], corn_matrix1[2])
-	print("Color coordinates of corn leaf:")
-	print("CIE XYZ: " + str(corn_xyz.get_value_tuple()))
-	#print("CIE RGB: " + str(corn_rgb.get_value_tuple()))
-	print("sRGB: " + str(convert_color(corn_xyz, sRGBColor).get_value_tuple()))
-	#print("RGB (converted through RGYB): " + str(rgyb_to_rgb((corn_l - corn_m) / (corn_l + corn_m + corn_s), (corn_l + corn_m - corn_s) / (corn_l + corn_m + corn_s))))
-	print("HSL: " + str(convert_color(corn_xyz, HSLColor).get_value_tuple()))
-	#print("CIE LAB: " + str(convert_color(corn_xyz, LabColor).get_value_tuple()))
-	print("LCh (LCHab): " + str(convert_color(corn_xyz, LCHabColor).get_value_tuple()))
-	#print("LCh (LCHuv): " + str(convert_color(corn_xyz, LCHuvColor).get_value_tuple()))
-	
-	# "SpectralColor" object
-	corn_spectral = SpectralColor(spec_340nm=corn_table[0][1],
-	spec_350nm=corn_table[1][1],
-	spec_360nm=corn_table[2][1],
-	spec_370nm=corn_table[3][1],
-	spec_380nm=corn_table[4][1],
-	spec_390nm=corn_table[5][1],
-	spec_400nm=corn_table[6][1],
-	spec_410nm=corn_table[7][1],
-	spec_420nm=corn_table[8][1],
-	spec_430nm=corn_table[9][1],
-	spec_440nm=corn_table[10][1],
-	spec_450nm=corn_table[11][1],
-	spec_460nm=corn_table[12][1],
-	spec_470nm=corn_table[13][1],
-	spec_480nm=corn_table[14][1],
-	spec_490nm=corn_table[15][1],
-	spec_500nm=corn_table[16][1],
-	spec_510nm=corn_table[17][1],
-	spec_520nm=corn_table[18][1],
-	spec_530nm=corn_table[19][1],
-	spec_540nm=corn_table[20][1],
-	spec_550nm=corn_table[21][1],
-	spec_560nm=corn_table[22][1],
-	spec_570nm=corn_table[23][1],
-	spec_580nm=corn_table[24][1],
-	spec_590nm=corn_table[25][1],
-	spec_600nm=corn_table[26][1],
-	spec_610nm=corn_table[27][1],
-	spec_620nm=corn_table[28][1],
-	spec_630nm=corn_table[29][1],
-	spec_640nm=corn_table[30][1],
-	spec_650nm=corn_table[31][1],
-	spec_660nm=corn_table[32][1],
-	spec_670nm=corn_table[33][1],
-	spec_680nm=corn_table[34][1],
-	spec_690nm=corn_table[35][1],
-	spec_700nm=corn_table[36][1],
-	spec_710nm=corn_table[37][1],
-	spec_720nm=corn_table[38][1],
-	spec_730nm=corn_table[39][1],
-	spec_740nm=corn_table[40][1],
-	spec_750nm=corn_table[41][1],
-	spec_760nm=corn_table[42][1],
-	spec_770nm=corn_table[43][1],
-	spec_780nm=corn_table[44][1],
-	spec_790nm=corn_table[45][1],
-	spec_800nm=corn_table[46][1], illuminant='e')
-	
-	spec_750nm=corn_table[41][1],
-	print("Python spectral color conversion:")
-	print(convert_color(corn_spectral, XYZColor))
-	print(convert_color(corn_spectral, sRGBColor))
-	print(convert_color(corn_spectral, HSLColor))
-	print(convert_color(corn_spectral, LabColor))
-	print(convert_color(corn_spectral, LCHabColor))
-	print(convert_color(corn_spectral, LCHuvColor))
-	print("")
+	print("Corn leaf")
+	spectral_rendering(corn_table, normalize=True)
 	
 	# hydrangea
 	# estimated from https://spectralevolution.com/wp-content/uploads/2024/04/RT_hydrang_ref.jpg
@@ -2131,125 +1942,8 @@ else:
 		[820, 0.525],
 		[830, 0.525]
 	])
-	hydrangea_l = 0
-	hydrangea_m = 0
-	hydrangea_s = 0
-	for i in range(0, hydrangea_table.shape[0]):
-		f = lens_filter(hydrangea_table[i][0], args.cutoff)
-		hydrangea_l += wl_to_s(hydrangea_table[i][0], l1) * hydrangea_table[i][1] * f
-		hydrangea_m += wl_to_s(hydrangea_table[i][0], m1) * hydrangea_table[i][1] * f
-		hydrangea_s += wl_to_s(hydrangea_table[i][0], s1) * hydrangea_table[i][1] * f
-	
-	total = hydrangea_l + hydrangea_m + hydrangea_s
-	hydrangea_l = hydrangea_l / total
-	hydrangea_m = hydrangea_m / total
-	hydrangea_s = hydrangea_s / total
-	
-	# LM ratio comparison
-	similar = 0
-	for i in range(300, 800):
-		ratio0 = round(wl_to_s(i, l0) / wl_to_s(i, m0), 2)
-		ratio1 = round(hydrangea_l / hydrangea_m, 2)
-		ratio2 = round(wl_to_s(i + 1, l0) / wl_to_s(i + 1, m0), 2)
-		if (ratio0 == ratio1):
-			similar = i
-		elif (ratio0 <= ratio1 <= ratio2
-			or ratio0 >= ratio1 >= ratio2):
-			similar = i + 0.5
-	
-	similar1 = 0
-	for i in range(300, 800):
-		ratio0 = round(wl_to_s(i, m0) / wl_to_s(i, s0), 2)
-		ratio1 = round(hydrangea_m / hydrangea_s, 2)
-		ratio2 = round(wl_to_s(i + 1, m0) / wl_to_s(i + 1, s0), 2)
-		if (ratio0 == ratio1):
-			similar1 = i
-		elif (ratio0 <= ratio1 <= ratio2
-			or ratio0 >= ratio1 >= ratio2):
-			similar1 = i + 0.5
-	
-	print("LMS response to hydrangea leaf: l=" + str(hydrangea_l) +", m=" + str(hydrangea_m) + ", s=" + str(hydrangea_s))
-	hydrangea_lms = np.array([
-		[hydrangea_l],
-		[hydrangea_m],
-		[hydrangea_s]
-	])
-	print("L:M ratio: " + str(hydrangea_l / hydrangea_m) + " (looks like " + str(similar) + " nm)")
-	print("M:S ratio: " + str(hydrangea_m / hydrangea_s) + " (looks like " + str(similar1) + " nm)")
-	
-	hydrangea_matrix = np.matmul(lms_to_xyz, hydrangea_lms)
-	#hydrangea_matrix1 = np.matmul(xyz_to_rgb, hydrangea_matrix)
-	hydrangea_xyz = XYZColor(*hydrangea_matrix, illuminant="e")
-	#hydrangea_rgb = XYZColor(*hydrangea_matrix1)
-	print("Color coordinates of hydrangea leaf:")
-	print("CIE XYZ: " + str(hydrangea_xyz.get_value_tuple()))
-	#print("CIE RGB: " + str(hydrangea_rgb.get_value_tuple()))
-	print("sRGB: " + str(convert_color(hydrangea_xyz, sRGBColor).get_value_tuple()))
-	print("HSL: " + str(convert_color(hydrangea_xyz, HSLColor).get_value_tuple()))
-	#print("CIE LAB: " + str(convert_color(hydrangea_xyz, LabColor).get_value_tuple()))
-	print("LCh (LCHab): " + str(convert_color(hydrangea_xyz, LCHabColor).get_value_tuple()))
-	#print("LCh (LCHuv): " + str(convert_color(hydrangea_xyz, LCHuvColor).get_value_tuple()))
-	
-	# "SpectralColor" object
-	hydrangea_spectral = SpectralColor(spec_340nm=hydrangea_table[0][1],
-	spec_350nm=hydrangea_table[1][1],
-	spec_360nm=hydrangea_table[2][1],
-	spec_370nm=hydrangea_table[3][1],
-	spec_380nm=hydrangea_table[4][1],
-	spec_390nm=hydrangea_table[5][1],
-	spec_400nm=hydrangea_table[6][1],
-	spec_410nm=hydrangea_table[7][1],
-	spec_420nm=hydrangea_table[8][1],
-	spec_430nm=hydrangea_table[9][1],
-	spec_440nm=hydrangea_table[10][1],
-	spec_450nm=hydrangea_table[11][1],
-	spec_460nm=hydrangea_table[12][1],
-	spec_470nm=hydrangea_table[13][1],
-	spec_480nm=hydrangea_table[14][1],
-	spec_490nm=hydrangea_table[15][1],
-	spec_500nm=hydrangea_table[16][1],
-	spec_510nm=hydrangea_table[17][1],
-	spec_520nm=hydrangea_table[18][1],
-	spec_530nm=hydrangea_table[19][1],
-	spec_540nm=hydrangea_table[20][1],
-	spec_550nm=hydrangea_table[21][1],
-	spec_560nm=hydrangea_table[22][1],
-	spec_570nm=hydrangea_table[23][1],
-	spec_580nm=hydrangea_table[24][1],
-	spec_590nm=hydrangea_table[25][1],
-	spec_600nm=hydrangea_table[26][1],
-	spec_610nm=hydrangea_table[27][1],
-	spec_620nm=hydrangea_table[28][1],
-	spec_630nm=hydrangea_table[29][1],
-	spec_640nm=hydrangea_table[30][1],
-	spec_650nm=hydrangea_table[31][1],
-	spec_660nm=hydrangea_table[32][1],
-	spec_670nm=hydrangea_table[33][1],
-	spec_680nm=hydrangea_table[34][1],
-	spec_690nm=hydrangea_table[35][1],
-	spec_700nm=hydrangea_table[36][1],
-	spec_710nm=hydrangea_table[37][1],
-	spec_720nm=hydrangea_table[38][1],
-	spec_730nm=hydrangea_table[39][1],
-	spec_740nm=hydrangea_table[40][1],
-	spec_750nm=hydrangea_table[41][1],
-	spec_760nm=hydrangea_table[42][1],
-	spec_770nm=hydrangea_table[43][1],
-	spec_780nm=hydrangea_table[44][1],
-	spec_790nm=hydrangea_table[45][1],
-	spec_800nm=hydrangea_table[46][1],
-	spec_810nm=hydrangea_table[47][1],
-	spec_820nm=hydrangea_table[48][1],
-	spec_830nm=hydrangea_table[49][1], illuminant='e')
-	
-	print("Python spectral color conversion:")
-	print(convert_color(hydrangea_spectral, XYZColor))
-	print(convert_color(hydrangea_spectral, sRGBColor))
-	print(convert_color(hydrangea_spectral, HSLColor))
-	print(convert_color(hydrangea_spectral, LabColor))
-	print(convert_color(hydrangea_spectral, LCHabColor))
-	print(convert_color(hydrangea_spectral, LCHuvColor))
-	print("")
+	print("Hydrangea leaf")
+	spectral_rendering(hydrangea_table, normalize=True)
 	
 	# flowers
 	# estimated from https://www.researchgate.net/profile/Robert-Gegear/publication/222035355/figure/fig1/AS:632345413578753@1527774303378/The-spectral-reflectance-curves-of-coloured-flowers-and-the-green-array-background-used.png
@@ -2294,112 +1988,24 @@ else:
 		[670, 0.08],
 		[680, 0.08],
 		[690, 0.08],
-		[700, 0.08]
+		[700, 0.08],
+		[700, 0.08],
+		[710, 0.08],
+		[720, 0.08],
+		[730, 0.08],
+		[740, 0.08],
+		[750, 0.08],
+		[760, 0.08],
+		[770, 0.08],
+		[780, 0.08],
+		[790, 0.08],
+		[800, 0.08],
+		[810, 0.08],
+		[820, 0.08],
+		[830, 0.08]
 	])
-	flower0_l = 0
-	flower0_m = 0
-	flower0_s = 0
-	for i in range(0, flower0_table.shape[0]):
-		f = lens_filter(flower0_table[i][0], args.cutoff)
-		flower0_l += wl_to_s(flower0_table[i][0], l1) * flower0_table[i][1] * f
-		flower0_m += wl_to_s(flower0_table[i][0], m1) * flower0_table[i][1] * f
-		flower0_s += wl_to_s(flower0_table[i][0], s1) * flower0_table[i][1] * f
-	
-	total = flower0_l + flower0_m + flower0_s
-	flower0_l = flower0_l / total
-	flower0_m = flower0_m / total
-	flower0_s = flower0_s / total
-	
-	# LM ratio comparison
-	similar = 0
-	for i in range(300, 800):
-		ratio0 = round(wl_to_s(i, l0) / wl_to_s(i, m0), 2)
-		ratio1 = round(flower0_l / flower0_m, 2)
-		ratio2 = round(wl_to_s(i + 1, l0) / wl_to_s(i + 1, m0), 2)
-		if (ratio0 == ratio1):
-			similar = i
-		elif (ratio0 <= ratio1 <= ratio2
-			or ratio0 >= ratio1 >= ratio2):
-			similar = i + 0.5
-	
-	similar1 = 0
-	for i in range(300, 800):
-		ratio0 = round(wl_to_s(i, m0) / wl_to_s(i, s0), 2)
-		ratio1 = round(flower0_m / flower0_s, 2)
-		ratio2 = round(wl_to_s(i + 1, m0) / wl_to_s(i + 1, s0), 2)
-		if (ratio0 == ratio1):
-			similar1 = i
-		elif (ratio0 <= ratio1 <= ratio2
-			or ratio0 >= ratio1 >= ratio2):
-			similar1 = i + 0.5
-	
-	print("LMS response to blue flower: l=" + str(flower0_l) +", m=" + str(flower0_m) + ", s=" + str(flower0_s))
-	flower0_lms = np.array([
-		[flower0_l],
-		[flower0_m],
-		[flower0_s]
-	])
-	print("L:M ratio: " + str(flower0_l / flower0_m) + " (looks like " + str(similar) + " nm)")
-	print("M:S ratio: " + str(flower0_m / flower0_s) + " (looks like " + str(similar1) + " nm)")
-	
-	flower0_matrix = np.matmul(lms_to_xyz, flower0_lms)
-	#flower0_matrix1 = np.matmul(xyz_to_rgb, flower0_matrix)
-	flower0_xyz = XYZColor(*flower0_matrix, illuminant="e")
-	#flower0_rgb = XYZColor(*flower0_matrix1)
-	print("Color coordinates of blue flower:")
-	print("CIE XYZ: " + str(flower0_xyz.get_value_tuple()))
-	#print("CIE RGB: " + str(flower0_rgb.get_value_tuple()))
-	print("sRGB: " + str(convert_color(flower0_xyz, sRGBColor).get_value_tuple()))
-	print("HSL: " + str(convert_color(flower0_xyz, HSLColor).get_value_tuple()))
-	#print("CIE LAB: " + str(convert_color(flower0_xyz, LabColor).get_value_tuple()))
-	print("LCh (LCHab): " + str(convert_color(flower0_xyz, LCHabColor).get_value_tuple()))
-	#print("LCh (LCHuv): " + str(convert_color(flower0_xyz, LCHuvColor).get_value_tuple()))
-	flower0_spectral = SpectralColor(spec_340nm=flower0_table[0][1],
-	spec_350nm=flower0_table[1][1],
-	spec_360nm=flower0_table[2][1],
-	spec_370nm=flower0_table[3][1],
-	spec_380nm=flower0_table[4][1],
-	spec_390nm=flower0_table[5][1],
-	spec_400nm=flower0_table[6][1],
-	spec_410nm=flower0_table[7][1],
-	spec_420nm=flower0_table[8][1],
-	spec_430nm=flower0_table[9][1],
-	spec_440nm=flower0_table[10][1],
-	spec_450nm=flower0_table[11][1],
-	spec_460nm=flower0_table[12][1],
-	spec_470nm=flower0_table[13][1],
-	spec_480nm=flower0_table[14][1],
-	spec_490nm=flower0_table[15][1],
-	spec_500nm=flower0_table[16][1],
-	spec_510nm=flower0_table[17][1],
-	spec_520nm=flower0_table[18][1],
-	spec_530nm=flower0_table[19][1],
-	spec_540nm=flower0_table[20][1],
-	spec_550nm=flower0_table[21][1],
-	spec_560nm=flower0_table[22][1],
-	spec_570nm=flower0_table[23][1],
-	spec_580nm=flower0_table[24][1],
-	spec_590nm=flower0_table[25][1],
-	spec_600nm=flower0_table[26][1],
-	spec_610nm=flower0_table[27][1],
-	spec_620nm=flower0_table[28][1],
-	spec_630nm=flower0_table[29][1],
-	spec_640nm=flower0_table[30][1],
-	spec_650nm=flower0_table[31][1],
-	spec_660nm=flower0_table[32][1],
-	spec_670nm=flower0_table[33][1],
-	spec_680nm=flower0_table[34][1],
-	spec_690nm=flower0_table[35][1],
-	spec_700nm=flower0_table[36][1], illuminant='e')
-	
-	print("Python spectral color conversion:")
-	print(convert_color(flower0_spectral, XYZColor))
-	print(convert_color(flower0_spectral, sRGBColor))
-	print(convert_color(flower0_spectral, HSLColor))
-	print(convert_color(flower0_spectral, LabColor))
-	print(convert_color(flower0_spectral, LCHabColor))
-	print(convert_color(flower0_spectral, LCHuvColor))
-	print("")
+	print("Blue flower")
+	spectral_rendering(flower0_table, normalize=True)
 	
 	flower1_table = np.array([
 		#[310, 0.08],
@@ -2441,112 +2047,167 @@ else:
 		[670, 0.1],
 		[680, 0.1],
 		[690, 0.1],
-		[700, 0.1]
+		[700, 0.1],
+		[710, 0.1],
+		[720, 0.1],
+		[730, 0.1],
+		[740, 0.1],
+		[750, 0.1],
+		[760, 0.1],
+		[770, 0.1],
+		[780, 0.1],
+		[790, 0.1],
+		[800, 0.1],
+		[810, 0.1],
+		[820, 0.1],
+		[830, 0.1]
 	])
-	flower1_l = 0
-	flower1_m = 0
-	flower1_s = 0
-	for i in range(0, flower1_table.shape[0]):
-		f = lens_filter(flower1_table[i][0], args.cutoff)
-		flower1_l += wl_to_s(flower1_table[i][0], l1) * flower1_table[i][1] * f
-		flower1_m += wl_to_s(flower1_table[i][0], m1) * flower1_table[i][1] * f
-		flower1_s += wl_to_s(flower1_table[i][0], s1) * flower1_table[i][1] * f
+	print("Yellow flower")
+	spectral_rendering(flower1_table, normalize=True)
 	
-	total = flower1_l + flower1_m + flower1_s
-	flower1_l = flower1_l / total
-	flower1_m = flower1_m / total
-	flower1_s = flower1_s / total
+	# Banksia attenuata flowers
+	# estimated from fig. 5 in Arrese et al. 2005
 	
-	# LM ratio comparison
-	similar = 0
-	for i in range(300, 800):
-		ratio0 = round(wl_to_s(i, l0) / wl_to_s(i, m0), 2)
-		ratio1 = round(flower1_l / flower1_m, 2)
-		ratio2 = round(wl_to_s(i + 1, l0) / wl_to_s(i + 1, m0), 2)
-		if (ratio0 == ratio1):
-			similar = i
-		elif (ratio0 <= ratio1 <= ratio2
-			or ratio0 >= ratio1 >= ratio2):
-			similar = i + 0.5
-	
-	similar1 = 0
-	for i in range(300, 800):
-		ratio0 = round(wl_to_s(i, m0) / wl_to_s(i, s0), 2)
-		ratio1 = round(flower1_m / flower1_s, 2)
-		ratio2 = round(wl_to_s(i + 1, m0) / wl_to_s(i + 1, s0), 2)
-		if (ratio0 == ratio1):
-			similar1 = i
-		elif (ratio0 <= ratio1 <= ratio2
-			or ratio0 >= ratio1 >= ratio2):
-			similar1 = i + 0.5
-	
-	print("LMS response to yellow flower: l=" + str(flower1_l) +", m=" + str(flower1_m) + ", s=" + str(flower1_s))
-	flower1_lms = np.array([
-		[flower1_l],
-		[flower1_m],
-		[flower1_s]
+	# immature
+	banksia0_table = np.array([
+		[340, 0.0],
+		[350, 0.0],
+		[360, 0.0],
+		[370, 0.0],
+		[380, 0.0],
+		[390, 0.0],
+		[400, 0.0],
+		[410, 0.0],
+		[420, 0.0],
+		[430, 0.0],
+		[440, 0.0],
+		[450, 0.0625],
+		[460, 0.125],
+		[470, 0.125],
+		[480, 0.125],
+		[490, 0.125],
+		[500, 0.125],
+		[510, 0.25],
+		[520, 0.375],
+		[530, 0.5],
+		[540, 0.625],
+		[550, 0.75],
+		[560, 0.75],
+		[570, 0.6875],
+		[580, 0.625],
+		[590, 0.5625],
+		[600, 0.625],
+		[610, 0.5625],
+		[620, 0.5],
+		[630, 0.5],
+		[640, 0.5],
+		[650, 0.375],
+		[660, 0.3125],
+		[670, 0.1875],
+		[680, 0.1875],
+		[690, 0.625],
+		[700, 0.9375],
+		[710, 0.9375],
+		[720, 0.9375],
+		[730, 0.9375],
+		[740, 0.9375],
+		[750, 0.9375],
+		[760, 0.9375],
+		[770, 0.9375],
+		[780, 0.9375],
+		[790, 0.9375],
+		[800, 0.9375],
+		[810, 0.9375],
+		[820, 0.9375],
+		[830, 0.9375]
 	])
-	print("L:M ratio: " + str(flower1_l / flower1_m) + " (looks like " + str(similar) + " nm)")
-	print("M:S ratio: " + str(flower1_m / flower1_s) + " (looks like " + str(similar1) + " nm)")
+	print("Immature Banksia attenuata flower")
+	spectral_rendering(banksia0_table, normalize=True)
 	
-	flower1_matrix = np.matmul(lms_to_xyz, flower1_lms)
-	#flower1_matrix1 = np.matmul(xyz_to_rgb, flower1_matrix)
-	flower1_xyz = XYZColor(*flower1_matrix, illuminant="e")
-	#flower1_rgb = XYZColor(*flower1_matrix1)
-	print("Color coordinates of yellow flower:")
-	print("CIE XYZ: " + str(flower1_xyz.get_value_tuple()))
-	#print("CIE RGB: " + str(flower1_rgb.get_value_tuple()))
-	print("sRGB: " + str(convert_color(flower1_xyz, sRGBColor).get_value_tuple()))
-	print("HSL: " + str(convert_color(flower1_xyz, HSLColor).get_value_tuple()))
-	#print("CIE LAB: " + str(convert_color(flower1_xyz, LabColor).get_value_tuple()))
-	print("LCh (LCHab): " + str(convert_color(flower1_xyz, LCHabColor).get_value_tuple()))
-	#print("LCh (LCHuv): " + str(convert_color(flower1_xyz, LCHuvColor).get_value_tuple()))
-	flower1_spectral = SpectralColor(spec_340nm=flower1_table[0][1],
-	spec_350nm=flower1_table[1][1],
-	spec_360nm=flower1_table[2][1],
-	spec_370nm=flower1_table[3][1],
-	spec_380nm=flower1_table[4][1],
-	spec_390nm=flower1_table[5][1],
-	spec_400nm=flower1_table[6][1],
-	spec_410nm=flower1_table[7][1],
-	spec_420nm=flower1_table[8][1],
-	spec_430nm=flower1_table[9][1],
-	spec_440nm=flower1_table[10][1],
-	spec_450nm=flower1_table[11][1],
-	spec_460nm=flower1_table[12][1],
-	spec_470nm=flower1_table[13][1],
-	spec_480nm=flower1_table[14][1],
-	spec_490nm=flower1_table[15][1],
-	spec_500nm=flower1_table[16][1],
-	spec_510nm=flower1_table[17][1],
-	spec_520nm=flower1_table[18][1],
-	spec_530nm=flower1_table[19][1],
-	spec_540nm=flower1_table[20][1],
-	spec_550nm=flower1_table[21][1],
-	spec_560nm=flower1_table[22][1],
-	spec_570nm=flower1_table[23][1],
-	spec_580nm=flower1_table[24][1],
-	spec_590nm=flower1_table[25][1],
-	spec_600nm=flower1_table[26][1],
-	spec_610nm=flower1_table[27][1],
-	spec_620nm=flower1_table[28][1],
-	spec_630nm=flower1_table[29][1],
-	spec_640nm=flower1_table[30][1],
-	spec_650nm=flower1_table[31][1],
-	spec_660nm=flower1_table[32][1],
-	spec_670nm=flower1_table[33][1],
-	spec_680nm=flower1_table[34][1],
-	spec_690nm=flower1_table[35][1],
-	spec_700nm=flower1_table[36][1], illuminant='e')
+	# mature
+	banksia1_table = np.array([
+		[340, 0.0],
+		[350, 0.0],
+		[360, 0.0],
+		[370, 0.0],
+		[380, 0.0],
+		[390, 0.0],
+		[400, 0.0],
+		[410, 0.0],
+		[420, 0.0],
+		[430, 0.0],
+		[440, 0.0625],
+		[450, 0.125],
+		[460, 0.125],
+		[470, 0.1875],
+		[480, 0.25],
+		[490, 0.25],
+		[500, 0.25],
+		[510, 0.375],
+		[520, 0.375],
+		[530, 0.5],
+		[540, 0.5],
+		[550, 0.625],
+		[560, 0.625],
+		[570, 0.625],
+		[580, 0.625],
+		[590, 0.5625],
+		[600, 0.625],
+		[610, 0.625],
+		[620, 0.625],
+		[630, 0.625],
+		[640, 0.625],
+		[650, 0.625],
+		[660, 0.625],
+		[670, 0.5625],
+		[680, 0.5625],
+		[690, 0.625],
+		[700, 0.75],
+		[710, 0.75],
+		[720, 0.75],
+		[730, 0.75],
+		[740, 0.75],
+		[750, 0.75],
+		[760, 0.75],
+		[770, 0.75],
+		[780, 0.75],
+		[790, 0.75],
+		[800, 0.75],
+		[810, 0.75],
+		[820, 0.75],
+		[830, 0.75]
+	])
+	print("Mature Banksia attenuata flower")
+	spectral_rendering(banksia1_table, normalize=True)
 	
-	print("Python spectral color conversion:")
-	print(convert_color(flower1_spectral, XYZColor))
-	print(convert_color(flower1_spectral, sRGBColor))
-	print(convert_color(flower1_spectral, HSLColor))
-	print(convert_color(flower1_spectral, LabColor))
-	print(convert_color(flower1_spectral, LCHabColor))
-	print(convert_color(flower1_spectral, LCHuvColor))
-	print("")
+	# sky and daylight
+	daylight_table = np.empty([50, 2])
+	for i in range(0, 49):
+		w = i*10 + 340
+		daylight_table[i][0] = w
+		daylight_table[i][1] = blackbody(w / 1000000000, 5800)
+	
+	print("Black body spectrum approximating daylight")
+	spectral_rendering(daylight_table, light_source=daylight_table)
+	
+	sky_table = np.empty([50, 2])
+	for i in range(0, 49):
+		w = i*10 + 340
+		sky_table[i][0] = w
+		sky_table[i][1] = blackbody(w / 1000000000, 5800) * w**-4
+	
+	print("Black body spectrum with Rayleigh scattering approximating a blue sky")
+	spectral_rendering(sky_table, light_source=sky_table)
+	
+	# incandescent lighting
+	incandescent = np.empty([50, 2])
+	for i in range(0, 49):
+		w = i*10 + 340
+		incandescent[i][0] = w
+		incandescent[i][1] = blackbody(w / 1000000000, 2000)
+	
+	print("Black body spectrum approximating 2000 K incandescent light bulb")
+	spectral_rendering(incandescent, light_source=incandescent)
 
 # print execution time
 print("%s seconds" % (time.time() - start_time))
