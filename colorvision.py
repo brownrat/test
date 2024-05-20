@@ -14,6 +14,9 @@
 # CMF From Cone Fundamentals. Horizon Lab @ UCRS. https://horizon-lab.org/colorvis/cone2cmf.html
 # Petroc Sumner, Catherine A. Arrese, Julian C. Partridge; The ecology of visual pigment tuning in an Australian marsupial: the honey possum Tarsipes rostratus. J Exp Biol 15 May 2005; 208 (10): 1803–1815. doi: https://doi.org/10.1242/jeb.01610
 # Arrese, A. C., Beazley, L. D. and Neumeyer, C. Behavioural evidence for marsupial trichromacy. doi:10.1016/j.cub.2006.02.036
+# Ortín-Martínez A, Nadal-Nicolás FM, Jiménez-López M, Alburquerque-Béjar JJ, Nieto-López L, García-Ayuso D, Villegas-Pérez MP, Vidal-Sanz M, Agudo-Barriuso M. Number and distribution of mouse retinal cone photoreceptors: differences between an albino (Swiss) and a pigmented (C57/BL6) strain. PLoS One. 2014 Jul 16;9(7):e102392. doi: 10.1371/journal.pone.0102392. PMID: 25029531; PMCID: PMC4100816.
+# Jacobs, G. H., Fenwick, J. A. and Williams, G. A. Cone-based vision of rats for ultraviolet and visible lights. Journal of Experimental Biology, 204(14), 15 July 2001. https://doi.org/10.1242/jeb.204.14.2439
+# CIE 2-deg CMFs. http://cvrl.ucl.ac.uk/database/text/cienewxyz/cie2012xyz2.htm
 #
 # Further reading: https://xkcd.com/1926/
 
@@ -22,6 +25,7 @@ import sys
 import colorsys
 import math
 import numpy as np
+from numpy.polynomial.polynomial import Polynomial
 import time
 import argparse
 import colormath
@@ -37,18 +41,30 @@ parser = argparse.ArgumentParser()
 parser.add_argument("-l", "--lw", type=int, default=0, help="longwave cone sensitivity")
 parser.add_argument("-m", "--mw", type=int, default=0, help="mediumwave cone sensitivity")
 parser.add_argument("-s", "--sw", type=int, default=0, help="shortwave cone sensitivity")
-parser.add_argument("--slw", type=int, default=560, help="source longwave cone sensitivity")
-parser.add_argument("--smw", type=int, default=530, help="source mediumwave cone sensitivity")
-parser.add_argument("--ssw", type=int, default=420, help="source shortwave cone sensitivity")
+parser.add_argument("--slw", type=int, default=565, help="source longwave cone sensitivity")
+parser.add_argument("--smw", type=int, default=540, help="source mediumwave cone sensitivity")
+parser.add_argument("--ssw", type=int, default=440, help="source shortwave cone sensitivity")
 parser.add_argument("--cutoff", type=int, default=300, help="lower limit of lens transmission")
 parser.add_argument("-r", "--red", type=int, default=650, help="reference red")
 parser.add_argument("-y", "--yellow", type=int, default=570, help="reference yellow")
-parser.add_argument("-g", "--green", type=int, default=545, help="reference green")
+parser.add_argument("-g", "--green", type=int, default=540, help="reference green")
 parser.add_argument("-c", "--cyan", type=int, default=490, help="reference cyan")
-parser.add_argument("-b", "--blue", type=int, default=460, help="reference blue")
+parser.add_argument("-b", "--blue", type=int, default=470, help="reference blue")
 parser.add_argument("--violet", type=int, default=420, help="reference violet")
 parser.add_argument("-i", "--image", help="image name")
 parser.add_argument("-v", "--version", type=int, default=2, help="color conversion method")
+parser.add_argument("--peak", help="show wavelength with maximum sensitivity", action="store_true")
+parser.add_argument("--primaries", help="show primary and secondary wavelengths", action="store_true")
+parser.add_argument("--white", default="e", help="reference white")
+parser.add_argument("--lighting", help="show standard light sources", action="store_true")
+parser.add_argument("--leaves", help="show several types of leaves", action="store_true")
+parser.add_argument("--flowers", help="show several types of flowers", action="store_true")
+parser.add_argument("--sky", help="show estimates for daylight and a clear sky", action="store_true")
+parser.add_argument("--check", help="show colormath spectral rendering for comparison", action="store_true")
+parser.add_argument("--lb", type=float, default=0.68990272, help="contribution of L cones to perception of brightness")
+parser.add_argument("--mb", type=float, default=0.34832189, help="contribution of M cones to perception of brightness")
+parser.add_argument("--sb", type=float, default=0.0, help="contribution of S cones to perception of brightness")
+parser.add_argument("--triangle", help="print color triangle coordinates", action="store_true")
 args = parser.parse_args()
 
 # cone peak sensitivities
@@ -77,27 +93,44 @@ v0 = args.violet
 
 # method to use
 version = args.version
-	
-# I finally found D65.
-d65 = spectral_constants.REF_ILLUM_TABLE["d65"]
+
+# LMS to XYZ
+lms_to_xyz = np.array([
+	[1.94735469, -1.41445123, 0.36476327],
+	[0.68990272, 0.34832189, 0],
+	[0, 0, 1.93485343]
+])
 
 # relative wavelength sensitivity
-# This is not derived from any specific source. Instead we add the L, M and S functions weighted
-# by the proportion of L, M and S cones, assumed to be 10:5:1, and multiply this by a function
-# resembling a graph of typical lens transmission adjusted to reach 1 at 800 nm. The result
-# for human-like values is similar (but not identical) to the CIE luminous efficiency function.
+# By default this does the same thing as the second row of the LMS->XYZ matrix, so the value
+# it returns is the same as XYZ Y and so should be similar to the CIE luminous efficiency
+# function. (The maximum sensitivity given for l=565 and m=540 is 555, which is the same.)
+# This is equivalent to assuming brightness perception is mediated entirely by the L and
+# (if present) M cones and the contribution from L cones is about twice that of M cones.
+# There used to be an extra "lens filtering" factor, but I think this is misleading outside
+# of removing wavelengths beyond a specified point. Note the relationship between XYZ Y,
+# HSL L and Lab/LCH L is non-linear.
+# The percentages of L, M and S cones are about 51-76%, 20-44% and 2% in humans (Wikipedia)
+# and 68-73%, 20-25% and 7% in the fat-tailed dunnart ("Diversity of Color Vision [sic]: Not All
+# Australian Marsupials are Trichromatic"). In Norway rats, the percentage of S cones is 11-12%
+# ("Cone-based vision of rats for ultraviolet and visible lights") and in the house mouse the
+# percentage of exclusive non-coexpressing S cones is 26% ("Number and Distribution of Mouse
+# Retinal Cone Photoreceptors").
 def lens_filter(w, c=300):
-	# setting the cutoff to 0 removes the filter
+	# remove filter when cutoff is set to 0
 	if (c == 0):
 		return 1
-	else:
-		value = np.log(w - c) / np.log(800 - c)
-		if (value > 0): # a log function has the wrong shape near the cutoff point
-			return value
-	return 0
+	elif (w < c):
+		return 0
+	#else:
+		#value = np.log(w - c) / np.log(800 - c)
+		#if (value > 0): # a log function has the wrong shape near the cutoff point
+			#return value
+	#return 0
+	return 1
 
 def sensitivity(w, l=l1, m=m1, s=s1, c=300):
-	value = (wl_to_s(w, l) + wl_to_s(w, m) / 2 + wl_to_s(w, s) / 10) * lens_filter(w, c)
+	value = (args.lb*wl_to_s(w, l) + args.mb*wl_to_s(w, m) + args.sb*wl_to_s(w, m)) * lens_filter(w, c)
 	return value
 
 # black body
@@ -106,6 +139,23 @@ def blackbody(w, t):
 	c1 = 3.74183e-16
 	c2 = 1.4388e-2
 	return c1*w**-5 / (math.exp(c2/(w*t)) - 1)
+	
+# light sources
+d65 = spectral_constants.REF_ILLUM_TABLE["d65"]
+e = spectral_constants.REF_ILLUM_TABLE["e"]
+incandescent = np.empty(50)
+for i in range(0, 50):
+	w = i*10 + 340
+	# normalize to 1% at 550 nm
+	incandescent[i] = blackbody(w / 1000000000, 2000) / blackbody(550 / 1000000000, 2000)
+
+# white point
+if (args.white == "d65"):
+	wp = d65
+elif (args.white == "i"):
+	wp = incandescent
+else:
+	wp = e
 
 # convert hue to wavelength based on location of primary and secondary colors
 def hue_to_wavelength_0(hue):
@@ -136,9 +186,21 @@ def hue_to_wavelength_0(hue):
 # templates for visual pigment absorbance that are meant to fit both vertebrates and
 # invertebrates (Stavenga 2010), whereas CVS uses shifted versions of the 10° human cone
 # fundamentals. This is probably close enough and better for non-primates.
+# This function now prints a warning instead of causing a crash when it produces an overflow
+# exception, but this usually seems to be a sign that something went wrong, so that doesn't
+# help much.
 def wl_to_s(w, lmax):
 	try:
 		value = 1 / (math.exp(69.7*(0.8795 + 0.0459*math.exp(-(lmax - 300)**2 / 11940) - lmax/w)) + math.exp(28*(0.922 - lmax/w)) + math.exp(-14.9*(1.104 - lmax/w)) + 0.674) + 0.26*math.exp(-((w - (189 + 0.315*lmax))/(-40.5 + 0.195*lmax))**2)
+	except OverflowError:
+		print("Warning: math overflow, clipping to 2.2250738585072014e-308")
+		return 2.2250738585072014e-308
+	
+	return value
+
+def wl_to_s1(w, lmax):
+	try:
+		value = 1 / (math.exp(69.7*(0.8795 - lmax/w)) + math.exp(28*(0.922 - lmax/w)) + math.exp(-14.9*(1.104 - lmax/w)) + 0.674)
 	except OverflowError:
 		print("Warning: math overflow, clipping to 2.2250738585072014e-308")
 		return 2.2250738585072014e-308
@@ -162,11 +224,29 @@ def wl_to_s(w, lmax):
 # hues to appear desaturated. Monochromacy should be identical to CVS because it only uses
 # the original lightness values, but the method for determining lightness/intensity is
 # evidently slightly different and produces darker shadows.
-def wl_to_rgb_0(w, l, m, s):
+
+# slightly clean up blue/green hues by normalizing the LMS values to equal at the white point
+if (version == 0):
+	white_l = 0
+	white_m = 0
+	white_s = 0
+	for i in range(wp.shape[0]):
+		w = i*10 + 340
+		if (w >= args.cutoff):
+			white_l += wl_to_s(w, l1) * wp[i]
+			white_m += wl_to_s(w, m1) * wp[i]
+			white_s += wl_to_s(w, s1) * wp[i]
+
+def wl_to_rgb_0(w, l=l1, m=m1, s=s1):
 	red = wl_to_s(w, l)
 	green = wl_to_s(w, m)
 	blue = wl_to_s(w, s)
-	return [red, green, blue]
+	
+	red = red * white_s / white_l
+	green = green * white_s / white_m
+	
+	total = red+green+blue
+	return [red/total, green/total, blue/total]
 
 # version 1: use color matching functions
 # This is an attempt to create a proper color space, based on the equations on the
@@ -348,7 +428,7 @@ def wl_to_rgb_1(w, target):
 # cones as in the honey possum (350-505-557).
 
 # match wavelength to sensitivity ratios
-def find_match(w, l, m, s, d=0.001):
+def find_match(w, l=l1, m=m1, s=s1, d=0.001):
 	lp = wl_to_s(w, l0) / (wl_to_s(w, l0) + wl_to_s(w, m0) + wl_to_s(w, s0))
 	mp = wl_to_s(w, m0) / (wl_to_s(w, l0) + wl_to_s(w, m0) + wl_to_s(w, s0))
 	sp = wl_to_s(w, s0) / (wl_to_s(w, l0) + wl_to_s(w, m0) + wl_to_s(w, s0))
@@ -357,22 +437,46 @@ def find_match(w, l, m, s, d=0.001):
 	p1 = 300
 	
 	#print(d)
-	while (abs(lp - wl_to_s(p0, l) / (wl_to_s(p0, l) + wl_to_s(p0, m) + wl_to_s(p0, s)))
-		+ abs(mp - wl_to_s(p0, m) / (wl_to_s(p0, l) + wl_to_s(p0, m) + wl_to_s(p0, s)))
-		+ abs(sp - wl_to_s(p0, s) / (wl_to_s(p0, l) + wl_to_s(p0, m) + wl_to_s(p0, s))) > d
-		and p0 > 300):
-		p0 -= 1
-	while (abs(lp - wl_to_s(p1, l) / (wl_to_s(p1, l) + wl_to_s(p1, m) + wl_to_s(p1, s)))
-		+ abs(mp - wl_to_s(p1, m) / (wl_to_s(p1, l) + wl_to_s(p1, m) + wl_to_s(p1, s)))
-		+ abs(sp - wl_to_s(p1, s) / (wl_to_s(p1, l) + wl_to_s(p1, m) + wl_to_s(p1, s))) > d
-		and p1 < 700):
-		p1 += 1
+	#while (abs(lp - wl_to_s(p0, l) / (wl_to_s(p0, l) + wl_to_s(p0, m) + wl_to_s(p0, s)))
+	#	+ abs(mp - wl_to_s(p0, m) / (wl_to_s(p0, l) + wl_to_s(p0, m) + wl_to_s(p0, s)))
+	#	+ abs(sp - wl_to_s(p0, s) / (wl_to_s(p0, l) + wl_to_s(p0, m) + wl_to_s(p0, s))) > d
+	#	and p0 > 300):
+	#	p0 -= 1
+	#while (abs(lp - wl_to_s(p1, l) / (wl_to_s(p1, l) + wl_to_s(p1, m) + wl_to_s(p1, s)))
+	#	+ abs(mp - wl_to_s(p1, m) / (wl_to_s(p1, l) + wl_to_s(p1, m) + wl_to_s(p1, s)))
+	#	+ abs(sp - wl_to_s(p1, s) / (wl_to_s(p1, l) + wl_to_s(p1, m) + wl_to_s(p1, s))) > d
+	#	and p1 < 700):
+	#	p1 += 1
 	# lower precision if not found
-	if (p0 == 300 and p1 == 700):
-		# recursion
-		p2 = find_match(w, l, m, s, d*2) # avoid running this twice
-		p0 = p2[0]
-		p1 = p2[1]
+	#if (p0 == 300 and p1 == 700):
+	#	# recursion
+	#	p2 = find_match(w, l, m, s, d*2) # avoid running this twice
+	#	p0 = p2[0]
+	#	p1 = p2[1]
+
+	i = 300
+	while (i < 800):
+		diff0 = abs(lp - wl_to_s(p0, l) / (wl_to_s(p0, l) + wl_to_s(p0, m) + wl_to_s(p0, s)))
+		+ abs(mp - wl_to_s(p0, m) / (wl_to_s(p0, l) + wl_to_s(p0, m) + wl_to_s(p0, s)))
+		+ abs(sp - wl_to_s(p0, s) / (wl_to_s(p0, l) + wl_to_s(p0, m) + wl_to_s(p0, s)))
+		diff1 = abs(lp - wl_to_s(i, l) / (wl_to_s(i, l) + wl_to_s(i, m) + wl_to_s(i, s)))
+		+ abs(mp - wl_to_s(i, m) / (wl_to_s(i, l) + wl_to_s(i, m) + wl_to_s(i, s)))
+		+ abs(sp - wl_to_s(i, s) / (wl_to_s(i, l) + wl_to_s(i, m) + wl_to_s(i, s)))
+		if (diff1 < diff0):
+			p0 = i
+		i += 1
+	
+	j = 800
+	while (j > 300):
+		diff0 = abs(lp - wl_to_s(p1, l) / (wl_to_s(p1, l) + wl_to_s(p1, m) + wl_to_s(p1, s)))
+		+ abs(mp - wl_to_s(p1, m) / (wl_to_s(p1, l) + wl_to_s(p1, m) + wl_to_s(p1, s)))
+		+ abs(sp - wl_to_s(p1, s) / (wl_to_s(p1, l) + wl_to_s(p1, m) + wl_to_s(p1, s)))
+		diff1 = abs(lp - wl_to_s(j, l) / (wl_to_s(j, l) + wl_to_s(j, m) + wl_to_s(j, s)))
+		+ abs(mp - wl_to_s(j, m) / (wl_to_s(j, l) + wl_to_s(j, m) + wl_to_s(j, s)))
+		+ abs(sp - wl_to_s(j, s) / (wl_to_s(j, l) + wl_to_s(j, m) + wl_to_s(j, s)))
+		if (diff1 < diff0):
+			p1 = j
+		j -= 1
 	
 	#print(p0)
 	#print(p1)
@@ -405,14 +509,6 @@ def find_primaries(l, m, s):
 		cyan = (green + s) / 2
 	if (blue < violet):
 		violet = 300
-	
-	# print out colors
-	#print("red: " + str(red))
-	#print("yellow: " + str(yellow))
-	#print("green: " + str(green))
-	#print("cyan: " + str(cyan))
-	#print("blue: " + str(blue))
-	#print("violet: " + str(violet))
 	
 	return [red, yellow, green, cyan, blue, violet]
 
@@ -730,7 +826,7 @@ def saturation(w, source, target):
 	return sat_t / sat_s
 
 # version 5
-# This converts LMS values to CIE XYZ and then to HLS. See https://en.wikipedia.org/wiki/LMS_color_space#physiological_CMFs for the conversion matrix.
+# This converts LMS values to CIE XYZ and then to HLS.
 # The results are very similar to CVS and to version 4 aside from a slight green shift for
 # narrow spacing, probably for the same reason as in version 2. The main problem is the
 # range of hues provided for integer wavelengths is full of holes you could drive a truck
@@ -744,11 +840,6 @@ def saturation(w, source, target):
 # for pure hues is based on a system with strong overlap, (b) a hue may be represented by
 # a range of wavelengths in the source but one or none in the target and the inevitable
 # averaging leads to posterization.
-lms_to_xyz = np.array([
-	[1.94735469, -1.41445123, 0.36476327],
-	[0.68990272, 0.34832189, 0],
-	[0, 0, 1.93485343]
-])
 
 def cs_tables_3(l, m, s):
 	cs_source = np.empty([501, 4])
@@ -788,45 +879,23 @@ def cs_tables_3(l, m, s):
 # As with version 1, this one does some intense gap-filling to ensure the result looks sensible.
 def hue_to_wavelength_3(h, source):
 	if (0 <= h < 260): # XYZ does not produce any hues greater than this, so we cut off here
-		w1 = 0
-		w2 = 0
+		w1 = 300
+		w2 = 800
+		i = 300
+		while (i < 800):
+			diff0 = abs(h - source[w1 - 300][3])
+			diff1 = abs(h - source[i - 300][3])
+			if (diff1 < diff0):
+				w1 = i
+			i += 1
 		
-		i = 0
-		while (i < 500):
-			h_cur = round(source[i][3], 1)
-			h_next = round(source[i + 1][3], 1)
-			
-			# exact match
-			if (round(h, 1) == round(h_cur, 1)):
-				w1 = i + 300
-				break
-			# intermediate match
-			elif (h_next <= h <= h_cur):
-				w1 = i + 1 - (h - h_next) / (h_cur - h_next) + 300
-				break
-			else:
-				i += 1
-		
-		j = 500
-		while (j > 0):
-			h_cur = round(source[j][3], 1)
-			h_next = round(source[j - 1][3], 1)
-			
-			# exact match
-			if (round(h, 1) == round(h_cur, 1)):
-				w2 = j + 300
-				break
-			# intermediate match
-			elif (h_next >= h >= h_cur):
-				w2 = j - 1 + (h - h_next) / (h_cur - h_next) + 300
-				break
-			else:
-				j -= 1
-		
-		#print("foo")
-		#print(h)
-		#print(w1)
-		#print(w2)
+		j = 800
+		while (j > 300):
+			diff0 = abs(h - source[w2 - 300][3])
+			diff1 = abs(h - source[j - 300][3])
+			if (diff1 < diff0):
+				w2 = j
+			j -= 1
 		
 		# red is a cutoff point and blue has some weird behavior
 		if (h == 0):
@@ -841,9 +910,8 @@ def hue_to_wavelength_3(h, source):
 def wl_to_rgb_5(w, target):
 	if (w == round(w)):
 		return colorsys.hls_to_rgb(target[round(w) - 300][3] / 360, 0.5, 1)
-	else: # if non-integer value, use a weighted average
-		d = w - int(w)
-		return colorsys.hls_to_rgb((target[math.floor(w) - 300][3] * (1 - d) + target[math.ceil(w) - 300][3] * d) / 360, 0.5, 1)
+	else:
+		return colorsys.hls_to_rgb((target[int(w) - 300][3] + target[int(w) - 299][3]) / 720, 0.5, 1)
 
 # An XYZ version of the saturation function. The shift is similar to CVS and smoother than
 # version 4 but less noticeable. Averaging the "white" LMS values or turning them into
@@ -945,45 +1013,50 @@ def saturation_1(w, source, target, l, m, s):
 
 # version 6: dichromacy
 # 0, 4 and 5 can produce something like a dichromatic simulation but aren't really built
-# for it. This uses a similar method to v2. The results are more realistic, but with L/M
-# values < 560 the neutral point is placed at an unexpectedly short wavelength.
-def find_primaries_dc(l=l1, m=m1, s=s1):
+# for it. This uses a similar method to v2. The results are more realistic, but with S
+# values < 430 the neutral point is placed at an unexpectedly short wavelength. This has
+# been improved by replacing E with D65.
+def find_primaries_dc(l=l1, m=m1, s=s1, white=d65):
 
 	# yellow/blue
 	if (l == m):
-		# find white/neutral point
+		# find white/neutral point based on D65
 		white_l = 0
 		white_s = 0
+		for i in range(white.shape[0]):
+			w = i*10 + 340
+			if (w >= args.cutoff):
+				white_l += wl_to_s(w, l) * white[i]
+				white_s += wl_to_s(w, s) * white[i]
+		
+		#white_ratio = white_l / white_s
+		white_ls = white_l / (white_l + white_s)
+		white_ls = (white_l - white_s) / (white_l + white_s)
+		
+		n = 300
 		for i in range(300, 800):
-			white_l += wl_to_s(i, l) * lens_filter(i, args.cutoff)
-			white_s += wl_to_s(i, s) * lens_filter(i, args.cutoff)
-		
-		white_ratio = white_l / white_s
-		
-		n = s
-		for i in range(s, l):
-			diff0 = abs(white_ratio - wl_to_s(n, l) / wl_to_s(n, s))
-			diff1 = abs(white_ratio - wl_to_s(i, l) / wl_to_s(i, s))
+			diff0 = abs(white_ls - (wl_to_s(n, l) - wl_to_s(n, s)) / (wl_to_s(n, l) + wl_to_s(n, s)))
+			diff1 = abs(white_ls - (wl_to_s(i, l) - wl_to_s(i, s)) / (wl_to_s(i, l) + wl_to_s(i, s)))
 			if (diff1 < diff0):
 				n = i
 		
-		# find "yellow" and "blue" points based on reference green and violet
-		y_ratio = (wl_to_s(g0, l0) + wl_to_s(g0, m0)) / wl_to_s(g0, s0) 
-		b_ratio = (wl_to_s(v0, l0) + wl_to_s(v0, m0) ) / wl_to_s(v0, s0)
+		# find "yellow" and "blue" points based on edges of color space
 		
-		y = n
-		for i in range(n, 800):
-			diff0 = abs(y_ratio - wl_to_s(y, l) / wl_to_s(y, s))
-			diff1 = abs(y_ratio - wl_to_s(i, l) / wl_to_s(i, s))
+		y = 300
+		for i in range(300, 800):
+			diff0 = abs(1 - round((wl_to_s(y, l) - wl_to_s(y, s)) / (wl_to_s(y, l) + wl_to_s(y, s)), 2))
+			diff1 = abs(1 - round((wl_to_s(i, l) - wl_to_s(i, s)) / (wl_to_s(i, l) + wl_to_s(i, s)), 2))
 			if (diff1 < diff0):
 				y = i
 		
-		b = s
-		for i in range(s, n):
-			diff0 = abs(b_ratio - wl_to_s(b, l) / wl_to_s(b, s))
-			diff1 = abs(b_ratio - wl_to_s(i, l) / wl_to_s(i, s))
+		b = 800
+		i = 800
+		while (i > 300):
+			diff0 = abs(-1 - round((wl_to_s(b, l) - wl_to_s(b, s)) / (wl_to_s(b, l) + wl_to_s(b, s)), 2))
+			diff1 = abs(-1 - round((wl_to_s(i, l) - wl_to_s(i, s)) / (wl_to_s(i, l) + wl_to_s(i, s)), 2))
 			if (diff1 < diff0):
 				b = i
+			i -= 1
 		
 		return [n, y, b]
 	
@@ -1118,133 +1191,164 @@ def hue_to_wavelength(h):
 		return hue_to_wavelength_0(h)
 
 # estimate hue, saturation and lightness for a spectral power distribution
-def spectral_rendering(table, normalize=False, light_source=np.array([0])):
+# The "brightness" value is basically the same thing as XYZ Y and the CIE luminous efficiency
+# function (which are basically the same thing), so it should be a reasonable estimate for
+# a species that derives brightness from cone signals in a similar way viewing an object
+# under daylight (photopic) conditions. Otherwise it might not be reasonable.
+def spectral_rendering(table, light_source=wp/100):
 	table_l = 0
 	table_m = 0
 	table_s = 0
+	brightness = 0
 	for i in range(0, table.shape[0]):
-		f = lens_filter(table[i][0], args.cutoff)
-		table_l += wl_to_s(table[i][0], l1) * table[i][1] * f
-		table_m += wl_to_s(table[i][0], m1) * table[i][1] * f
-		table_s += wl_to_s(table[i][0], s1) * table[i][1] * f
-	
-	# ratio comparison
-	similar = 0
-	for i in range(300, 800):
-		ratio0 = round(wl_to_s(i, l0) / wl_to_s(i, m0), 2)
-		ratio1 = round(table_l / table_m, 2)
-		ratio2 = round(wl_to_s(i + 1, l0) / wl_to_s(i + 1, m0), 2)
-		if (ratio0 == ratio1):
-			similar = i
-		elif (ratio0 <= ratio1 <= ratio2
-			or ratio0 >= ratio1 >= ratio2):
-			similar = i + 0.5
-	
-	similar1 = 0
-	for i in range(300, 800):
-		ratio0 = round(wl_to_s(i, m0) / wl_to_s(i, s0), 2)
-		ratio1 = round(table_m / table_s, 2)
-		ratio2 = round(wl_to_s(i + 1, m0) / wl_to_s(i + 1, s0), 2)
-		if (ratio0 == ratio1):
-			similar1 = i
-		elif (ratio0 <= ratio1 <= ratio2
-			or ratio0 >= ratio1 >= ratio2):
-			similar1 = i + 0.5
-	
-	# normalize according to LMS total
-	if (normalize):
-		total = table_l + table_m + table_s
-		table_l = table_l / total
-		table_m = table_m / total
-		table_s = table_s / total
+		w = i*10 + 340 # wavelength
+		if (w >= args.cutoff): # we do a "hard" cutoff because sensitivity is
+			# probably adjusted to compensate for filtering
+			table_l += wl_to_s(w, l1) * table[i] * light_source[i]
+			# remove either M or S for dichromacy
+			if (m1 != l1):
+				table_m += wl_to_s(w, m1) * table[i] * light_source[i]
+			if (s1 != m1):
+				table_s += wl_to_s(w, s1) * table[i] * light_source[i]
+			
+			# brightness
+			brightness += sensitivity(w, c=args.cutoff) * table[i] * light_source[i]
 	
 	# normalize according to provided light source: the total sensitivity of the
 	# target phenotype to this light spectrum is "1"
-	if (light_source.shape[0] > 1):
-		n = 0
-		for i in range(0, light_source.shape[0]):
-			n += light_source[i][1] * sensitivity(light_source[i][0])
-		print(n)
-		table_l = table_l / n
-		table_m = table_m / n
-		table_s = table_s / n
+	n = 0
+	for i in range(0, light_source.shape[0]):
+		w = i*10 + 340
+		n += sensitivity(w, c=args.cutoff) * light_source[i]
 	
-	print("LMS response: l=" + str(table_l) +", m=" + str(table_m) + ", s=" + str(table_s))
-	print("L:M ratio: " + str(table_l / table_m) + " (looks like " + str(similar) + " nm)")
-	print("M:S ratio: " + str(table_m / table_s) + " (looks like " + str(similar1) + " nm)")
+	table_l = table_l / n
+	table_m = table_m / n
+	table_s = table_s / n
 	
-	lms = np.array([
-		[table_l],
-		[table_m],
-		[table_s]
-	])
+	# express brightness of reflected/emitted light proportional to the light source
+	brightness = brightness / n
 	
-	matrix = np.matmul(lms_to_xyz, lms)
-	xyz = XYZColor(*matrix, illuminant="e")
-	print("Color coordinates:")
-	print("CIE XYZ: " + str(xyz.get_value_tuple()))
-	print("sRGB: " + str(convert_color(xyz, sRGBColor).get_value_tuple()))
-	print("HSL: " + str(convert_color(xyz, HSLColor).get_value_tuple()))
-	print("LCh (LCHab): " + str(convert_color(xyz, LCHabColor).get_value_tuple()))
+	# estimate color
+	# For trichromacy we convert the LMS values to other color spaces to roughly visualize
+	# the hue and saturation. This assumes a given ratio of cone absorption produces the
+	# same perception as it does in humans and can be adequately modeled by an LMS<->XYZ
+	# transformation matrix I found on Wikipedia. For dichromacy and monochromacy this
+	# doesn't really work, so we just report the estimated brightness and (for dichromacy)
+	# the L:S ratio.
+	if (l1 != m1 != s1):
+		print("Cone response: l=" + str(table_l) + ", m=" + str(table_m) + ", s=" + str(table_s))
+		print("L:M ratio: " + str(table_l / table_m))
+		print("M:S ratio: " + str(table_m / table_s))
+		
+		lms = np.array([
+			[table_l],
+			[table_m],
+			[table_s]
+		])
+		
+		matrix = np.matmul(lms_to_xyz, lms)
+		xyz = XYZColor(*matrix, illuminant="e")
+		print("Color coordinates:")
+		print("CIE XYZ: " + str(xyz.get_value_tuple()))
+		print("sRGB: " + str(convert_color(xyz, sRGBColor).get_value_tuple()))
+		print("CIE LAB: " + str(convert_color(xyz, LabColor).get_value_tuple()))
+	elif (l1 == m1 != s1):
+		# typical dichromacy
+		print("Cone response: l/m=" + str(table_l) + ", s=" + str(table_s))
+		print("L:S ratio: " + str(table_l / table_s))
+		
+		# find matching wavelength
+		p = find_primaries_dc(l1, m1, s1, white=wp)
+		neutral = p[0]
+		yellow = p[1]
+		blue = p[2]
+		
+		match = args.cutoff
+		for i in range(args.cutoff, 800):
+			diff0 = abs(table_l / table_s - wl_to_s(match, l1) / wl_to_s(match, s1))
+			diff1 = abs(table_l / table_s - wl_to_s(i, l1) / wl_to_s(i, s1))
+			if (diff1 < diff0):
+				match = i
+		print("Matching wavelength: " + str(match))
+		
+		n_ratio = wl_to_s(neutral, l1) / wl_to_s(neutral, s1)
+		y_ratio = wl_to_s(yellow, l1) / wl_to_s(yellow, s1)
+		b_ratio = wl_to_s(blue, l1) / wl_to_s(blue, s1)
+		match_ratio = table_l / table_s
+		if (match == neutral):
+			print("Color type: neutral")
+		elif (match_ratio >= y_ratio):
+			print("Color type: L")
+		elif (n_ratio < match_ratio < y_ratio):
+			print("Color type: L>S")
+		elif (b_ratio < match_ratio < n_ratio):
+			print("Color type: S>L")
+		else:
+			print("Color type: S")
+	elif (l1 != m1 == s1):
+		# tritanopia
+		print("Cone response: l=" + str(table_l) + ", m=" + str(table_m))
 	
-	# "SpectralColor" object
-	spectral = SpectralColor(spec_340nm=table[0][1],
-	spec_350nm=table[1][1],
-	spec_360nm=table[2][1],
-	spec_370nm=table[3][1],
-	spec_380nm=table[4][1],
-	spec_390nm=table[5][1],
-	spec_400nm=table[6][1],
-	spec_410nm=table[7][1],
-	spec_420nm=table[8][1],
-	spec_430nm=table[9][1],
-	spec_440nm=table[10][1],
-	spec_450nm=table[11][1],
-	spec_460nm=table[12][1],
-	spec_470nm=table[13][1],
-	spec_480nm=table[14][1],
-	spec_490nm=table[15][1],
-	spec_500nm=table[16][1],
-	spec_510nm=table[17][1],
-	spec_520nm=table[18][1],
-	spec_530nm=table[19][1],
-	spec_540nm=table[20][1],
-	spec_550nm=table[21][1],
-	spec_560nm=table[22][1],
-	spec_570nm=table[23][1],
-	spec_580nm=table[24][1],
-	spec_590nm=table[25][1],
-	spec_600nm=table[26][1],
-	spec_610nm=table[27][1],
-	spec_620nm=table[28][1],
-	spec_630nm=table[29][1],
-	spec_640nm=table[30][1],
-	spec_650nm=table[31][1],
-	spec_660nm=table[32][1],
-	spec_670nm=table[33][1],
-	spec_680nm=table[34][1],
-	spec_690nm=table[35][1],
-	spec_700nm=table[36][1],
-	spec_710nm=table[37][1],
-	spec_720nm=table[38][1],
-	spec_730nm=table[39][1],
-	spec_740nm=table[40][1],
-	spec_750nm=table[41][1],
-	spec_760nm=table[42][1],
-	spec_770nm=table[43][1],
-	spec_780nm=table[44][1],
-	spec_790nm=table[45][1],
-	spec_800nm=table[46][1],
-	spec_810nm=table[47][1],
-	spec_820nm=table[48][1],
-	spec_830nm=table[49][1], illuminant='e')
+	# estimate brightness
+	print("Relative brightness: " + str(round(100*brightness, 2)) + "%")
 	
-	print("Python spectral color conversion:")
-	print(convert_color(spectral, XYZColor))
-	print(convert_color(spectral, sRGBColor))
-	print(convert_color(spectral, HSLColor))
-	print(convert_color(spectral, LabColor))
-	print(convert_color(spectral, LCHabColor))
+	# "SpectralColor" conversion for comparison to check if our estimates are reasonable
+	if (args.check):
+		spectral = SpectralColor(spec_340nm=table[0],
+		spec_350nm=table[1],
+		spec_360nm=table[2],
+		spec_370nm=table[3],
+		spec_380nm=table[4],
+		spec_390nm=table[5],
+		spec_400nm=table[6],
+		spec_410nm=table[7],
+		spec_420nm=table[8],
+		spec_430nm=table[9],
+		spec_440nm=table[10],
+		spec_450nm=table[11],
+		spec_460nm=table[12],
+		spec_470nm=table[13],
+		spec_480nm=table[14],
+		spec_490nm=table[15],
+		spec_500nm=table[16],
+		spec_510nm=table[17],
+		spec_520nm=table[18],
+		spec_530nm=table[19],
+		spec_540nm=table[20],
+		spec_550nm=table[21],
+		spec_560nm=table[22],
+		spec_570nm=table[23],
+		spec_580nm=table[24],
+		spec_590nm=table[25],
+		spec_600nm=table[26],
+		spec_610nm=table[27],
+		spec_620nm=table[28],
+		spec_630nm=table[29],
+		spec_640nm=table[30],
+		spec_650nm=table[31],
+		spec_660nm=table[32],
+		spec_670nm=table[33],
+		spec_680nm=table[34],
+		spec_690nm=table[35],
+		spec_700nm=table[36],
+		spec_710nm=table[37],
+		spec_720nm=table[38],
+		spec_730nm=table[39],
+		spec_740nm=table[40],
+		spec_750nm=table[41],
+		spec_760nm=table[42],
+		spec_770nm=table[43],
+		spec_780nm=table[44],
+		spec_790nm=table[45],
+		spec_800nm=table[46],
+		spec_810nm=table[47],
+		spec_820nm=table[48],
+		spec_830nm=table[49], illuminant='e')
+		
+		print("colormath conversion:")
+		print(convert_color(spectral, XYZColor))
+		print(convert_color(spectral, sRGBColor))
+		print(convert_color(spectral, LabColor))
 	
 	# break up text
 	print("")
@@ -1272,9 +1376,8 @@ if (args.image):
 			
 			# dichromacy
 			if (version == 6):
-				w = hue_to_wavelength(hue)
-				
-				if (type(w) == tuple):
+				if (hue >= 270):
+					rb = colorsys.hls_to_rgb(hue / 360, 0.5, 1)
 					hue_sat_r = hue_saturation_dc(r0, primaries)
 					hue_sat_b = hue_saturation_dc(b0, primaries)
 					rgb_r = colorsys.hls_to_rgb(hue_sat_r[0]/360, 0.5, hue_sat_r[1])
@@ -1283,28 +1386,31 @@ if (args.image):
 					if (l1 == m1):
 						# "regular" dichromacy (protanopia, deuteranopia and typical
 						# placental mammal vision)
-						rg = w[0]*(rgb_r[0] + rgb_r[1]) / 4 + w[2]*(rgb_b[0] + rgb_b[1]) / 4
-						b = w[0]*rgb_r[2] + w[2]*rgb_b[2]
-						rgb = [rg, rg, b]
+						rg = (rb[0]*rgb_r[0] + rb[2]*rgb_b[0]) / 2
+						b = rb[0]*rgb_r[2] + rb[2]*rgb_b[2]
+						total = rg+b
+						rgb = [rg/total, rg/total, b/total]
 					else:
 						# tritanopia
-						r = w[0]*rgb_r[0] + w[2]*rgb_b[0]
-						gb = w[0]*(rgb_r[1] + rgb_r[2]) / 4 + w[2]*(rgb_b[1] + rgb_b[2]) / 4
+						r = rb[0]*rgb_r[0] + rb[2]*rgb_b[0]
+						gb = (rb[0]*rgb_r[2] + rb[2]*rgb_b[2]) / 2
 						rgb = [r, gb, gb]
 					hue_sat0 = colorsys.rgb_to_hls(*rgb)
 					hue_sat = [hue_sat0[0]*360, hue_sat0[1]]
 				else:
+					w = hue_to_wavelength(hue)
 					hue_sat = hue_saturation_dc(w, primaries)
 				
 				# Hue is slightly shifted for a more natural appearance. The default
 				# "dark yellow" pea-soup color is really unpleasant looking and has
 				# more to do with how an sRGB display works than what real dichromacy
-				# looks like. CVS doesn't do this, but some simulations do.
+				# looks like. CVS doesn't do this, but some simulations do. An LCh
+				# hue shift would look even better but may not be possible.
 				if (l1 == m1):
 					hue1 = hue_sat[0] - 10
 				else:
 					hue1 = hue_sat[0] + 10
-				img_hls[x][y] = [hue1 / 2, hls[1], hls[2] * hue_sat[1]]
+				img_hls[x][y] = [hue1 / 2, hls[1], abs(hls[2] * hue_sat[1])]
 			# trichromacy
 			else:
 				# convert hue to predominant wavelength(s)
@@ -1340,13 +1446,13 @@ if (args.image):
 	# I tried using LCh instead of HLS, but it doesn't work the way I expected. This
 	# extra step doesn't add much time. However, "fixing" the lightness may be just as
 	# misleading as keeping the HSL values.
-	img_lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
-	img_result_lab = cv2.cvtColor(img_result, cv2.COLOR_BGR2LAB)
-	for x in range(img.shape[0]):
-		for y in range(img.shape[1]):
-			img_result_lab[x][y][0] = img_lab[x][y][0]
+	#img_lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+	#img_result_lab = cv2.cvtColor(img_result, cv2.COLOR_BGR2LAB)
+	#for x in range(img.shape[0]):
+	#	for y in range(img.shape[1]):
+	#		img_result_lab[x][y][0] = img_lab[x][y][0]
 
-	img_result = cv2.cvtColor(img_result_lab, cv2.COLOR_LAB2BGR)
+	#img_result = cv2.cvtColor(img_result_lab, cv2.COLOR_LAB2BGR)
 
 	# display result
 	cv2.imwrite("colorvisionpy-result.png", img_result)
@@ -1357,271 +1463,290 @@ else:
 	print("")
 	
 	# maximum sensitivity
-	ms = 300
-	for i in range(300, 800):
-		if (sensitivity(i, args.cutoff) > (sensitivity(ms, args.cutoff))):
-			ms = i
-	print("Maximum sensitivity: " + str(ms))
-	print("")
+	if (args.peak):
+		ms = 300
+		for i in range(300, 800):
+			if (sensitivity(i, c=args.cutoff) > (sensitivity(ms, c=args.cutoff))):
+				ms = i
+		print("Maximum sensitivity: " + str(ms))
+		print("")
 	
 	# primary/secondary colors
-	if (l1 == m1 or m1 == s1): # dichromacy
-		primaries = find_primaries_dc()
-		print("Estimated primary and secondary wavelengths:")
-		if (l1 == m1):
-			print("L/M: " + str(primaries[1]))
-			print("Neutral point: " + str(primaries[0]))
-			print("S: " + str(primaries[2]))
+	if (args.primaries):
+		if (l1 == m1 or m1 == s1): # dichromacy
+			primaries = find_primaries_dc(white=wp)
+			print("Estimated primary and secondary wavelengths:")
+			if (l1 == m1):
+				print("L/M: " + str(primaries[1]))
+				print("Neutral point: " + str(primaries[0]))
+				print("S: " + str(primaries[2]))
+			else:
+				print("L: " + str(primaries[1]))
+				print("Neutral point: " + str(primaries[0]))
+				print("M: " + str(primaries[2]))
+			print("")
 		else:
-			print("L: " + str(primaries[1]))
-			print("Neutral point: " + str(primaries[0]))
-			print("M: " + str(primaries[2]))
-		print("")
-	else:
-		primaries = find_primaries(l1, m1, s1)
-		print("Estimated primary and secondary wavelengths based on cone response ratios:")
-		print("red: " + str(primaries[0]))
-		print("yellow: " + str(primaries[1]))
-		print("green: " + str(primaries[2]))
-		print("cyan: " + str(primaries[3]))
-		print("blue: " + str(primaries[4]))
-		print("violet: " + str(primaries[5]))
-		print("")
-		
-		table = cs_tables_3(l1, m1, s1)[1]
-		
-		# red and violet are cutoff points
-		i = 0
-		while (i < 500):
-			h_cur = round(table[i][3])
-			h_next = round(table[i + 1][3])
+			r = find_match(r0)
+			y = find_match(y0)
+			g = find_match(g0)
+			c = find_match(c0)
+			b = find_match(b0)
+			v = find_match(v0)
+			print("Estimated primary and secondary wavelengths based on cone response ratios:")
+			print("red: " + str((r[0] + r[1]) / 2) + " (" + str(r[0]) + "-" + str(r[1]) + ")")
+			print("yellow: " + str((y[0] + y[1]) / 2) + " (" + str(y[0]) + "-" + str(y[1]) + ")")
+			print("green: " + str((g[0] + g[1]) / 2) + " (" + str(g[0]) + "-" + str(g[1]) + ")")
+			print("cyan: " + str((c[0] + c[1]) / 2) + " (" + str(c[0]) + "-" + str(c[1]) + ")")
+			print("blue: " + str((b[0] + b[1]) / 2) + " (" + str(b[0]) + "-" + str(b[1]) + ")")
+			print("violet: " + str((v[0] + v[1]) / 2) + " (" + str(v[0]) + "-" + str(v[1]) + ")")
+			print("")
 			
-			# exact match
-			if (0 == round(h_cur)):
-				break
-			# intermediate match
-			elif (h_next <= 0 <= h_cur):
-				i = i + 1 - (0 - h_next) / (h_cur - h_next)
-				break
-			else:
+			table = cs_tables_3(l1, m1, s1)[1]
+			
+			# red and violet are cutoff points
+			r = 300
+			v = 800
+			i = 300
+			while (i < 800):
+				diff0 = abs(0 - table[r - 300][3])
+				diff1 = abs(0 - table[i - 300][3])
+				if (diff1 < diff0):
+					r = i
 				i += 1
-		
-		r = i + 300
-		
-		j = 500
-		while (j > 0):
-			h_cur = round(table[j][3])
-			h_next = round(table[j - 1][3])
 			
-			# exact match
-			if (270 == round(h_cur)):
-				break
-			# intermediate match
-			elif (h_next >= 270 >= h_cur):
-				j = j - 1 + (270 - h_next) / (h_cur - h_next)
-				break
-			else:
+			j = 800
+			while (j > 300):
+				diff0 = abs(270 - table[v - 300][3])
+				diff1 = abs(270 - table[j - 300][3])
+				if (diff1 < diff0):
+					v = j
 				j -= 1
-		
-		v = j + 300
-		
-		# yellow through blue may be a range of hues, so we try to find the middle
-		y1 = 0
-		y2 = 0
-		i = 0
-		while (i < 500):
-			h_cur = round(table[i][3])
-			h_next = round(table[i + 1][3])
 			
-			# exact match
-			if (60 == round(h_cur)):
-				y1 = i + 300
-				break
-			# intermediate match
-			elif (h_next <= 60 <= h_cur):
-				y1 = i + 1 - (60 - h_next) / (h_cur - h_next) + 300
-				break
-			else:
+			# yellow through blue may be a range of hues, so we try to find the middle
+			y1 = 300
+			y2 = 800
+			i = 300
+			while (i < 800):
+				diff0 = abs(60 - table[y1 - 300][3])
+				diff1 = abs(60 - table[i - 300][3])
+				if (diff1 < diff0):
+					y1 = i
 				i += 1
-		
-		j = 500
-		while (j > 0):
-			h_cur = round(table[j][3])
-			h_next = round(table[j - 1][3])
 			
-			# exact match
-			if (60 == round(h_cur)):
-				y2 = j + 300
-				break
-			# intermediate match
-			elif (h_next >= 60 >= h_cur):
-				y2 = j - 1 + (60 - h_next) / (h_cur - h_next) + 300
-				break
-			else:
+			j = 800
+			while (j > 300):
+				diff0 = abs(60 - table[y2 - 300][3])
+				diff1 = abs(60 - table[j - 300][3])
+				if (diff1 < diff0):
+					y2 = j
 				j -= 1
-		
-		y = (y1 + y2) / 2
-		
-		g1 = 0
-		g2 = 0
-		i = 0
-		while (i < 500):
-			h_cur = round(table[i][3])
-			h_next = round(table[i + 1][3])
 			
-			# exact match
-			if (120 == round(h_cur)):
-				g1 = i + 300
-				break
-			# intermediate match
-			elif (h_next <= 120 <= h_cur):
-				g1 = i + 1 - (120 - h_next) / (h_cur - h_next) + 300
-				break
-			else:
+			y = (y1 + y2) / 2
+			
+			g1 = 300
+			g2 = 800
+			i = 300
+			while (i < 800):
+				diff0 = abs(120 - table[g1 - 300][3])
+				diff1 = abs(120 - table[i - 300][3])
+				if (diff1 < diff0):
+					g1 = i
 				i += 1
-		
-		j = 500
-		while (j > 0):
-			h_cur = round(table[j][3])
-			h_next = round(table[j - 1][3])
 			
-			# exact match
-			if (120 == round(h_cur)):
-				g2 = j + 300
-				break
-			# intermediate match
-			elif (h_next >= 120 >= h_cur):
-				g2 = j - 1 + (120 - h_next) / (h_cur - h_next) + 300
-				break
-			else:
+			j = 800
+			while (j > 300):
+				diff0 = abs(120 - table[g2 - 300][3])
+				diff1 = abs(120 - table[j - 300][3])
+				if (diff1 < diff0):
+					g2 = j
 				j -= 1
-		
-		g = (g1 + g2) / 2
-		
-		c1 = 0
-		c2 = 0
-		i = 0
-		while (i < 500):
-			h_cur = round(table[i][3])
-			h_next = round(table[i + 1][3])
 			
-			# exact match
-			if (180 == round(h_cur)):
-				c1 = i + 300
-				break
-			# intermediate match
-			elif (h_next <= 180 <= h_cur):
-				c1 = i + 1 - (180 - h_next) / (h_cur - h_next) + 300
-				break
-			else:
+			g = (g1 + g2) / 2
+			
+			c1 = 300
+			c2 = 800
+			i = 300
+			while (i < 800):
+				diff0 = abs(180 - table[c1 - 300][3])
+				diff1 = abs(180 - table[i - 300][3])
+				if (diff1 < diff0):
+					c1 = i
 				i += 1
-		
-		j = 500
-		while (j > 0):
-			h_cur = round(table[j][3])
-			h_next = round(table[j - 1][3])
 			
-			# exact match
-			if (180 == round(h_cur)):
-				c2 = j + 300
-				break
-			# intermediate match
-			elif (h_next >= 180 >= h_cur):
-				c2 = j - 1 + (180 - h_next) / (h_cur - h_next) + 300
-				break
-			else:
+			j = 800
+			while (j > 300):
+				diff0 = abs(180 - table[c2 - 300][3])
+				diff1 = abs(180 - table[j - 300][3])
+				if (diff1 < diff0):
+					c2 = j
 				j -= 1
-		
-		c = (c1 + c2) / 2
-		
-		b1 = 0
-		b2 = 0
-		i = 0
-		while (i < 500):
-			h_cur = round(table[i][3])
-			h_next = round(table[i + 1][3])
 			
-			# exact match
-			if (240 == round(h_cur)):
-				b1 = i + 300
-				break
-			# intermediate match
-			elif (h_next <= 240 <= h_cur):
-				b1 = i + 1 - (240 - h_next) / (h_cur - h_next) + 300
-				break
-			else:
+			c = (c1 + c2) / 2
+			
+			b1 = 300
+			b2 = 800
+			i = 300
+			while (i < 800):
+				diff0 = abs(230 - table[b1 - 300][3])
+				diff1 = abs(230 - table[i - 300][3])
+				if (diff1 < diff0):
+					b1 = i
 				i += 1
-		
-		j = 500
-		while (j > 0):
-			h_cur = round(table[j][3])
-			h_next = round(table[j - 1][3])
 			
-			# exact match
-			if (240 == round(h_cur)):
-				b2 = j + 300
-				break
-			# intermediate match
-			elif (h_next >= 240 >= h_cur):
-				b2 = j - 1 + (240 - h_next) / (h_cur - h_next) + 300
-				break
-			else:
+			j = 800
+			while (j > 300):
+				diff0 = abs(220 - table[b2 - 300][3])
+				diff1 = abs(220 - table[j - 300][3])
+				if (diff1 < diff0):
+					b2 = j
 				j -= 1
-		
-		b = (b1 + b2) / 2
-		
-		print("Estimated primary and secondary wavelengths based on CIE XYZ (converted through sRGB):")
-		print("red: " + str(r))
-		print("yellow: " + str(y) + " (" + str(y1) + "-" + str(y2) + ")")
-		print("green: " + str(g) + " (" + str(g1) + "-" + str(g2) + ")")
-		print("cyan: " + str(c) + " (" + str(c1) + "-" + str(c2) + ")")
-		print("blue: " + str(b) + " (" + str(b1) + "-" + str(b2) + ")")
-		print("violet: " + str(v))
-		print("")
-		
-		# crossover points
-		# These seem like they should correspond to secondary colors but don't really, as
-		# discussed earlier. The reason for this is probably that combinations of primary
-		# and/or complementary wavelengths have to appear "white" and white light does not
-		# excite all three cones equally. Thus "yellow" and "cyan" have L:M and M:S ratios
-		# much higher than 1:1. The location of yellow/green also seems to be influenced
-		# by overlap with "blue".
-		# Crossover points can only tell us this much:
-		# * The actual secondary wavelengths are longer.
-		# * The less overlap, the closer the secondary wavelengths are to the crossover points.
-		
-		# "cyan"
-		i = s1
-		while (i < m1 and wl_to_s(i, s1) / wl_to_s(i, m1) > 1):
-			i += 1
-		j = m1
-		while (j > s1 and wl_to_s(j, s1) / wl_to_s(j, m1) < 1):
-			j -= 1
-		c = (i + j) / 2
-		
-		# "yellow"
-		i = m1
-		while (i < 800 and wl_to_s(i, m1) / wl_to_s(i, l1) > 1):
-			i += 1
-		j = 800
-		while (j > m1 and wl_to_s(j, m1) / wl_to_s(j, l1) < 1):
-			j -= 1
-		y = (i + j) / 2
-		
-		# blue/violet
-		i = 300
-		while (i < 800 and wl_to_s(i, m1) / wl_to_s(i, l1) > 1):
-			i += 1
-		j = s1
-		while (j > m1 and wl_to_s(j, m1) / wl_to_s(j, l1) < 1):
-			j -= 1
-		b = (i + j) / 2
-		
-		print("Crossover points:")
-		print("L-M 1: " + str(y))
-		print("L-M 2: " + str(b))
-		print("M-S: " + str(c))
-		print("")
+			
+			b = (b1 + b2) / 2
+			
+			print("Estimated primary and secondary wavelengths based on CIE XYZ (converted through sRGB):")
+			print("red: " + str(r))
+			print("yellow: " + str(y) + " (" + str(y1) + "-" + str(y2) + ")")
+			print("green: " + str(g) + " (" + str(g1) + "-" + str(g2) + ")")
+			print("cyan: " + str(c) + " (" + str(c1) + "-" + str(c2) + ")")
+			print("blue: " + str(b) + " (" + str(b1) + "-" + str(b2) + ")")
+			print("violet: " + str(v))
+			print("")
+			
+			# crossover points
+			# These seem like they should correspond to secondary colors but don't really, as
+			# discussed earlier. The reason for this is probably that combinations of primary
+			# and/or complementary wavelengths have to appear "white" and white light does not
+			# excite all three cones equally. Thus "yellow" and "cyan" have L:M and M:S ratios
+			# much higher than 1:1. The location of yellow/green also seems to be influenced
+			# by overlap with "blue".
+			# Crossover points can only tell us this much:
+			# * The actual secondary wavelengths are longer.
+			# * The less overlap, the closer the secondary wavelengths are to the crossover points.
+			
+			# "cyan"
+			i = s1
+			while (i < m1 and wl_to_s(i, s1) / wl_to_s(i, m1) > 1):
+				i += 1
+			j = m1
+			while (j > s1 and wl_to_s(j, s1) / wl_to_s(j, m1) < 1):
+				j -= 1
+			c = (i + j) / 2
+			
+			# "yellow"
+			i = m1
+			while (i < 800 and wl_to_s(i, m1) / wl_to_s(i, l1) > 1):
+				i += 1
+			j = 800
+			while (j > m1 and wl_to_s(j, m1) / wl_to_s(j, l1) < 1):
+				j -= 1
+			y = (i + j) / 2
+			
+			# blue/violet
+			i = 300
+			while (i < 800 and wl_to_s(i, m1) / wl_to_s(i, l1) > 1):
+				i += 1
+			j = s1
+			while (j > m1 and wl_to_s(j, m1) / wl_to_s(j, l1) < 1):
+				j -= 1
+			b = (i + j) / 2
+			
+			print("Crossover points:")
+			print("L-M 1: " + str(y))
+			print("L-M 2: " + str(b))
+			print("M-S: " + str(c))
+			print("")
+			
+			# color triangle
+			
+			# primaries
+			r = 300
+			for i in range(300, 800):
+				diff0 = abs(math.dist((1, -1), (round((wl_to_s(r, l1) - wl_to_s(r, s1)) / (wl_to_s(r, l1) + (wl_to_s(r, m1) + wl_to_s(r, s1))), 1), round((wl_to_s(r, m1) - wl_to_s(r, l1) - wl_to_s(r, s1)) / (wl_to_s(r, l1) + wl_to_s(r, m1) + wl_to_s(r, s1)), 1))))
+				diff1 = abs(math.dist((1, -1), (round((wl_to_s(i, l1) - wl_to_s(i, s1)) / (wl_to_s(i, l1) + (wl_to_s(i, m1) + wl_to_s(i, s1))), 1), round((wl_to_s(i, m1) - wl_to_s(i, l1) - wl_to_s(i, s1)) / (wl_to_s(i, l1) + wl_to_s(i, m1) + wl_to_s(i, s1)), 1))))
+				if (diff1 < diff0):
+					r = i
+			
+			g = 300
+			for i in range(300, 800):
+				diff0 = abs(math.dist((0, 1), ((wl_to_s(g, l1) - wl_to_s(g, s1)) / (wl_to_s(g, l1) + (wl_to_s(g, m1) + wl_to_s(g, s1))), (wl_to_s(g, m1) - wl_to_s(g, l1) - wl_to_s(g, s1)) / (wl_to_s(g, l1) + wl_to_s(g, m1) + wl_to_s(g, s1)))))
+				diff1 = abs(math.dist((0, 1), ((wl_to_s(i, l1) - wl_to_s(i, s1)) / (wl_to_s(i, l1) + (wl_to_s(i, m1) + wl_to_s(i, s1))), (wl_to_s(i, m1) - wl_to_s(i, l1) - wl_to_s(i, s1)) / (wl_to_s(i, l1) + wl_to_s(i, m1) + wl_to_s(i, s1)))))
+				if (diff1 < diff0):
+					g = i
+			
+			b = 800
+			i = 800
+			while (i > 300):
+				diff0 = abs(math.dist((-1, -1), (round((wl_to_s(b, l1) - wl_to_s(b, s1)) / (wl_to_s(b, l1) + (wl_to_s(b, m1) + wl_to_s(b, s1))), 1), round((wl_to_s(b, m1) - wl_to_s(b, l1) - wl_to_s(b, s1)) / (wl_to_s(b, l1) + wl_to_s(b, m1) + wl_to_s(b, s1)), 1))))
+				diff1 = abs(math.dist((-1, -1), (round((wl_to_s(i, l1) - wl_to_s(i, s1)) / (wl_to_s(i, l1) + (wl_to_s(i, m1) + wl_to_s(i, s1))), 1), round((wl_to_s(i, m1) - wl_to_s(i, l1) - wl_to_s(i, s1)) / (wl_to_s(i, l1) + wl_to_s(i, m1) + wl_to_s(i, s1)), 1))))
+				if (diff1 < diff0):
+					b = i
+				i -= 1
+			
+			# secondaries
+			white_l = 0
+			white_m = 0
+			white_s = 0
+			for i in range(0, 50):
+				w = i*10 + 340
+				if (w >= args.cutoff):
+					white_l += wl_to_s(w, l1) * wp[i]
+					white_m += wl_to_s(w, m1) * wp[i]
+					white_s += wl_to_s(w, s1) * wp[i]
+			
+			c = s1
+			x1 = (wl_to_s(r, l1) - wl_to_s(r, s1)) / (wl_to_s(r, l1) + wl_to_s(r, m1) + wl_to_s(r, s1))
+			y1 = (wl_to_s(r, m1) - (wl_to_s(r, l1) - wl_to_s(r, s1)) / wl_to_s(r, l1) + wl_to_s(r, m1) + wl_to_s(r, s1))
+			x2 = (white_l - white_s) / (white_l + white_m + white_s)
+			y2 = (white_m - white_l - white_s) / (white_l + white_m + white_s)
+			
+			for i in range(s1, m1):
+				x3 = (wl_to_s(c, l1) - wl_to_s(c, s1)) / (wl_to_s(c, l1) + wl_to_s(c, m1) + wl_to_s(c, s1))
+				y3 = (wl_to_s(c, m1) - (wl_to_s(c, l1) - wl_to_s(c, s1)) / wl_to_s(c, l1) + wl_to_s(c, m1) + wl_to_s(c, s1))
+				x4 = (wl_to_s(i, l1) - wl_to_s(i, s1)) / (wl_to_s(i, l1) + wl_to_s(i, m1) + wl_to_s(i, s1))
+				y4 = (wl_to_s(i, m1) - (wl_to_s(i, l1) - wl_to_s(i, s1)) / wl_to_s(i, l1) + wl_to_s(i, m1) + wl_to_s(i, s1))
+				
+				#d3 = np.linalg.norm(np.cross((x2, y2) - np.asarray((x1, y1)), np.asarray((x1, y1)) - np.asarray((x3, y3)))) / np.linalg.norm(np.asarray((x2, y2)) - np.asarray((x1, y1)))
+				#d4 = np.linalg.norm(np.cross((x2, y2) - np.asarray((x1, y1)), np.asarray((x1, y1)) - np.asarray((x4, y4)))) / np.linalg.norm(np.asarray((x2, y2)) - np.asarray((x1, y1)))
+				line = np.polyfit((x1, y1), (x2, y2), 1)
+				A = line[0]
+				B = line[1]
+				C = A*x1 + B*x2
+				
+				d3 = abs(A*x3 + B*y3 + C) / math.sqrt(A**2 + B**2)
+				d4 = abs(A*x4 + B*y4 + C) / math.sqrt(A**2 + B**2)
+				
+				if (d4 < d3):
+					c = i
+			
+			y = m1
+			x1 = (wl_to_s(b, l1) - wl_to_s(b, s1)) / (wl_to_s(b, l1) + wl_to_s(b, m1) + wl_to_s(b, s1))
+			y1 = (wl_to_s(b, m1) - (wl_to_s(b, l1) - wl_to_s(b, s1)) / wl_to_s(b, l1) + wl_to_s(b, m1) + wl_to_s(b, s1))
+			
+			for i in range(m1, l1):
+				x3 = (wl_to_s(y, l1) - wl_to_s(y, s1)) / (wl_to_s(y, l1) + wl_to_s(y, m1) + wl_to_s(y, s1))
+				y3 = (wl_to_s(y, m1) - (wl_to_s(y, l1) - wl_to_s(y, s1)) / wl_to_s(y, l1) + wl_to_s(y, m1) + wl_to_s(y, s1))
+				x4 = (wl_to_s(i, l1) - wl_to_s(i, s1)) / (wl_to_s(i, l1) + wl_to_s(i, m1) + wl_to_s(i, s1))
+				y4 = (wl_to_s(i, m1) - (wl_to_s(i, l1) - wl_to_s(i, s1)) / wl_to_s(i, l1) + wl_to_s(i, m1) + wl_to_s(i, s1))
+				
+				#d3 = np.linalg.norm(np.cross((x2, y2) - np.asarray((x1, y1)), np.asarray((x1, y1)) - np.asarray((x3, y3)))) / np.linalg.norm(np.asarray((x2, y2)) - np.asarray((x1, y1)))
+				#d4 = np.linalg.norm(np.cross((x2, y2) - np.asarray((x1, y1)), np.asarray((x1, y1)) - np.asarray((x4, y4)))) / np.linalg.norm(np.asarray((x2, y2)) - np.asarray((x1, y1)))
+				
+				line = np.polyfit((x1, y1), (x2, y2), 1)
+				A = line[0]
+				B = line[1]
+				C = A*x1 + B*x2
+				
+				d3 = abs(A*x3 + B*y3 + C) / math.sqrt(A**2 + B**2)
+				d4 = abs(A*x4 + B*y4 + C) / math.sqrt(A**2 + B**2)
+				if (d4 < d3):
+					y = i
+			
+			print("Estimated primary colors based on color triangle:")
+			print("red: " + str(r))
+			print("green: " + str(g))
+			print("blue: " + str(b))
+			print("cyan: " + str(c))
+			print("yellow: " + str(y))
 	
 	# white
 	# HSL comes up with a negative saturation. Either Python expects something different
@@ -1635,70 +1760,19 @@ else:
 	# up to 1, so we don't see this anymore. This means the lightness should be ignored.
 	# We still have >100% lightness sometimes because XYZ Y is determined by the L and M
 	# values and wider cone spacing means many visible wavelengths have a sky-high
-	# L:M/S or M:L/S ratio that would be impossible for a human. This is represented as
-	# "looks like 0 nm" in my estimates of which wavelengths the given L:M and M:S ratios
-	# should look like in human terms. Note this has nothing to do with which monochromatic
-	# wavelength(s) would match the given spectrum for the target species/phenotype.
-	white_l = 0
-	white_m = 0
-	white_s = 0
-	for i in range(300, 800):
-		white_l += wl_to_s(i, l1)
-		white_m += wl_to_s(i, m1)
-		white_s += wl_to_s(i, s1)
+	# L:M/S or M:L/S ratio that would be impossible for a human.
 	
-	total = white_l + white_m + white_s
-	white_l = white_l / total
-	white_m = white_m / total
-	white_s = white_s / total
+	# define these outside the if block so we can refer to them elsewhere
 	
-	print("LMS response to white (equal-energy or \"E\"): l=" + str(white_l)
-		+ ", m=" + str(white_m) + ", s=" + str(white_s))
-	
-	white_lms = np.array([
-		[white_l],
-		[white_m],
-		[white_s]
-	])
-	white_matrix = np.matmul(lms_to_xyz, white_lms)
-	white_xyz = XYZColor(*white_matrix, illuminant="e")
-	print("Color space coordinates of white (with E illuminant):")
-	print("CIE XYZ: " + str(white_xyz.get_value_tuple()))
-	print("sRGB: " + str(convert_color(white_xyz, sRGBColor).get_value_tuple()))
-	print("HSL: " + str(convert_color(white_xyz, HSLColor).get_value_tuple()))
-	print("LCh (LCHab): " + str(convert_color(white_xyz, LCHabColor).get_value_tuple()))
-	print("")
-	
-	# non-UV white
-	white_l = 0
-	white_m = 0
-	white_s = 0
-	for i in range(400, 800):
-		white_l += wl_to_s(i, l1)
-		white_m += wl_to_s(i, m1)
-		white_s += wl_to_s(i, s1)
-	
-	total = white_l + white_m + white_s
-	white_l = white_l / total
-	white_m = white_m / total
-	white_s = white_s / total
-	
-	print("LMS response to non-UV white (cut off at 400 nm): l=" + str(white_l)
-		+ ", m=" + str(white_m) + ", s=" + str(white_s))
-	
-	white_lms = np.array([
-		[white_l],
-		[white_m],
-		[white_s]
-	])
-	white_matrix = np.matmul(lms_to_xyz, white_lms)
-	white_xyz = XYZColor(*white_matrix, illuminant="e")
-	print("Color space coordinates of non-UV white:")
-	print("CIE XYZ: " + str(white_xyz.get_value_tuple()))
-	print("sRGB: " + str(convert_color(white_xyz, sRGBColor).get_value_tuple()))
-	print("HSL: " + str(convert_color(white_xyz, HSLColor).get_value_tuple()))
-	print("LCh (LCHab): " + str(convert_color(white_xyz, LCHabColor).get_value_tuple()))
-	print("")
+	if (args.lighting):
+		print("White (E, equal-energy)")
+		spectral_rendering(e/100)
+		
+		print("White (D65)")
+		spectral_rendering(d65/100)
+		
+		print("Black body spectrum approximating 2000 K incandescent light bulb")
+		spectral_rendering(incandescent)
 	
 	# leaves
 	# Again, something is wrong with the XYZ conversions. The LCHab hues kind of make sense
@@ -1714,500 +1788,512 @@ else:
 	# affected by the relative sensitivity and density of cone types, or are they
 	# adjusted relative to each other?
 	
-	# reflectance spectrum of maple leaves estimated from this graph:
-	# https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEgKwT9GhKlvdbOROD_JtEEym7Ovzq8GPfSCORiVcKklEQI9DSTuNjoaIJMWMdpJpc4ijq0T1m_PXF2seWczauKLz-4VPIY9TSXQqXdp1B80vu4w5O4lWaAF0k2kaA5ThrJrjCzlck8Ez1fF/s1600/LeafSpectra.jpg
-	# The graph has information for 300-400 but appears to be roughly 0 there.
-	leaf_table = np.array([
-		[340, 0.0],
-		[350, 0.0],
-		[360, 0.0],
-		[370, 0.0],
-		[380, 0.0],
-		[390, 0.0],
-		[400, 0.01],
-		[410, 0.01],
-		[420, 0.02],
-		[430, 0.02],
-		[440, 0.02],
-		[450, 0.03],
-		[460, 0.03],
-		[470, 0.03],
-		[480, 0.04],
-		[490, 0.04],
-		[500, 0.05],
-		[510, 0.08],
-		[520, 0.19],
-		[530, 0.23],
-		[540, 0.25],
-		[550, 0.27],
-		[560, 0.25],
-		[570, 0.23],
-		[580, 0.19],
-		[590, 0.17],
-		[600, 0.17],
-		[610, 0.15],
-		[620, 0.14],
-		[630, 0.14],
-		[640, 0.1],
-		[650, 0.07],
-		[660, 0.05],
-		[670, 0.04],
-		[680, 0.1],
-		[690, 0.3],
-		[700, 0.35],
-		[710, 0.45],
-		[720, 0.55],
-		[730, 0.6],
-		[740, 0.63],
-		[750, 0.65],
-		[760, 0.65],
-		[770, 0.65],
-		[780, 0.65],
-		[790, 0.65],
-		[800, 0.65],
-		[810, 0.65],
-		[820, 0.65],
-		[830, 0.65]
-	])
-	print("Green maple leaf")
-	spectral_rendering(leaf_table, normalize=True)
-	
-	red_leaf_table = np.array([
-		[340, 0.0],
-		[350, 0.0],
-		[360, 0.0],
-		[370, 0.0],
-		[380, 0.0],
-		[390, 0.0],
-		[400, 0.0],
-		[410, 0.0],
-		[420, 0.0],
-		[430, 0.0],
-		[440, 0.0],
-		[450, 0.0],
-		[460, 0.0],
-		[470, 0.0],
-		[480, 0.0],
-		[490, 0.0],
-		[500, 0.0],
-		[510, 0.0],
-		[520, 0.0],
-		[530, 0.0],
-		[540, 0.0],
-		[550, 0.01],
-		[560, 0.01],
-		[570, 0.02],
-		[580, 0.02],
-		[590, 0.03],
-		[600, 0.05],
-		[610, 0.06],
-		[620, 0.08],
-		[630, 0.1],
-		[640, 0.1],
-		[650, 0.09],
-		[660, 0.08],
-		[670, 0.05],
-		[680, 0.1],
-		[690, 0.3],
-		[700, 0.35],
-		[710, 0.45],
-		[720, 0.55],
-		[730, 0.6],
-		[740, 0.63],
-		[750, 0.65],
-		[760, 0.65],
-		[770, 0.65],
-		[780, 0.65],
-		[790, 0.65],
-		[800, 0.65],
-		[810, 0.65],
-		[820, 0.65],
-		[830, 0.65]
-	])
-	print("Red (red-orange) maple leaf")
-	spectral_rendering(red_leaf_table, normalize=True)
-	
-	# corn
-	# estimated from https://www.yorku.ca/planters/photosynthesis/2014_08_15_lab_manual_static_html/images/Corn_leaf_reflectance.png. Values below 400 are estimated to be the same as 400.
-	corn_table = np.array([
-		#[300, 0.45],
-		#[310, 0.45],
-		#[320, 0.45],
-		#[330, 0.45],
-		[340, 0.45],
-		[350, 0.45],
-		[360, 0.45],
-		[370, 0.45],
-		[380, 0.45],
-		[390, 0.45],
-		[400, 0.45],
-		[410, 0.4],
-		[420, 0.35],
-		[430, 0.35],
-		[440, 0.35],
-		[450, 0.35],
-		[460, 0.37],
-		[470, 0.37],
-		[480, 0.37],
-		[490, 0.37],
-		[500, 0.43],
-		[510, 0.5],
-		[520, 0.6],
-		[530, 0.77],
-		[540, 0.8],
-		[550, 0.8],
-		[560, 0.77],
-		[570, 0.75],
-		[580, 0.65],
-		[590, 0.63],
-		[600, 0.62],
-		[610, 0.6],
-		[620, 0.55],
-		[630, 0.55],
-		[640, 0.55],
-		[650, 0.45],
-		[660, 0.35],
-		[670, 0.35],
-		[680, 0.4],
-		[690, 0.6],
-		[700, 0.65],
-		[710, 0.75],
-		[720, 0.8],
-		[730, 0.83],
-		[740, 0.83],
-		[750, 0.83],
-		[760, 0.83],
-		[770, 0.8],
-		[780, 0.8],
-		[790, 0.8],
-		[800, 0.8],
-		[810, 0.8],
-		[820, 0.8],
-		[830, 0.8]
-	])
-	print("Corn leaf")
-	spectral_rendering(corn_table, normalize=True)
-	
-	# hydrangea
-	# estimated from https://spectralevolution.com/wp-content/uploads/2024/04/RT_hydrang_ref.jpg
-	hydrangea_table = np.array([
-		[340, 0.2],
-		[350, 0.2],
-		[360, 0.175],
-		[370, 0.1375],
-		[380, 0.125],
-		[390, 0.1],
-		[400, 0.0875],
-		[410, 0.075],
-		[420, 0.075],
-		[430, 0.0625],
-		[440, 0.0625],
-		[450, 0.0625],
-		[460, 0.0625],
-		[470, 0.0625],
-		[480, 0.0625],
-		[490, 0.0625],
-		[500, 0.0625],
-		[510, 0.075],
-		[520, 0.075],
-		[530, 0.0875],
-		[540, 0.1],
-		[550, 0.1],
-		[560, 0.0875],
-		[570, 0.0875],
-		[580, 0.075],
-		[590, 0.075],
-		[600, 0.075],
-		[610, 0.0625],
-		[620, 0.0625],
-		[630, 0.0625],
-		[640, 0.0625],
-		[650, 0.0625],
-		[660, 0.0625],
-		[670, 0.0625],
-		[680, 0.0625],
-		[690, 0.0875],
-		[700, 0.125],
-		[710, 0.1875],
-		[720, 0.3],
-		[730, 0.375],
-		[740, 0.45],
-		[750, 0.4875],
-		[760, 0.5125],
-		[770, 0.5125],
-		[780, 0.525],
-		[790, 0.525],
-		[800, 0.525],
-		[810, 0.525],
-		[820, 0.525],
-		[830, 0.525]
-	])
-	print("Hydrangea leaf")
-	spectral_rendering(hydrangea_table, normalize=True)
+	if (args.leaves):
+		# reflectance spectrum of maple leaves estimated from this graph:
+		# https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEgKwT9GhKlvdbOROD_JtEEym7Ovzq8GPfSCORiVcKklEQI9DSTuNjoaIJMWMdpJpc4ijq0T1m_PXF2seWczauKLz-4VPIY9TSXQqXdp1B80vu4w5O4lWaAF0k2kaA5ThrJrjCzlck8Ez1fF/s1600/LeafSpectra.jpg
+		# The graph has information for 300-400 but appears to be roughly 0 there.
+		leaf_table = np.array([
+			0.0,
+			0.0,
+			0.0,
+			0.0,
+			0.0,
+			0.0,
+			0.01,
+			0.01,
+			0.02,
+			0.02,
+			0.02,
+			0.03,
+			0.03,
+			0.03,
+			0.04,
+			0.04,
+			0.05,
+			0.08,
+			0.19,
+			0.23,
+			0.25,
+			0.27,
+			0.25,
+			0.23,
+			0.19,
+			0.17,
+			0.17,
+			0.15,
+			0.14,
+			0.14,
+			0.10,
+			0.07,
+			0.05,
+			0.04,
+			0.10,
+			0.30,
+			0.35,
+			0.45,
+			0.55,
+			0.60,
+			0.63,
+			0.65,
+			0.65,
+			0.65,
+			0.65,
+			0.65,
+			0.65,
+			0.65,
+			0.65,
+			0.65
+		])
+		print("Green maple leaf")
+		spectral_rendering(leaf_table)
+		
+		red_leaf_table = np.array([
+			0.0,
+			0.0,
+			0.0,
+			0.0,
+			0.0,
+			0.0,
+			0.0,
+			0.0,
+			0.0,
+			0.0,
+			0.0,
+			0.0,
+			0.0,
+			0.0,
+			0.0,
+			0.0,
+			0.0,
+			0.0,
+			0.0,
+			0.0,
+			0.0,
+			0.01,
+			0.01,
+			0.02,
+			0.02,
+			0.03,
+			0.05,
+			0.06,
+			0.08,
+			0.10,
+			0.10,
+			0.09,
+			0.08,
+			0.05,
+			0.10,
+			0.30,
+			0.35,
+			0.45,
+			0.55,
+			0.60,
+			0.63,
+			0.65,
+			0.65,
+			0.65,
+			0.65,
+			0.65,
+			0.65,
+			0.65,
+			0.65,
+			0.65
+		])
+		print("Red maple leaf")
+		spectral_rendering(red_leaf_table)
+		
+		# corn
+		# estimated from https://www.yorku.ca/planters/photosynthesis/2014_08_15_lab_manual_static_html/images/Corn_leaf_reflectance.png. Values below 400 are estimated to be the same as 400.
+		corn_table = np.array([
+			0.45,
+			0.45,
+			0.45,
+			0.45,
+			0.45,
+			0.45,
+			0.45,
+			0.40,
+			0.35,
+			0.35,
+			0.35,
+			0.35,
+			0.37,
+			0.37,
+			0.37,
+			0.37,
+			0.43,
+			0.50,
+			0.60,
+			0.77,
+			0.80,
+			0.80,
+			0.77,
+			0.75,
+			0.65,
+			0.63,
+			0.62,
+			0.60,
+			0.55,
+			0.55,
+			0.55,
+			0.45,
+			0.35,
+			0.35,
+			0.40,
+			0.60,
+			0.65,
+			0.75,
+			0.80,
+			0.83,
+			0.83,
+			0.83,
+			0.83,
+			0.80,
+			0.80,
+			0.80,
+			0.80,
+			0.80,
+			0.80,
+			0.80
+		])
+		print("Corn leaf")
+		spectral_rendering(corn_table)
+		
+		# hydrangea
+		# estimated from https://spectralevolution.com/wp-content/uploads/2024/04/RT_hydrang_ref.jpg
+		hydrangea_table = np.array([
+			0.2,
+			0.2,
+			0.175,
+			0.1375,
+			0.125,
+			0.1,
+			0.0875,
+			0.075,
+			0.075,
+			0.0625,
+			0.0625,
+			0.0625,
+			0.0625,
+			0.0625,
+			0.0625,
+			0.0625,
+			0.0625,
+			0.075,
+			0.075,
+			0.0875,
+			0.1,
+			0.1,
+			0.0875,
+			0.0875,
+			0.075,
+			0.075,
+			0.075,
+			0.0625,
+			0.0625,
+			0.0625,
+			0.0625,
+			0.0625,
+			0.0625,
+			0.0625,
+			0.0625,
+			0.0875,
+			0.125,
+			0.1875,
+			0.3,
+			0.375,
+			0.45,
+			0.4875,
+			0.5125,
+			0.5125,
+			0.525,
+			0.525,
+			0.525,
+			0.525,
+			0.525,
+			0.525
+		])
+		print("Hydrangea leaf")
+		spectral_rendering(hydrangea_table)
 	
 	# flowers
 	# estimated from https://www.researchgate.net/profile/Robert-Gegear/publication/222035355/figure/fig1/AS:632345413578753@1527774303378/The-spectral-reflectance-curves-of-coloured-flowers-and-the-green-array-background-used.png
-	flower0_table = np.array([
-		#[300, 0.05],
-		#[310, 0.08],
-		#[320, 0.08],
-		#[330, 0.08],
-		[340, 0.08],
-		[350, 0.08],
-		[360, 0.08],
-		[370, 0.1],
-		[380, 0.13],
-		[390, 0.2],
-		[400, 0.35],
-		[410, 0.55],
-		[420, 0.65],
-		[430, 0.73],
-		[440, 0.83],
-		[450, 0.85],
-		[460, 0.88],
-		[470, 0.9],
-		[480, 0.9],
-		[490, 0.88],
-		[500, 0.85],
-		[510, 0.8],
-		[520, 0.75],
-		[530, 0.65],
-		[540, 0.55],
-		[550, 0.4],
-		[560, 0.25],
-		[570, 0.15],
-		[580, 0.1],
-		[590, 0.08],
-		[600, 0.08],
-		[610, 0.05],
-		[620, 0.05],
-		[630, 0.05],
-		[640, 0.05],
-		[650, 0.05],
-		[660, 0.08],
-		[670, 0.08],
-		[680, 0.08],
-		[690, 0.08],
-		[700, 0.08],
-		[700, 0.08],
-		[710, 0.08],
-		[720, 0.08],
-		[730, 0.08],
-		[740, 0.08],
-		[750, 0.08],
-		[760, 0.08],
-		[770, 0.08],
-		[780, 0.08],
-		[790, 0.08],
-		[800, 0.08],
-		[810, 0.08],
-		[820, 0.08],
-		[830, 0.08]
-	])
-	print("Blue flower")
-	spectral_rendering(flower0_table, normalize=True)
 	
-	flower1_table = np.array([
-		#[310, 0.08],
-		#[320, 0.08],
-		#[330, 0.08],
-		[340, 0.08],
-		[350, 0.1],
-		[360, 0.1],
-		[370, 0.1],
-		[380, 0.1],
-		[390, 0.08],
-		[400, 0.05],
-		[410, 0.05],
-		[420, 0.05],
-		[430, 0.05],
-		[440, 0.05],
-		[450, 0.05],
-		[460, 0.05],
-		[470, 0.05],
-		[480, 0.05],
-		[490, 0.08],
-		[500, 0.1],
-		[510, 0.2],
-		[520, 0.55],
-		[530, 0.8],
-		[540, 0.95],
-		[550, 0.95],
-		[560, 0.98],
-		[570, 0.98],
-		[580, 0.98],
-		[590, 0.98],
-		[600, 0.98],
-		[610, 0.1],
-		[620, 0.1],
-		[630, 0.1],
-		[640, 0.1],
-		[650, 0.1],
-		[660, 0.1],
-		[670, 0.1],
-		[680, 0.1],
-		[690, 0.1],
-		[700, 0.1],
-		[710, 0.1],
-		[720, 0.1],
-		[730, 0.1],
-		[740, 0.1],
-		[750, 0.1],
-		[760, 0.1],
-		[770, 0.1],
-		[780, 0.1],
-		[790, 0.1],
-		[800, 0.1],
-		[810, 0.1],
-		[820, 0.1],
-		[830, 0.1]
-	])
-	print("Yellow flower")
-	spectral_rendering(flower1_table, normalize=True)
-	
-	# Banksia attenuata flowers
-	# estimated from fig. 5 in Arrese et al. 2005
-	
-	# immature
-	banksia0_table = np.array([
-		[340, 0.0],
-		[350, 0.0],
-		[360, 0.0],
-		[370, 0.0],
-		[380, 0.0],
-		[390, 0.0],
-		[400, 0.0],
-		[410, 0.0],
-		[420, 0.0],
-		[430, 0.0],
-		[440, 0.0],
-		[450, 0.0625],
-		[460, 0.125],
-		[470, 0.125],
-		[480, 0.125],
-		[490, 0.125],
-		[500, 0.125],
-		[510, 0.25],
-		[520, 0.375],
-		[530, 0.5],
-		[540, 0.625],
-		[550, 0.75],
-		[560, 0.75],
-		[570, 0.6875],
-		[580, 0.625],
-		[590, 0.5625],
-		[600, 0.625],
-		[610, 0.5625],
-		[620, 0.5],
-		[630, 0.5],
-		[640, 0.5],
-		[650, 0.375],
-		[660, 0.3125],
-		[670, 0.1875],
-		[680, 0.1875],
-		[690, 0.625],
-		[700, 0.9375],
-		[710, 0.9375],
-		[720, 0.9375],
-		[730, 0.9375],
-		[740, 0.9375],
-		[750, 0.9375],
-		[760, 0.9375],
-		[770, 0.9375],
-		[780, 0.9375],
-		[790, 0.9375],
-		[800, 0.9375],
-		[810, 0.9375],
-		[820, 0.9375],
-		[830, 0.9375]
-	])
-	print("Immature Banksia attenuata flower")
-	spectral_rendering(banksia0_table, normalize=True)
-	
-	# mature
-	banksia1_table = np.array([
-		[340, 0.0],
-		[350, 0.0],
-		[360, 0.0],
-		[370, 0.0],
-		[380, 0.0],
-		[390, 0.0],
-		[400, 0.0],
-		[410, 0.0],
-		[420, 0.0],
-		[430, 0.0],
-		[440, 0.0625],
-		[450, 0.125],
-		[460, 0.125],
-		[470, 0.1875],
-		[480, 0.25],
-		[490, 0.25],
-		[500, 0.25],
-		[510, 0.375],
-		[520, 0.375],
-		[530, 0.5],
-		[540, 0.5],
-		[550, 0.625],
-		[560, 0.625],
-		[570, 0.625],
-		[580, 0.625],
-		[590, 0.5625],
-		[600, 0.625],
-		[610, 0.625],
-		[620, 0.625],
-		[630, 0.625],
-		[640, 0.625],
-		[650, 0.625],
-		[660, 0.625],
-		[670, 0.5625],
-		[680, 0.5625],
-		[690, 0.625],
-		[700, 0.75],
-		[710, 0.75],
-		[720, 0.75],
-		[730, 0.75],
-		[740, 0.75],
-		[750, 0.75],
-		[760, 0.75],
-		[770, 0.75],
-		[780, 0.75],
-		[790, 0.75],
-		[800, 0.75],
-		[810, 0.75],
-		[820, 0.75],
-		[830, 0.75]
-	])
-	print("Mature Banksia attenuata flower")
-	spectral_rendering(banksia1_table, normalize=True)
+	if (args.flowers):
+		flower0_table = np.array([
+			#0.05,
+			#0.08,
+			#0.08,
+			#0.08,
+			0.08,
+			0.08,
+			0.08,
+			0.1,
+			0.13,
+			0.2,
+			0.35,
+			0.55,
+			0.65,
+			0.73,
+			0.83,
+			0.85,
+			0.88,
+			0.9,
+			0.9,
+			0.88,
+			0.85,
+			0.8,
+			0.75,
+			0.65,
+			0.55,
+			0.4,
+			0.25,
+			0.15,
+			0.1,
+			0.08,
+			0.08,
+			0.05,
+			0.05,
+			0.05,
+			0.05,
+			0.05,
+			0.08,
+			0.08,
+			0.08,
+			0.08,
+			0.08,
+			0.08,
+			0.08,
+			0.08,
+			0.08,
+			0.08,
+			0.08,
+			0.08,
+			0.08,
+			0.08,
+			0.08,
+			0.08,
+			0.08,
+			0.08
+		])
+		print("Blue flower")
+		spectral_rendering(flower0_table)
+		
+		flower1_table = np.array([
+			#0.08,
+			#0.08,
+			#0.08,
+			0.08,
+			0.1,
+			0.1,
+			0.1,
+			0.1,
+			0.08,
+			0.05,
+			0.05,
+			0.05,
+			0.05,
+			0.05,
+			0.05,
+			0.05,
+			0.05,
+			0.05,
+			0.08,
+			0.1,
+			0.2,
+			0.55,
+			0.8,
+			0.95,
+			0.95,
+			0.98,
+			0.98,
+			0.98,
+			0.98,
+			0.98,
+			0.1,
+			0.1,
+			0.1,
+			0.1,
+			0.1,
+			0.1,
+			0.1,
+			0.1,
+			0.1,
+			0.1,
+			0.1,
+			0.1,
+			0.1,
+			0.1,
+			0.1,
+			0.1,
+			0.1,
+			0.1,
+			0.1,
+			0.1,
+			0.1,
+			0.1,
+			0.1
+		])
+		print("Yellow flower")
+		spectral_rendering(flower1_table)
+		
+		# Banksia attenuata flowers
+		# estimated from fig. 5 in Arrese et al. 2005
+		
+		# immature
+		banksia0_table = np.array([
+			0.0,
+			0.0,
+			0.0,
+			0.0,
+			0.0,
+			0.0,
+			0.0,
+			0.0,
+			0.0,
+			0.0,
+			0.0,
+			0.0625,
+			0.125,
+			0.125,
+			0.125,
+			0.125,
+			0.125,
+			0.25,
+			0.375,
+			0.5,
+			0.625,
+			0.75,
+			0.75,
+			0.6875,
+			0.625,
+			0.5625,
+			0.625,
+			0.5625,
+			0.5,
+			0.5,
+			0.5,
+			0.375,
+			0.3125,
+			0.1875,
+			0.1875,
+			0.625,
+			0.9375,
+			0.9375,
+			0.9375,
+			0.9375,
+			0.9375,
+			0.9375,
+			0.9375,
+			0.9375,
+			0.9375,
+			0.9375,
+			0.9375,
+			0.9375,
+			0.9375,
+			0.9375
+		])
+		print("Immature Banksia attenuata flower")
+		spectral_rendering(banksia0_table)
+		
+		# mature
+		banksia1_table = np.array([
+			0.0,
+			0.0,
+			0.0,
+			0.0,
+			0.0,
+			0.0,
+			0.0,
+			0.0,
+			0.0,
+			0.0,
+			0.0625,
+			0.125,
+			0.125,
+			0.1875,
+			0.25,
+			0.25,
+			0.25,
+			0.375,
+			0.375,
+			0.5,
+			0.5,
+			0.625,
+			0.625,
+			0.625,
+			0.625,
+			0.5625,
+			0.625,
+			0.625,
+			0.625,
+			0.625,
+			0.625,
+			0.625,
+			0.625,
+			0.5625,
+			0.5625,
+			0.625,
+			0.75,
+			0.75,
+			0.75,
+			0.75,
+			0.75,
+			0.75,
+			0.75,
+			0.75,
+			0.75,
+			0.75,
+			0.75,
+			0.75,
+			0.75,
+			0.75
+		])
+		print("Mature Banksia attenuata flower")
+		spectral_rendering(banksia1_table)
 	
 	# sky and daylight
-	daylight_table = np.empty([50, 2])
-	for i in range(0, 49):
-		w = i*10 + 340
-		daylight_table[i][0] = w
-		daylight_table[i][1] = blackbody(w / 1000000000, 5800)
-	
-	print("Black body spectrum approximating daylight")
-	spectral_rendering(daylight_table, light_source=daylight_table)
-	
-	sky_table = np.empty([50, 2])
-	for i in range(0, 49):
-		w = i*10 + 340
-		sky_table[i][0] = w
-		sky_table[i][1] = blackbody(w / 1000000000, 5800) * w**-4
-	
-	print("Black body spectrum with Rayleigh scattering approximating a blue sky")
-	spectral_rendering(sky_table, light_source=sky_table)
-	
-	# incandescent lighting
-	incandescent = np.empty([50, 2])
-	for i in range(0, 49):
-		w = i*10 + 340
-		incandescent[i][0] = w
-		incandescent[i][1] = blackbody(w / 1000000000, 2000)
-	
-	print("Black body spectrum approximating 2000 K incandescent light bulb")
-	spectral_rendering(incandescent, light_source=incandescent)
+	# These are both normalized to "1" at 550 nm. If I try to make "sky" relative to "daylight",
+	# the values are way too low and probably not meaningful.
+	if (args.sky):
+		daylight_table = np.empty(50)
+		for i in range(0, 50):
+			w = i*10 + 340
+			# normalize to 1 at 550
+			daylight_table[i] = blackbody(w / 1000000000, 5800) / blackbody(550 / 1000000000, 5800)
+		
+		print("Black body spectrum approximating daylight")
+		spectral_rendering(daylight_table)
+		
+		sky_table = np.empty(50)
+		for i in range(0, 50):
+			w = i*10 + 340
+			sky_table[i] = blackbody(w / 1000000000, 5800) * w**-4 / (blackbody(550 / 1000000000, 5800) * 550**-4)
+		
+		print("Black body spectrum with Rayleigh scattering approximating a blue sky")
+		spectral_rendering(sky_table)
+		
+	if (args.triangle):
+		el = 0
+		em = 0
+		es = 0
+		d65l = 0
+		d65m = 0
+		d65s = 0
+		for i in range(0, 37):
+			w = i*10 + 340
+			el += wl_to_s(w, l1) * e[i]
+			em += wl_to_s(w, m1) * e[i]
+			es += wl_to_s(w, s1) * e[i]
+			d65l += wl_to_s(w, l1) * d65[i]
+			d65m += wl_to_s(w, m1) * d65[i]
+			d65s += wl_to_s(w, s1) * d65[i]
+			l = wl_to_s(w, l1) / (wl_to_s(w, l1) + wl_to_s(w, m1) + wl_to_s(w, s1))
+			m = wl_to_s(w, m1) / (wl_to_s(w, l1) + wl_to_s(w, m1) + wl_to_s(w, s1))
+			s = wl_to_s(w, s1) / (wl_to_s(w, l1) + wl_to_s(w, m1) + wl_to_s(w, s1))
+			print(str(w) + " " + str(l) + " " + str(m) + " " + str(s))
+		print("E " + str(el/(el+em+es)) + " " + str(em/(el+em+es)) + " " + str(es/(el+em+es)))
+		print("D65 " + str(d65l/(d65l+d65m+d65s)) + " " + str(d65m/(d65l+d65m+d65s)) + " " + str(d65s/(d65l+d65m+d65s)))
 
 # print execution time
 print("%s seconds" % (time.time() - start_time))
