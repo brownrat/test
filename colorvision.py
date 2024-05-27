@@ -22,6 +22,8 @@
 # CIE 2-deg CMFs. http://cvrl.ucl.ac.uk/database/text/cienewxyz/cie2012xyz2.htm
 # Pridmore, R.W. A new transformation of cone responses to opponent color responses. Atten Percept Psychophys 83, 1797–1803 (2021). https://doi.org/10.3758/s13414-020-02216-7
 # https://chittkalab.sbcs.qmul.ac.uk/1992/Chittka%201992%20J%20Comp%20Physiol_R.pdf
+# GOVARDOVSKII VI, FYHRQUIST N, REUTER T, KUZMIN DG, DONNER K. In search of the visual pigment template. Visual Neuroscience. 2000;17(4):509-528. doi:10.1017/S0952523800174036
+# https://journals.biologists.com/jeb/article/207/14/2471/14748/Interspecific-and-intraspecific-views-of-color
 #
 # Further reading: https://xkcd.com/1926/
 
@@ -47,7 +49,7 @@ parser.add_argument("-l", "--lw", type=int, default=0, help="longwave cone sensi
 parser.add_argument("-m", "--mw", type=int, default=0, help="mediumwave cone sensitivity")
 parser.add_argument("-s", "--sw", type=int, default=0, help="shortwave cone sensitivity")
 parser.add_argument("--rod", type=int, default=500, help="rod sensitivity")
-parser.add_argument("--weber", type=float, default=0.05, help="Weber fraction")
+parser.add_argument("--weber", type=float, default=0.05, help="Weber fraction for L cones")
 parser.add_argument("--lp", type=int, default=10, help="proportion of L cones")
 parser.add_argument("--mp", type=int, default=5, help="proportion of M cones")
 parser.add_argument("--sp", type=int, default=1, help="proportion of S cones")
@@ -66,7 +68,9 @@ parser.add_argument("--lb", type=float, default=0.68990272, help="contribution o
 parser.add_argument("--mb", type=float, default=0.34832189, help="contribution of M cones to perception of brightness")
 parser.add_argument("--sb", type=float, default=0.0, help="contribution of S cones to perception of brightness")
 parser.add_argument("--rb", type=float, default=0.0, help="contribution of rods to perception of brightness")
+parser.add_argument("--vpt", help="plot visual pigment templates", action="store_true")
 parser.add_argument("--triangle", help="plot color triangle", action="store_true")
+parser.add_argument("--triangle1", help="plot logarithmic noise-scaled color triangle", action="store_true")
 parser.add_argument("--hexagon", help="plot color hexagon", action="store_true")
 parser.add_argument("--wd", help="plot wavelength discrimination function", action="store_true")
 args = parser.parse_args()
@@ -83,21 +87,10 @@ if (m1 == 0 and l1 != 0):
 if (s1 == 0 and m1 != 0):
 	s1 = m1
 
-# default reference cone peaks
-l0 = args.slw
-m0 = args.smw
-s0 = args.ssw
-
-# default reference primary/secondary wavelengths
-r0 = args.red
-y0 = args.yellow
-g0 = args.green
-c0 = args.cyan
-b0 = args.blue
-v0 = args.violet
-
-# method to use
-version = args.version
+# Weber fractions
+wl = args.weber
+wm = wl * math.sqrt(args.lp) / math.sqrt(args.mp)
+ws = wl * math.sqrt(args.lp) / math.sqrt(args.sp)
 
 # LMS to XYZ
 lms_to_xyz = np.array([
@@ -112,30 +105,30 @@ lms_to_xyz = np.array([
 # function. (The maximum sensitivity given for l=565 and m=540 is 555, which is the same.)
 # This is equivalent to assuming brightness perception is mediated entirely by the L and
 # (if present) M cones and the contribution from L cones is about twice that of M cones.
-# There used to be an extra "lens filtering" factor, but I think this is misleading outside
-# of removing wavelengths beyond a specified point. Note the relationship between XYZ Y,
-# HSL L and Lab/LCH L is non-linear.
+# It can only tell us the direction of a difference in brightness, not how large or
+# perceptible it is -- for that you need Weber fractions.
 # The percentages of L, M and S cones are about 51-76%, 20-44% and 2% in humans (Wikipedia)
 # and 68-73%, 20-25% and 7% in the fat-tailed dunnart ("Diversity of Color Vision [sic]: Not All
 # Australian Marsupials are Trichromatic"). In Norway rats, the percentage of S cones is 11-12%
 # ("Cone-based vision of rats for ultraviolet and visible lights") and in the house mouse the
 # percentage of exclusive non-coexpressing S cones is 26% ("Number and Distribution of Mouse
 # Retinal Cone Photoreceptors").
+
+# At the moment "lens filtering" consists of removing wavelengths beyond a specified point
+# because I don't know the best way to implement anything more complex. This is obviously not
+# realistic. I think the way it should work is that brightness declines with filtering
+# whereas color is compensated for by normalizing everything to 1 at the highest point.
+# Something about von Kries transforms.
 def lens_filter(w, c=300):
 	# remove filter when cutoff is set to 0
 	if (c == 0):
 		return 1
 	elif (w < c):
 		return 0
-	#else:
-		#value = np.log(w - c) / np.log(800 - c)
-		#if (value > 0): # a log function has the wrong shape near the cutoff point
-			#return value
-	#return 0
 	return 1
 
 def sensitivity(w, l=l1, m=m1, s=s1, c=300):
-	value = (args.lb*wl_to_s(w, l) + args.mb*wl_to_s(w, m) + args.sb*wl_to_s(w, s) + args.rb*wl_to_s(w, rod)) * lens_filter(w, c)
+	value = (args.lb*vpt(w, l) + args.mb*vpt(w, m) + args.sb*vpt(w, s) + args.rb*vpt(w, rod)) * lens_filter(w, c)
 	return value
 
 # black body
@@ -148,7 +141,7 @@ def blackbody(w, t):
 # normal distribution
 def normal(mu, std_dev, x):
 	return (1 / std_dev*math.sqrt(2*math.pi)) * math.exp((-1/2)*((x - mu)/std_dev)**2)
-	
+
 # light sources
 d65 = spectral_constants.REF_ILLUM_TABLE["d65"]
 e = spectral_constants.REF_ILLUM_TABLE["e"]
@@ -170,15 +163,9 @@ elif (args.white == "i"):
 else:
 	wp = e
 
-# find sensitivity of a given cone type to a wavelength
-# This does not use the same function as CVS. The function comes from a paper describing
-# templates for visual pigment absorbance that are meant to fit both vertebrates and
-# invertebrates (Stavenga 2010), whereas CVS uses shifted versions of the 10° human cone
-# fundamentals. This is probably close enough and better for non-primates.
-# This function now prints a warning instead of causing a crash when it produces an overflow
-# exception, but this usually seems to be a sign that something went wrong, so that doesn't
-# help much.
-def wl_to_s(w, lmax):
+# find sensitivity of a given photoreceptor type to a wavelength using visual pigment templates
+# from Govardovskii et al. (2000)
+def vpt(w, lmax):
 	# coefficients
 	A = 69.7
 	a = 0.8795 + 0.0459*math.exp(-(lmax - 300)**2 / 11940)
@@ -188,11 +175,11 @@ def wl_to_s(w, lmax):
 	c = 1.104
 	D = 0.674
 	Abeta = 0.26
-	mbeta = 189 + 0.315 * lmax
+	lmbeta = 189 + 0.315 * lmax
 	b1 = -40.5 + 0.195 * lmax
 	try:
 		alpha = 1 / (math.exp(A*(a - lmax/w)) + math.exp(B*(b - lmax/w)) + math.exp(C*(c - lmax/w)) + D)
-		beta = Abeta * math.exp(-((w - mbeta) / b1)**2)
+		beta = Abeta * math.exp(-((w - lmbeta) / b1)**2)
 	except OverflowError:
 		print("Warning: math overflow, clipping to 2.2250738585072014e-308")
 		return 2.2250738585072014e-308
@@ -200,10 +187,6 @@ def wl_to_s(w, lmax):
 	return alpha + beta
 
 # estimate hue, saturation and lightness for a spectral power distribution
-# The "brightness" value is basically the same thing as XYZ Y and the CIE luminous efficiency
-# function (which are basically the same thing), so it should be a reasonable estimate for
-# a species that derives brightness from cone signals in a similar way viewing an object
-# under daylight (photopic) conditions. Otherwise it might not be reasonable.
 def spectral_rendering(table, light_source=wp/100, start=340):
 	table_l = 0
 	table_m = 0
@@ -222,12 +205,12 @@ def spectral_rendering(table, light_source=wp/100, start=340):
 		#print(i)
 		#print(w)
 		if (w >= args.cutoff):
-			table_l += wl_to_s(w, l1) * table[i] * light_source[i - offset]
+			table_l += vpt(w, l1) * table[i] * light_source[i - offset]
 			# remove either M or S for dichromacy
 			if (m1 != l1):
-				table_m += wl_to_s(w, m1) * table[i] * light_source[i - offset]
+				table_m += vpt(w, m1) * table[i] * light_source[i - offset]
 			if (s1 != m1):
-				table_s += wl_to_s(w, s1) * table[i] * light_source[i - offset]
+				table_s += vpt(w, s1) * table[i] * light_source[i - offset]
 			
 			# brightness
 			brightness += sensitivity(w, c=args.cutoff) * table[i] * light_source[i - offset]
@@ -268,17 +251,17 @@ def spectral_rendering(table, light_source=wp/100, start=340):
 		for i in range(wp.shape[0]):
 			w = i*10 + ls_start
 			if (w >= args.cutoff):
-				white_l += wl_to_s(w, l1) * wp[i]
-				white_m += wl_to_s(w, m1) * wp[i]
-				white_s += wl_to_s(w, s1) * wp[i]
+				white_l += vpt(w, l1) * wp[i]
+				white_m += vpt(w, m1) * wp[i]
+				white_s += vpt(w, s1) * wp[i]
 		wx = (white_l - white_s) / (white_l + white_m + white_s)
 		wy = (white_m - white_l - white_s) / (white_l + white_m + white_s)
 		
 		for i in range(args.cutoff, 800):
-			x1 = (wl_to_s(match, l1) - wl_to_s(match, s1)) / (wl_to_s(match, l1) + wl_to_s(match, m1) + wl_to_s(match, s1))
-			y1 = (wl_to_s(match, m1) - wl_to_s(match, l1) - wl_to_s(match, s1)) / (wl_to_s(match, l1) + wl_to_s(match, m1) + wl_to_s(match, s1))
-			x2 = (wl_to_s(i, l1) - wl_to_s(i, s1)) / (wl_to_s(i, l1) + wl_to_s(i, m1) + wl_to_s(i, s1))
-			y2 = (wl_to_s(i, m1) - wl_to_s(i, l1) - wl_to_s(i, s1)) / (wl_to_s(i, l1) + wl_to_s(i, m1) + wl_to_s(i, s1))
+			x1 = (vpt(match, l1) - vpt(match, s1)) / (vpt(match, l1) + vpt(match, m1) + vpt(match, s1))
+			y1 = (vpt(match, m1) - vpt(match, l1) - vpt(match, s1)) / (vpt(match, l1) + vpt(match, m1) + vpt(match, s1))
+			x2 = (vpt(i, l1) - vpt(i, s1)) / (vpt(i, l1) + vpt(i, m1) + vpt(i, s1))
+			y2 = (vpt(i, m1) - vpt(i, l1) - vpt(i, s1)) / (vpt(i, l1) + vpt(i, m1) + vpt(i, s1))
 			d1 = np.linalg.norm(np.cross(np.asarray((wx, wy)) - np.asarray((x0, y0)), np.asarray((x0, y0)) - np.asarray((x1, y1)))) / np.linalg.norm(np.asarray((wx, wy)) - np.asarray((x0, y0)))
 			d2 = np.linalg.norm(np.cross(np.asarray((wx, wy)) - np.asarray((x0, y0)), np.asarray((x0, y0)) - np.asarray((x2, y2)))) / np.linalg.norm(np.asarray((wx, wy)) - np.asarray((x0, y0)))
 			
@@ -313,8 +296,8 @@ def spectral_rendering(table, light_source=wp/100, start=340):
 		
 		match = args.cutoff
 		for i in range(args.cutoff, 800):
-			diff0 = abs(table_l / table_s - wl_to_s(match, l1) / wl_to_s(match, s1))
-			diff1 = abs(table_l / table_s - wl_to_s(i, l1) / wl_to_s(i, s1))
+			diff0 = abs(table_l / table_s - vpt(match, l1) / vpt(match, s1))
+			diff1 = abs(table_l / table_s - vpt(i, l1) / vpt(i, s1))
 			if (diff1 < diff0):
 				match = i
 		print("Matching wavelength: " + str(match))
@@ -325,8 +308,8 @@ def spectral_rendering(table, light_source=wp/100, start=340):
 		for i in range(wp.shape[0]):
 			w = i*10 + ls_start
 			if (w >= args.cutoff):
-				white_l += wl_to_s(w, l1) * wp[i]
-				white_s += wl_to_s(w, s1) * wp[i]
+				white_l += vpt(w, l1) * wp[i]
+				white_s += vpt(w, s1) * wp[i]
 		dist = pos - (white_l - white_s) / (white_l + white_s)
 		print("Position on color line: " + str(round(pos, 5)))
 		print("Distance from white point: " + str(round(dist, 5)))
@@ -404,32 +387,75 @@ def spectral_rendering(table, light_source=wp/100, start=340):
 	# return brightness for comparisons
 	return(brightness)
 
+# contrast sensitivity (Vorobyev and Osorio (1998); Vorobyev and Osorio (2001))
+def color_contrast(q1, q2):
+	# differences
+	dfl = math.log(q1[0] / q2[0])
+	dfm = math.log(q1[1] / q2[1])
+	dfs = math.log(q1[2] / q2[2])
+	
+	if (l1 != m1):
+		delta_s = (ws**2*(dfl - dfm)**2 + wm**2*(dfl - dfs)**2 + wl**2*(dfs - dfm)**2) / ((wl*wm)**2 + (wl*ws)**2 + (wm*ws)**2)
+	else:
+		delta_s = (dfl - dfs)**2 / (wl**2 + ws**2)
+	return math.sqrt(delta_s)
+
+def brightness_contrast(q1, q2):
+	# differences
+	if (l1 != m1):
+		df = math.log((args.lb*q1[0] + args.mb*q1[1]) / (args.lb*q2[0] + args.mb*q2[1]))
+	else:
+		df = math.log(q1[0] / q2[0])
+	delta_s = abs(df / wl)
+	return math.sqrt(delta_s)
+
+# print specified information
 print("L: " + str(l1) + ", M: " + str(m1) + ", S: " + str(s1) + ", rod: " + str(rod))
 print("")
 
-xvalues = np.empty(400)
-lvalues = np.empty(400)
-mvalues = np.empty(400)
-svalues = np.empty(400)
-for i in range(0, 400):
-	xvalues[i] = i + 300
-	lvalues[i] = wl_to_s(i+300, l1)
-	mvalues[i] = wl_to_s(i+300, m1)
-	svalues[i] = wl_to_s(i+300, s1)
+# plot visual pigment templates
+if (args.vpt):
+	xvalues = np.empty(400)
+	lvalues = np.empty(400)
+	mvalues = np.empty(400)
+	svalues = np.empty(400)
+	rvalues = np.empty(400)
+	for i in range(0, 400):
+		xvalues[i] = i + 300
+		lvalues[i] = vpt(i+300, l1)
+		mvalues[i] = vpt(i+300, m1)
+		svalues[i] = vpt(i+300, s1)
+		rvalues[i] = vpt(i+300, rod)
 
-plt.plot(xvalues, lvalues)
-plt.plot(xvalues, mvalues)
-plt.plot(xvalues, svalues)
-plt.show()
+	plt.plot(xvalues, lvalues, 'r')
+	# don't plot redundant curves
+	if (l1 != m1):
+		plt.plot(xvalues, mvalues, 'g')
+	if (m1 != s1):
+		plt.plot(xvalues, svalues, 'b')
+	plt.plot(xvalues, rvalues, ':k')
+	plt.xlabel("Wavelength (nm)")
+	plt.ylabel("Relative sensitivity")
+	
+	plt.show()
 
 # maximum sensitivity
 if (args.peak):
+	xvalues = np.empty(500)
+	yvalues = np.empty(500)
 	ms = 300
 	for i in range(300, 800):
 		if (sensitivity(i, c=args.cutoff) > (sensitivity(ms, c=args.cutoff))):
 			ms = i
+		xvalues[i-300] = i
+		yvalues[i-300] = sensitivity(i, c=args.cutoff)
 	print("Maximum sensitivity: " + str(ms))
 	print("")
+	
+	plt.plot(xvalues, yvalues, 'k')
+	plt.xlabel("Wavelength (nm)")
+	plt.ylabel("Relative sensitivity")
+	plt.show()
 
 # primary/secondary colors
 if (args.primaries):
@@ -463,113 +489,113 @@ if (args.primaries):
 	# are bunched together and the "canonical" dunnart triangle suggests they
 	# should be more spread out.
 	r = 300
-		for i in range(30, 80):
-			rx = (wl_to_s(r, l1) - wl_to_s(r, s1)) / (wl_to_s(r, l1) + wl_to_s(r, m1) + wl_to_s(r, s1))
-			ry = (wl_to_s(r, m1) - wl_to_s(r, l1) - wl_to_s(r, s1)) / (wl_to_s(r, l1) + wl_to_s(r, m1) + wl_to_s(r, s1))
-			ix = (wl_to_s(i*10, l1) - wl_to_s(i*10, s1)) / (wl_to_s(i*10, l1) + wl_to_s(i*10, m1) + wl_to_s(i*10, s1))
-			iy = (wl_to_s(i*10, m1) - wl_to_s(i*10, l1) - wl_to_s(i*10, s1)) / (wl_to_s(i*10, l1) + wl_to_s(i*10, m1) + wl_to_s(i*10, s1))
-			ix1 = (wl_to_s((i-1)*10, l1) - wl_to_s((i-1)*10, s1)) / (wl_to_s((i-1)*10, l1) + wl_to_s((i-1)*10, m1) + wl_to_s((i-1)*10, s1))
-			iy1 = (wl_to_s((i-1)*10, m1) - wl_to_s((i-1)*10, l1) - wl_to_s((i-1)*10, s1)) / (wl_to_s((i-1)*10, l1) + wl_to_s((i-1)*10, m1) + wl_to_s((i-1)*10, s1))
-			ix2 = (wl_to_s((i+1)*10, l1) - wl_to_s((i+1)*10, s1)) / (wl_to_s((i+1)*10, l1) + wl_to_s((i+1)*10, m1) + wl_to_s((i+1)*10, s1))
-			iy2 = (wl_to_s((i+1)*10, m1) - wl_to_s((i+1)*10, l1) - wl_to_s((i+1)*10, s1)) / (wl_to_s((i+1)*10, l1) + wl_to_s((i+1)*10, m1) + wl_to_s((i+1)*10, s1))
-			diff0 = round(abs(math.dist((1, -1), (rx, ry))), 1) # distance to triangle vertex
-			diff1 = round(abs(math.dist((1, -1), (ix, iy))), 1)
-			diff2 = round(abs(math.dist((ix1, iy1), (ix, iy))), 1) # distance to previous
-			diff3 = round(abs(math.dist((ix2, iy2), (ix, iy))), 1) # distance to next
-			if (diff1 < diff0 and diff3 < diff2):
-				r = i*10
+	for i in range(30, 80):
+		rx = (vpt(r, l1) - vpt(r, s1)) / (vpt(r, l1) + vpt(r, m1) + vpt(r, s1))
+		ry = (vpt(r, m1) - vpt(r, l1) - vpt(r, s1)) / (vpt(r, l1) + vpt(r, m1) + vpt(r, s1))
+		ix = (vpt(i*10, l1) - vpt(i*10, s1)) / (vpt(i*10, l1) + vpt(i*10, m1) + vpt(i*10, s1))
+		iy = (vpt(i*10, m1) - vpt(i*10, l1) - vpt(i*10, s1)) / (vpt(i*10, l1) + vpt(i*10, m1) + vpt(i*10, s1))
+		ix1 = (vpt((i-1)*10, l1) - vpt((i-1)*10, s1)) / (vpt((i-1)*10, l1) + vpt((i-1)*10, m1) + vpt((i-1)*10, s1))
+		iy1 = (vpt((i-1)*10, m1) - vpt((i-1)*10, l1) - vpt((i-1)*10, s1)) / (vpt((i-1)*10, l1) + vpt((i-1)*10, m1) + vpt((i-1)*10, s1))
+		ix2 = (vpt((i+1)*10, l1) - vpt((i+1)*10, s1)) / (vpt((i+1)*10, l1) + vpt((i+1)*10, m1) + vpt((i+1)*10, s1))
+		iy2 = (vpt((i+1)*10, m1) - vpt((i+1)*10, l1) - vpt((i+1)*10, s1)) / (vpt((i+1)*10, l1) + vpt((i+1)*10, m1) + vpt((i+1)*10, s1))
+		diff0 = round(abs(math.dist((1, -1), (rx, ry))), 1) # distance to triangle vertex
+		diff1 = round(abs(math.dist((1, -1), (ix, iy))), 1)
+		diff2 = round(abs(math.dist((ix1, iy1), (ix, iy))), 1) # distance to previous
+		diff3 = round(abs(math.dist((ix2, iy2), (ix, iy))), 1) # distance to next
+		if (diff1 < diff0 and diff3 < diff2):
+			r = i*10
+	
+	g = 300
+	for i in range(30, 80):
+		gx = (vpt(g, l1) - vpt(g, s1)) / (vpt(g, l1) + vpt(g, m1) + vpt(g, s1))
+		gy = (vpt(g, m1) - vpt(g, l1) - vpt(g, s1)) / (vpt(g, l1) + vpt(g, m1) + vpt(g, s1))
+		ix = (vpt(i*10, l1) - vpt(i*10, s1)) / (vpt(i*10, l1) + vpt(i*10, m1) + vpt(i*10, s1))
+		iy = (vpt(i*10, m1) - vpt(i*10, l1) - vpt(i*10, s1)) / (vpt(i*10, l1) + vpt(i*10, m1) + vpt(i*10, s1))
+		diff0 = abs(math.dist((0, 1), (gx, gy)))
+		diff1 = abs(math.dist((0, 1), (ix, iy)))
+		# distance to LM line: "green" is not only the closest point to the
+		# M vertex but seems to be found on the LM side of the triangle.
+		# For humans, the closest point is around 510-520 nm but is not on
+		# the LM line, whereas the closest point that is on the line is
+		# well within the range recognized as "green". For marsupial color
+		# spaces with UV cones, the closest point also lies on the line
+		# and is thus a primary color.
+		diffrg = round(np.linalg.norm(np.cross((1, -1) - np.asarray((0, 1)), np.asarray((0, 1)) - np.asarray((ix, iy)))) / np.linalg.norm(np.asarray((1, -1)) - np.asarray((0, 1))), 2)
+		if (diff1 < diff0 and diffrg == 0):
+			g = i*10
+	
+	# The "blue" we get for human/primate values is really a violet. The
+	# issue may be similar to green.
+	b = 800
+	for i in range(30, 80):
+		bx = (vpt(b, l1) - vpt(b, s1)) / (vpt(b, l1) + vpt(b, m1) + vpt(b, s1))
+		by = (vpt(b, m1) - vpt(b, l1) - vpt(b, s1)) / (vpt(b, l1) + vpt(b, m1) + vpt(b, s1))
+		ix = (vpt(i*10, l1) - vpt(i*10, s1)) / (vpt(i*10, l1) + vpt(i*10, m1) + vpt(i*10, s1))
+		iy = (vpt(i*10, m1) - vpt(i*10, l1) - vpt(i*10, s1)) / (vpt(i*10, l1) + vpt(i*10, m1) + vpt(i*10, s1))
+		diff0 = round(abs(math.dist((-1, -1), (bx, by))), 2)
+		diff1 = round(abs(math.dist((-1, -1), (ix, iy))), 2)
+		if (diff1 < diff0):
+			b = i*10
+	
+	# secondaries
+	# As in the study, these are found by drawing a line from the corresponding
+	# primary through the white point and finding the nearest wavelength to
+	# the other end of the line. This is easy to do by hand but surprisingly
+	# difficult to do in Python. The np.polyfit/Polynomial.fit method does not
+	# work. How hard is it to find a line passing through two points? I don't
+	# get it.
+	white_l = 0
+	white_m = 0
+	white_s = 0
+	for i in range(0, 50):
+		w = i*10 + 340
+		if (w >= args.cutoff):
+			white_l += vpt(w, l1) * wp[i]
+			white_m += vpt(w, m1) * wp[i]
+			white_s += vpt(w, s1) * wp[i]
+	
+	c = s1
+	x1 = (vpt(r, l1) - vpt(r, s1)) / (vpt(r, l1) + vpt(r, m1) + vpt(r, s1))
+	y1 = (vpt(r, m1) - vpt(r, l1) - vpt(r, s1)) / (vpt(r, l1) + vpt(r, m1) + vpt(r, s1))
+	x2 = (white_l - white_s) / (white_l + white_m + white_s)
+	y2 = (white_m - white_l - white_s) / (white_l + white_m + white_s)
+	xy1 = (x1, y1)
+	xy2 = (x2, y2)
+	
+	for i in range(int(s1/5), int(m1/5)):
+		x3 = (vpt(c, l1) - vpt(c, s1)) / (vpt(c, l1) + vpt(c, m1) + vpt(c, s1))
+		y3 = (vpt(c, m1) - vpt(c, l1) - vpt(c, s1)) / (vpt(c, l1) + vpt(c, m1) + vpt(c, s1))
+		x4 = (vpt(i*5, l1) - vpt(i*5, s1)) / (vpt(i*5, l1) + vpt(i*5, m1) + vpt(i*5, s1))
+		y4 = (vpt(i*5, m1) - vpt(i*5, l1) - vpt(i*5, s1)) / (vpt(i*5, l1) + vpt(i*5, m1) + vpt(i*5, s1))
 		
-		g = 300
-		for i in range(30, 80):
-			gx = (wl_to_s(g, l1) - wl_to_s(g, s1)) / (wl_to_s(g, l1) + wl_to_s(g, m1) + wl_to_s(g, s1))
-			gy = (wl_to_s(g, m1) - wl_to_s(g, l1) - wl_to_s(g, s1)) / (wl_to_s(g, l1) + wl_to_s(g, m1) + wl_to_s(g, s1))
-			ix = (wl_to_s(i*10, l1) - wl_to_s(i*10, s1)) / (wl_to_s(i*10, l1) + wl_to_s(i*10, m1) + wl_to_s(i*10, s1))
-			iy = (wl_to_s(i*10, m1) - wl_to_s(i*10, l1) - wl_to_s(i*10, s1)) / (wl_to_s(i*10, l1) + wl_to_s(i*10, m1) + wl_to_s(i*10, s1))
-			diff0 = abs(math.dist((0, 1), (gx, gy)))
-			diff1 = abs(math.dist((0, 1), (ix, iy)))
-			# distance to LM line: "green" is not only the closest point to the
-			# M vertex but seems to be found on the LM side of the triangle.
-			# For humans, the closest point is around 510-520 nm but is not on
-			# the LM line, whereas the closest point that is on the line is
-			# well within the range recognized as "green". For marsupial color
-			# spaces with UV cones, the closest point also lies on the line
-			# and is thus a primary color.
-			diffrg = round(np.linalg.norm(np.cross((1, -1) - np.asarray((0, 1)), np.asarray((0, 1)) - np.asarray((ix, iy)))) / np.linalg.norm(np.asarray((1, -1)) - np.asarray((0, 1))), 2)
-			if (diff1 < diff0 and diffrg == 0):
-				g = i*10
-		
-		# The "blue" we get for human/primate values is really a violet. The
-		# issue may be similar to green.
-		b = 800
-		for i in range(30, 80):
-			bx = (wl_to_s(b, l1) - wl_to_s(b, s1)) / (wl_to_s(b, l1) + wl_to_s(b, m1) + wl_to_s(b, s1))
-			by = (wl_to_s(b, m1) - wl_to_s(b, l1) - wl_to_s(b, s1)) / (wl_to_s(b, l1) + wl_to_s(b, m1) + wl_to_s(b, s1))
-			ix = (wl_to_s(i*10, l1) - wl_to_s(i*10, s1)) / (wl_to_s(i*10, l1) + wl_to_s(i*10, m1) + wl_to_s(i*10, s1))
-			iy = (wl_to_s(i*10, m1) - wl_to_s(i*10, l1) - wl_to_s(i*10, s1)) / (wl_to_s(i*10, l1) + wl_to_s(i*10, m1) + wl_to_s(i*10, s1))
-			diff0 = round(abs(math.dist((-1, -1), (bx, by))), 2)
-			diff1 = round(abs(math.dist((-1, -1), (ix, iy))), 2)
-			if (diff1 < diff0):
-				b = i*10
-		
-		# secondaries
-		# As in the study, these are found by drawing a line from the corresponding
-		# primary through the white point and finding the nearest wavelength to
-		# the other end of the line. This is easy to do by hand but surprisingly
-		# difficult to do in Python. The np.polyfit/Polynomial.fit method does not
-		# work. How hard is it to find a line passing through two points? I don't
-		# get it.
-		white_l = 0
-		white_m = 0
-		white_s = 0
-		for i in range(0, 50):
-			w = i*10 + 340
-			if (w >= args.cutoff):
-				white_l += wl_to_s(w, l1) * wp[i]
-				white_m += wl_to_s(w, m1) * wp[i]
-				white_s += wl_to_s(w, s1) * wp[i]
-		
-		c = s1
-		x1 = (wl_to_s(r, l1) - wl_to_s(r, s1)) / (wl_to_s(r, l1) + wl_to_s(r, m1) + wl_to_s(r, s1))
-		y1 = (wl_to_s(r, m1) - wl_to_s(r, l1) - wl_to_s(r, s1)) / (wl_to_s(r, l1) + wl_to_s(r, m1) + wl_to_s(r, s1))
-		x2 = (white_l - white_s) / (white_l + white_m + white_s)
-		y2 = (white_m - white_l - white_s) / (white_l + white_m + white_s)
-		xy1 = (x1, y1)
-		xy2 = (x2, y2)
-		
-		for i in range(int(s1/5), int(m1/5)):
-			x3 = (wl_to_s(c, l1) - wl_to_s(c, s1)) / (wl_to_s(c, l1) + wl_to_s(c, m1) + wl_to_s(c, s1))
-			y3 = (wl_to_s(c, m1) - wl_to_s(c, l1) - wl_to_s(c, s1)) / (wl_to_s(c, l1) + wl_to_s(c, m1) + wl_to_s(c, s1))
-			x4 = (wl_to_s(i*5, l1) - wl_to_s(i*5, s1)) / (wl_to_s(i*5, l1) + wl_to_s(i*5, m1) + wl_to_s(i*5, s1))
-			y4 = (wl_to_s(i*5, m1) - wl_to_s(i*5, l1) - wl_to_s(i*5, s1)) / (wl_to_s(i*5, l1) + wl_to_s(i*5, m1) + wl_to_s(i*5, s1))
-			
-			d3 = np.linalg.norm(np.cross((x2, y2) - np.asarray((x1, y1)), np.asarray((x1, y1)) - np.asarray((x3, y3)))) / np.linalg.norm(np.asarray((x2, y2)) - np.asarray((x1, y1)))
-			d4 = np.linalg.norm(np.cross((x2, y2) - np.asarray((x1, y1)), np.asarray((x1, y1)) - np.asarray((x4, y4)))) / np.linalg.norm(np.asarray((x2, y2)) - np.asarray((x1, y1)))
+		d3 = np.linalg.norm(np.cross((x2, y2) - np.asarray((x1, y1)), np.asarray((x1, y1)) - np.asarray((x3, y3)))) / np.linalg.norm(np.asarray((x2, y2)) - np.asarray((x1, y1)))
+		d4 = np.linalg.norm(np.cross((x2, y2) - np.asarray((x1, y1)), np.asarray((x1, y1)) - np.asarray((x4, y4)))) / np.linalg.norm(np.asarray((x2, y2)) - np.asarray((x1, y1)))
 
-			if (d4 < d3):
-				c = i*5
+		if (d4 < d3):
+			c = i*5
+	
+	y = m1
+	x1 = (vpt(b, l1) - vpt(b, s1)) / (vpt(b, l1) + vpt(b, m1) + vpt(b, s1))
+	y1 = (vpt(b, m1) - vpt(b, l1) - vpt(b, s1)) / (vpt(b, l1) + vpt(b, m1) + vpt(b, s1))
 		
-		y = m1
-		x1 = (wl_to_s(b, l1) - wl_to_s(b, s1)) / (wl_to_s(b, l1) + wl_to_s(b, m1) + wl_to_s(b, s1))
-		y1 = (wl_to_s(b, m1) - wl_to_s(b, l1) - wl_to_s(b, s1)) / (wl_to_s(b, l1) + wl_to_s(b, m1) + wl_to_s(b, s1))
+	for i in range(int(m1/5), 160):
+		x3 = (vpt(y, l1) - vpt(y, s1)) / (vpt(y, l1) + vpt(y, m1) + vpt(y, s1))
+		y3 = (vpt(y, m1) - vpt(y, l1) - vpt(y, s1)) / (vpt(y, l1) + vpt(y, m1) + vpt(y, s1))
+		x4 = (vpt(i*5, l1) - vpt(i*5, s1)) / (vpt(i*5, l1) + vpt(i*5, m1) + vpt(i*5, s1))
+		y4 = (vpt(i*5, m1) - vpt(i*5, l1) - vpt(i*5, s1)) / (vpt(i*5, l1) + vpt(i*5, m1) + vpt(i*5, s1))
 			
-		for i in range(int(m1/5), 160):
-			x3 = (wl_to_s(y, l1) - wl_to_s(y, s1)) / (wl_to_s(y, l1) + wl_to_s(y, m1) + wl_to_s(y, s1))
-			y3 = (wl_to_s(y, m1) - wl_to_s(y, l1) - wl_to_s(y, s1)) / (wl_to_s(y, l1) + wl_to_s(y, m1) + wl_to_s(y, s1))
-			x4 = (wl_to_s(i*5, l1) - wl_to_s(i*5, s1)) / (wl_to_s(i*5, l1) + wl_to_s(i*5, m1) + wl_to_s(i*5, s1))
-			y4 = (wl_to_s(i*5, m1) - wl_to_s(i*5, l1) - wl_to_s(i*5, s1)) / (wl_to_s(i*5, l1) + wl_to_s(i*5, m1) + wl_to_s(i*5, s1))
-				
-			d3 = np.linalg.norm(np.cross((x2, y2) - np.asarray((x1, y1)), np.asarray((x1, y1)) - np.asarray((x3, y3)))) / np.linalg.norm(np.asarray((x2, y2)) - np.asarray((x1, y1)))
-			d4 = np.linalg.norm(np.cross((x2, y2) - np.asarray((x1, y1)), np.asarray((x1, y1)) - np.asarray((x4, y4)))) / np.linalg.norm(np.asarray((x2, y2)) - np.asarray((x1, y1)))
-				
-			if (d4 < d3):
-				y = i*5
+		d3 = np.linalg.norm(np.cross((x2, y2) - np.asarray((x1, y1)), np.asarray((x1, y1)) - np.asarray((x3, y3)))) / np.linalg.norm(np.asarray((x2, y2)) - np.asarray((x1, y1)))
+		d4 = np.linalg.norm(np.cross((x2, y2) - np.asarray((x1, y1)), np.asarray((x1, y1)) - np.asarray((x4, y4)))) / np.linalg.norm(np.asarray((x2, y2)) - np.asarray((x1, y1)))
 			
-		print("Estimated primary colors based on color triangle:")
-		print("red: " + str(r))
-		print("yellow: " + str(y))
-		print("green: " + str(g))
-		print("cyan: " + str(c))
-		print("blue: " + str(b))
+		if (d4 < d3):
+			y = i*5
+		
+	print("Estimated primary colors based on color triangle:")
+	print("red: " + str(r))
+	print("yellow: " + str(y))
+	print("green: " + str(g))
+	print("cyan: " + str(c))
+	print("blue: " + str(b))
 	
 # plot color triangle
 # Now a real Maxwell triangle with Cartesian coordinates.
@@ -587,15 +613,15 @@ if (args.triangle):
 	for i in range(0, 37):
 		w = i*10 + 340
 		labels[i] = w
-		el += wl_to_s(w, l1) * e[i]
-		em += wl_to_s(w, m1) * e[i]
-		es += wl_to_s(w, s1) * e[i]
-		d65l += wl_to_s(w, l1) * d65[i]
-		d65m += wl_to_s(w, m1) * d65[i]
-		d65s += wl_to_s(w, s1) * d65[i]
-		l = wl_to_s(w, l1) / (wl_to_s(w, l1) + wl_to_s(w, m1) + wl_to_s(w, s1))
-		m = wl_to_s(w, m1) / (wl_to_s(w, l1) + wl_to_s(w, m1) + wl_to_s(w, s1))
-		s = wl_to_s(w, s1) / (wl_to_s(w, l1) + wl_to_s(w, m1) + wl_to_s(w, s1))
+		el += vpt(w, l1) * e[i]
+		em += vpt(w, m1) * e[i]
+		es += vpt(w, s1) * e[i]
+		d65l += vpt(w, l1) * d65[i]
+		d65m += vpt(w, m1) * d65[i]
+		d65s += vpt(w, s1) * d65[i]
+		l = vpt(w, l1) / (vpt(w, l1) + vpt(w, m1) + vpt(w, s1))
+		m = vpt(w, m1) / (vpt(w, l1) + vpt(w, m1) + vpt(w, s1))
+		s = vpt(w, s1) / (vpt(w, l1) + vpt(w, m1) + vpt(w, s1))
 		xvalues[i] = math.sqrt(1/2)*(l - s)
 		yvalues[i] = math.sqrt(2/3)*(m - (l + s)/2)
 	plt.plot(xvalues, yvalues, '-k')
@@ -618,80 +644,9 @@ if (args.triangle):
 	plt.text(0 - 0.025, math.sqrt(2/3) + 0.0125, 'M')
 	plt.text(math.sqrt(1/2) + 0.0125, -math.sqrt(2/3)/2 - 0.025, 'L')
 	plt.show()
-	
-	# Wow, I can't believe it's not a wavelength discrimination function! This
-	# looks surprisingly like the "real thing" despite having nothing to do with
-	# how it's supposed to be constructed.
-	distmax = 0
-	for i in range(340, 700):
-		# normalize to unity
-		tcur = wl_to_s(i, l1) + wl_to_s(i, m1) + wl_to_s(i, s1)
-		lcur = wl_to_s(i, l1) / tcur
-		mcur = wl_to_s(i, m1) / tcur
-		scur = wl_to_s(i, s1) / tcur
-		tnext = wl_to_s(i+1, l1) + wl_to_s(i+1, m1) + wl_to_s(i+1, s1)
-		lnext = wl_to_s(i+1, l1) / tnext
-		mnext = wl_to_s(i+1, m1) / tnext
-		snext = wl_to_s(i+1, s1) / tnext
-		xcur = math.sqrt(1/2)*(lcur - scur)
-		ycur = math.sqrt(2/3)*(mcur - 0.5*(lcur + scur))
-		xnext = math.sqrt(1/2)*(lnext - snext)
-		ynext = math.sqrt(2/3)*(mnext - 0.5*(lnext + snext))
-		dist = math.dist((xcur, ycur), (xnext, ynext))
-		distmax = max(distmax, dist)
-	
-	lvalues = np.empty(360)
-	dlvalues = np.empty(360)
-	for i in range(340, 700):
-		lvalues[i-340] = i
-		
-		tcur = wl_to_s(i, l1) + wl_to_s(i, m1) + wl_to_s(i, s1)
-		lcur = wl_to_s(i, l1) / tcur
-		mcur = wl_to_s(i, m1) / tcur
-		scur = wl_to_s(i, s1) / tcur
-		xcur = math.sqrt(1/2)*(lcur - scur)
-		ycur = math.sqrt(2/3)*(mcur - 0.5*(lcur + scur))
-		
-		dl0 = 0
-		while True:
-			tnext = wl_to_s(i-dl0, l1) + wl_to_s(i-dl0, m1) + wl_to_s(i-dl0, s1)
-			lnext = wl_to_s(i-dl0, l1) / tnext
-			mnext = wl_to_s(i-dl0, m1) / tnext
-			snext = wl_to_s(i-dl0, s1) / tnext
-			xnext = math.sqrt(1/2)*(lnext - snext)
-			ynext = math.sqrt(2/3)*(mnext - 0.5*(lnext + snext))
-			dist = math.dist((xcur, ycur), (xnext, ynext))
-			if (dist >= distmax):
-				break
-			if (i-dl0 <= 300): # stop here
-				dl0 = float('inf')
-				break
-			dl0 += 0.01
-		
-		dl1 = 0
-		while True:
-			tnext = wl_to_s(i+dl1, l1) + wl_to_s(i+dl1, m1) + wl_to_s(i+dl1, s1)
-			lnext = wl_to_s(i+dl1, l1) / tnext
-			mnext = wl_to_s(i+dl1, m1) / tnext
-			snext = wl_to_s(i+dl1, s1) / tnext
-			xnext = math.sqrt(1/2)*(lnext - snext)
-			ynext = math.sqrt(2/3)*(mnext - 0.5*(lnext + snext))
-			dist = math.dist((xcur, ycur), (xnext, ynext))
-			if (dist >= distmax):
-				break
-			if (i+dl1 >= 700): # stop here
-				dl1 = float('inf')
-				break
-			dl1 += 0.01
-		
-		dlvalues[i-340] = min(dl0, dl1)
-	
-	plt.plot(lvalues, dlvalues, '-k')
-	plt.ylabel('Δλ (nm)')
-	plt.xlabel("Wavelength (nm)")
-	plt.show()
-	
-	# receptor noise-scaled version
+
+# receptor noise-scaled version
+if (args.triangle1):
 	el = 0
 	em = 0
 	es = 0
@@ -702,10 +657,6 @@ if (args.triangle):
 	yvalues = np.empty(37)
 	labels = np.empty(37)
 	
-	# Weber fractions
-	wl = args.weber
-	wm = wl * math.sqrt(10) / math.sqrt(5)
-	ws = wl * math.sqrt(10) / math.sqrt(1)
 	a = ws**2 / (ws**2 + wl**2)
 	b = wl**2 / (ws**2 + wl**2)
 	A = math.sqrt(1 / (ws**2 + wl**2))
@@ -714,15 +665,15 @@ if (args.triangle):
 	for i in range(0, 37):
 		w = i*10 + 340
 		labels[i] = w
-		el += wl_to_s(w, l1) * e[i]
-		em += wl_to_s(w, m1) * e[i]
-		es += wl_to_s(w, s1) * e[i]
-		d65l += wl_to_s(w, l1) * d65[i]
-		d65m += wl_to_s(w, m1) * d65[i]
-		d65s += wl_to_s(w, s1) * d65[i]
-		fl = math.log(wl_to_s(w, l1) / (wl_to_s(w, l1) + wl_to_s(w, m1) + wl_to_s(w, s1)))
-		fm = math.log(wl_to_s(w, m1) / (wl_to_s(w, l1) + wl_to_s(w, m1) + wl_to_s(w, s1)))
-		fs = math.log(wl_to_s(w, s1) / (wl_to_s(w, l1) + wl_to_s(w, m1) + wl_to_s(w, s1)))
+		el += vpt(w, l1) * e[i]
+		em += vpt(w, m1) * e[i]
+		es += vpt(w, s1) * e[i]
+		d65l += vpt(w, l1) * d65[i]
+		d65m += vpt(w, m1) * d65[i]
+		d65s += vpt(w, s1) * d65[i]
+		fl = math.log(vpt(w, l1) / (vpt(w, l1) + vpt(w, m1) + vpt(w, s1)))
+		fm = math.log(vpt(w, m1) / (vpt(w, l1) + vpt(w, m1) + vpt(w, s1)))
+		fs = math.log(vpt(w, s1) / (vpt(w, l1) + vpt(w, m1) + vpt(w, s1)))
 		xvalues[i] = A*(fl - fs)
 		yvalues[i] = B*(fm - (a*fl + b*fs))
 	plt.plot(xvalues, yvalues, '-k')
@@ -751,62 +702,6 @@ if (args.triangle):
 	#plt.text(0 - 0.025, math.sqrt(2/3) + 0.0125, 'M')
 	#plt.text(math.sqrt(1/2) + 0.0125, -math.sqrt(2/3)/2 - 0.025, 'L')
 	plt.show()
-		
-		# This doesn't work.
-#		distmax = 0
-#		for i in range(340, 700):
-#			# normalize to unity
-#			tcur = wl_to_s(i, l1) + wl_to_s(i, m1) + wl_to_s(i, s1)
-#			flcur = math.log(wl_to_s(i, l1) / tcur)
-#			fmcur = math.log(wl_to_s(i, m1) / tcur)
-#			fscur = math.log(wl_to_s(i, s1) / tcur)
-#			tnext = wl_to_s(i+1, l1) + wl_to_s(i+1, m1) + wl_to_s(i+1, s1)
-#			flnext = math.log(wl_to_s(i+1, l1) / tnext)
-#			fmnext = math.log(wl_to_s(i+1, m1) / tnext)
-#			fsnext = math.log(wl_to_s(i+1, s1) / tnext)
-#			xcur = A*(flcur - fscur)
-#			ycur = B*(fmcur - (a*flcur + b*fscur))
-#			xnext = A*(flnext - fsnext)
-#			ynext = B*(fmnext - (a*flnext + b*fsnext))
-#			dist = math.dist((xcur, ycur), (xnext, ynext))
-#			distmax = max(distmax, dist)
-#		
-#		lvalues = np.empty(361)
-#		dlvalues = np.empty(361)
-#		for i in range(340, 700):
-#			lvalues[i-340] = i
-#			 
-#			tcur = wl_to_s(i, l1) + wl_to_s(i, m1) + wl_to_s(i, s1)
-#			flcur = math.log(wl_to_s(i, l1) / tcur)
-#			fmcur = math.log(wl_to_s(i, m1) / tcur)
-#			fscur = math.log(wl_to_s(i, s1) / tcur)
-#			xcur = A*(flcur - fscur)
-#			ycur = B*(fmcur - (a*flcur + b*fscur))
-#			
-#			dl = 0
-#			while True:
-#				tnext = wl_to_s(i+1, l1) + wl_to_s(i+1, m1) + wl_to_s(i+1, s1)
-#				flnext = math.log(wl_to_s(i+1, l1) / tnext)
-#				fmnext = math.log(wl_to_s(i+1, m1) / tnext)
-#				fsnext = math.log(wl_to_s(i+1, s1) / tnext)
-#				xnext = A*(flnext - fsnext)
-#				ynext = B*(fmnext - (a*flnext + b*fsnext))
-#				dist = math.dist((xcur, ycur), (xnext, ynext))
-#				if (dist >= distmax):
-#					break
-#				if (i+dl >= 700): # stop here
-#					dl = float('inf')
-#					break
-#				dl += 0.01
-#				print(i)
-#				#print(i+dl)
-#			
-#			dlvalues[i-340] = dl
-#		
-#		plt.plot(lvalues, dlvalues, '-k')
-#		plt.ylabel('Δλ')
-#		plt.xlabel("Wavelength (nm)")
-#		plt.show()
 	
 # plot color hexagon (Chittka 1992)
 # This doesn't quite work as advertised. The shape is supposed to be more of
@@ -825,9 +720,9 @@ if (args.hexagon):
 	t = 0
 	for i in range(wp.shape[0]):
 		w = i*10 + start
-		wpl += wl_to_s(w, l1) * wp[i]
-		wpm += wl_to_s(w, m1) * wp[i]
-		wps += wl_to_s(w, s1) * wp[i]
+		wpl += vpt(w, l1) * wp[i]
+		wpm += vpt(w, m1) * wp[i]
+		wps += vpt(w, s1) * wp[i]
 		t += wp[i]
 	wpl = wpl/t
 	wpm = wpm/t
@@ -842,18 +737,18 @@ if (args.hexagon):
 	
 	# find maximum values
 	for i in range(0, 41):
-		lvmax = max((wpl * wl_to_s(i*10 + 300, l1) / (wpl * wl_to_s(i*10 + 300, l1) + 1)), lvmax)
-		mvmax = max((wpm * wl_to_s(i*10 + 300, m1) / (wpm * wl_to_s(i*10 + 300, m1) + 1)), mvmax)
-		svmax = max((wps * wl_to_s(i*10 + 300, s1) / (wps * wl_to_s(i*10 + 300, s1) + 1)), svmax)
+		lvmax = max((wpl * vpt(i*10 + 300, l1) / (wpl * vpt(i*10 + 300, l1) + 1)), lvmax)
+		mvmax = max((wpm * vpt(i*10 + 300, m1) / (wpm * vpt(i*10 + 300, m1) + 1)), mvmax)
+		svmax = max((wps * vpt(i*10 + 300, s1) / (wps * vpt(i*10 + 300, s1) + 1)), svmax)
 		
 	# find coordinates
 	xvalues = np.empty(41)
 	yvalues = np.empty(41)
 	labels = np.empty(41)
 	for i in range(0, 41):
-		le = (wpl * wl_to_s(i*10 + 300, l1) / (wpl * wl_to_s(i*10 + 300, l1) + 1)) / lvmax
-		me = (wpm * wl_to_s(i*10 + 300, m1) / (wpm * wl_to_s(i*10 + 300, m1) + 1)) / mvmax
-		se = (wps * wl_to_s(i*10 + 300, s1) / (wps * wl_to_s(i*10 + 300, s1) + 1)) / svmax
+		le = (wpl * vpt(i*10 + 300, l1) / (wpl * vpt(i*10 + 300, l1) + 1)) / lvmax
+		me = (wpm * vpt(i*10 + 300, m1) / (wpm * vpt(i*10 + 300, m1) + 1)) / mvmax
+		se = (wps * vpt(i*10 + 300, s1) / (wps * vpt(i*10 + 300, s1) + 1)) / svmax
 		yvalues[i] = (me - 0.5*(le + se))
 		xvalues[i] = (math.sqrt(3)/2) * (le - se)
 		labels[i] = i*10 + 300
@@ -878,69 +773,15 @@ if (args.hexagon):
 	plt.text(0 - 0.025, 1 + 0.0125, 'M')
 	plt.text(math.sqrt(3)/2 + 0.0125, -0.5 - 0.025, 'L')
 	plt.show()
-		
-	# wavelength discrimination
-	# This seems to be just as misleading as the triangle version.
-	distmax = 0
-	for i in range(300, 700):
-		lecur = (wpl * wl_to_s(i, l1) / (wpl * wl_to_s(i, l1) + 1)) / lvmax
-		mecur = (wpm * wl_to_s(i, m1) / (wpm * wl_to_s(i, m1) + 1)) / mvmax
-		secur = (wps * wl_to_s(i, s1) / (wps * wl_to_s(i, s1) + 1)) / svmax
-		lenext = (wpl * wl_to_s(i+1, l1) / (wpl * wl_to_s(i+1, l1) + 1)) / lvmax
-		menext = (wpm * wl_to_s(i+1, m1) / (wpm * wl_to_s(i+1, m1) + 1)) / mvmax
-		senext = (wps * wl_to_s(i+1, s1) / (wps * wl_to_s(i+1, s1) + 1)) / svmax
-		xcur = (math.sqrt(3)/2)*(lecur - secur)
-		ycur = mecur - 0.5*(lecur + secur)
-		xnext = (math.sqrt(3)/2)*(lenext - senext)
-		ynext = menext - 0.5*(lenext + senext)
-		dist = math.dist((xcur, ycur), (xnext, ynext))
-		distmax = max(distmax, dist)
-	
-	lvalues = np.empty(401)
-	dlvalues = np.empty(401)
-	for i in range(300, 700):
-		lvalues[i-300] = i
-		
-		lecur = (wpl * wl_to_s(i, l1) / (wpl * wl_to_s(i, l1) + 1)) / lvmax
-		mecur = (wpm * wl_to_s(i, m1) / (wpm * wl_to_s(i, m1) + 1)) / mvmax
-		secur = (wps * wl_to_s(i, s1) / (wps * wl_to_s(i, s1) + 1)) / svmax
-		xcur = (math.sqrt(3)/2)*(lecur - secur)
-		ycur = mecur - 0.5*(lecur + secur)
-		
-		dl = 1
-		while True:
-			lenext = (wpl * wl_to_s(i+dl, l1) / (wpl * wl_to_s(i+dl, l1) + 1)) / lvmax
-			menext = (wpm * wl_to_s(i+dl, m1) / (wpm * wl_to_s(i+dl, m1) + 1)) / mvmax
-			senext = (wps * wl_to_s(i+dl, s1) / (wps * wl_to_s(i+dl, s1) + 1)) / svmax
-			xnext = (math.sqrt(3)/2)*(lenext - senext)
-			ynext = menext - 0.5*(lenext + senext)
-			dist = math.dist((xcur, ycur), (xnext, ynext))
-			if (dist >= distmax):
-				break
-			if (i+dl >= 700): # stop here
-				dl = float('inf')
-				print("Warning: value for " + str(i) + " set to infinity")
-				break
-			dl += 0.01
-		
-		dlvalues[i-300] = dl
-	
-	plt.plot(lvalues, dlvalues, '-k')
-	plt.ylabel('Δλ (nm)')
-	plt.xlabel("Wavelength (nm)")
-	plt.show()
 	
 # wavelength discrimination take three
 # This is mostly right but for honeybees and butterflies gives an extra minimum
-# where a maximum should be and way too high values on either side of it. I cut
-# the values off at 500 because otherwise the graph is unreadable.
-# It looks much better if I include chromatic adaptation and use the "i" light.
+# where a maximum should be (really an extra peak in the first trough) and way too
+# high values on either side of it. I cut the values off at 500 because otherwise
+# the graph is unreadable.
+# It looks much better if I include chromatic adaptation and use the "i" light. Also
+# better if the white values are divided by 100?
 if (args.wd):
-	# Weber fractions
-	wl = args.weber
-	wm = wl * math.sqrt(10) / math.sqrt(5)
-	ws = wl * math.sqrt(10) / math.sqrt(1)
-		
 	# background light
 	wpl = 0
 	wpm = 0
@@ -952,9 +793,9 @@ if (args.wd):
 	
 	for i in range(wp.shape[0]):
 		w = i*10 + start
-		wpl += wl_to_s(w, l1) * wp[i]/100
-		wpm += wl_to_s(w, m1) * wp[i]/100
-		wps += wl_to_s(w, s1) * wp[i]/100
+		wpl += vpt(w, l1) * wp[i]/1
+		wpm += vpt(w, m1) * wp[i]/1
+		wps += vpt(w, s1) * wp[i]/1
 	kl = 1
 	km = kl / wpm
 	ks = kl / wps
@@ -965,18 +806,18 @@ if (args.wd):
 		xvalues[i-350] = i
 		
 		# derivatives
-		dl1 = wl_to_s(i+0.01, l1) / (wl_to_s(i+0.01, l1) + wl_to_s(i+0.01, m1) + wl_to_s(i+0.01, s1))
-		dm1 = wl_to_s(i+0.01, l1) / (wl_to_s(i+0.01, l1) + wl_to_s(i+0.01, m1) + wl_to_s(i+0.01, s1))
-		ds1 = wl_to_s(i+0.01, s1) / (wl_to_s(i+0.01, l1) + wl_to_s(i+0.01, m1) + wl_to_s(i+0.01, s1))
-		dl2 = wl_to_s(i-0.01, l1) / (wl_to_s(i-0.01, l1) + wl_to_s(i-0.01, m1) + wl_to_s(i-0.01, s1))
-		dm2 = wl_to_s(i-0.01, l1) / (wl_to_s(i-0.01, l1) + wl_to_s(i-0.01, m1) + wl_to_s(i-0.01, s1))
-		ds2 = wl_to_s(i-0.01, s1) / (wl_to_s(i-0.01, l1) + wl_to_s(i-0.01, m1) + wl_to_s(i-0.01, s1))
+		dl1 = vpt(i+0.01, l1) / (vpt(i+0.01, l1) + vpt(i+0.01, m1) + vpt(i+0.01, s1))
+		dm1 = vpt(i+0.01, l1) / (vpt(i+0.01, l1) + vpt(i+0.01, m1) + vpt(i+0.01, s1))
+		ds1 = vpt(i+0.01, s1) / (vpt(i+0.01, l1) + vpt(i+0.01, m1) + vpt(i+0.01, s1))
+		dl2 = vpt(i-0.01, l1) / (vpt(i-0.01, l1) + vpt(i-0.01, m1) + vpt(i-0.01, s1))
+		dm2 = vpt(i-0.01, l1) / (vpt(i-0.01, l1) + vpt(i-0.01, m1) + vpt(i-0.01, s1))
+		ds2 = vpt(i-0.01, s1) / (vpt(i-0.01, l1) + vpt(i-0.01, m1) + vpt(i-0.01, s1))
 		dll = (dl1 - dl2) / 0.02
 		dlm = (dm1 - dm2) / 0.02
 		dls = (ds1 - ds2) / 0.02
-		dfl = (kl / (1 + kl*wl_to_s(i, l1))) * dll
-		dfm = (km / (1 + km*wl_to_s(i, m1))) * dlm
-		dfs = (ks / (1 + ks*wl_to_s(i, s1))) * dls
+		dfl = (kl / (1 + kl*vpt(i, l1))) * dll
+		dfm = (km / (1 + km*vpt(i, m1))) * dlm
+		dfs = (ks / (1 + ks*vpt(i, s1))) * dls
 		
 		v = math.sqrt(((wl*wm)**2 + (wl*ws)**2 + (wm*ws)**2) / (wl**2*(dfm - dfs)**2 + wm**2*(dfl - dfs)**2 + ws**2*(dfm - dfl)**2))
 		if (v > 100):
@@ -1006,6 +847,71 @@ if (args.lighting):
 	
 	print("Incandescent lighting (approximated with 2856 K blackbody spectrum)")
 	spectral_rendering(incandescent, light_source=e, start=300)
+	
+	# color/brightness contrast test
+	le = 0
+	me = 0
+	se = 0
+	ld65 = 0
+	md65 = 0
+	sd65 = 0
+	la = 0
+	ma = 0
+	sa = 0
+	li = 0
+	mi = 0
+	si = 0
+	for i in range(e.shape[0]):
+		le += vpt(i*10+340, l1) * e[i]/100
+		me += vpt(i*10+340, m1) * e[i]/100
+		se += vpt(i*10+340, s1) * e[i]/100
+		ld65 += vpt(i*10+340, l1) * d65[i]/100
+		md65 += vpt(i*10+340, m1) * d65[i]/100
+		sd65 += vpt(i*10+340, s1) * d65[i]/100
+		la += vpt(i*10+340, l1) * a[i]/100
+		ma += vpt(i*10+340, m1) * a[i]/100
+		sa += vpt(i*10+340, s1) * a[i]/100
+	for i in range(incandescent.shape[0]):
+		li += vpt(i*10+300, l1) * incandescent[i]
+		mi += vpt(i*10+300, m1) * incandescent[i]
+		si += vpt(i*10+300, s1) * incandescent[i]
+	te = le + me + se
+	le = le / te
+	me = me / te
+	se = se / te
+	td65 = ld65 + md65 + sd65
+	ld65 = ld65 / td65
+	md65 = md65 / td65
+	sd65 = sd65 / td65
+	ta = la + ma + sa
+	la = la / ta
+	ma = ma / ta
+	sa = sa / ta
+	ti = li + mi + si
+	li = li / ti
+	mi = mi / ti
+	si = si / ti
+	
+	print("Color contrast between E and E: " + str(color_contrast([le, me, se], [le, me, se])))
+	print("Color contrast between E and D65: " + str(color_contrast([le, me, se], [ld65, md65, sd65])))
+	print("Color contrast between E and A: " + str(color_contrast([le, me, se], [la, ma, sa])))
+	print("Color contrast between E and incandescent: " + str(color_contrast([le, me, se], [li, mi, si])))
+	print("Color contrast between D65 and D65: " + str(color_contrast([ld65, md65, sd65], [ld65, md65, sd65])))
+	print("Color contrast between D65 and A: " + str(color_contrast([ld65, md65, sd65], [la, ma, sa])))
+	print("Color contrast between D65 and incandescent: " + str(color_contrast([ld65, md65, sd65], [li, mi, si])))
+	print("Color contrast between A and A: " + str(color_contrast([la, ma, sa], [la, ma, sa])))
+	print("Color contrast between A and incandescent: " + str(color_contrast([la, ma, sa], [li, mi, si])))
+	print("Color contrast between incandescent and incandescent: " + str(color_contrast([li, mi, si], [li, mi, si])))
+	print("Brightness contrast between E and E: " + str(brightness_contrast([le, me, se], [le, me, se])))
+	print("Brightness contrast between E and D65: " + str(brightness_contrast([le, me, se], [ld65, md65, sd65])))
+	print("Brightness contrast between E and A: " + str(brightness_contrast([le, me, se], [la, ma, sa])))
+	print("Brightness contrast between E and incandescent: " + str(brightness_contrast([le, me, se], [li, mi, si])))
+	print("Brightness contrast between D65 and D65: " + str(brightness_contrast([ld65, md65, sd65], [ld65, md65, sd65])))
+	print("Brightness contrast between D65 and A: " + str(brightness_contrast([ld65, md65, sd65], [la, ma, sa])))
+	print("Brightness contrast between D65 and incandescent: " + str(brightness_contrast([ld65, md65, sd65], [li, mi, si])))
+	print("Brightness contrast between A and A: " + str(brightness_contrast([la, ma, sa], [la, ma, sa])))
+	print("Brightness contrast between A and incandescent: " + str(brightness_contrast([la, ma, sa], [li, mi, si])))
+	print("Brightness contrast between incandescent and incandescent: " + str(brightness_contrast([li, mi, si], [li, mi, si])))
 	
 # leaves
 # Again, something is wrong with the XYZ conversions. The LCHab hues kind of make sense
@@ -1134,6 +1040,42 @@ if (args.leaves):
 	])
 	print("Red maple leaf")
 	spectral_rendering(red_leaf_table)
+	
+	# color/brightness contrast test
+	lg = 0
+	mg = 0
+	sg = 0
+	lr = 0
+	mr = 0
+	sr = 0
+	for i in range(leaf_table.shape[0]):
+		w = i*10 + 340
+		lg += vpt(w, l1) * leaf_table[i]
+		mg += vpt(w, m1) * leaf_table[i]
+		sg += vpt(w, s1) * leaf_table[i]
+		lr += vpt(w, l1) * red_leaf_table[i]
+		mr += vpt(w, m1) * red_leaf_table[i]
+		sr += vpt(w, s1) * red_leaf_table[i]
+	if (l1 != m1):
+		tg = lg + mg + sg
+		tr = lr + mr + sr
+	else:
+		tg = lg + sg
+		tr = lr + sr
+	lg = lg / tg
+	mg = mg / tg
+	sg = sg / tg
+	lr = lr / tr
+	mr = mr / tr
+	sr = sr / tr
+	g = [lg, mg, sg]
+	r = [lr, mr, sr]
+	print(g)
+	print(r)
+	
+	print("Color contrast between green and red maple leaves: " + str(color_contrast([lg, mg, sg], [lr, mr, sr])))
+	print("Brightness contrast between green and red maple leaves: " + str(brightness_contrast([lg, mg, sg], [lr, mr, sr])))
+	print("")
 	
 	# corn
 	# estimated from https://www.yorku.ca/planters/photosynthesis/2014_08_15_lab_manual_static_html/images/Corn_leaf_reflectance.png. Values below 400 are estimated to be the same as 400.
@@ -3001,15 +2943,6 @@ if (args.kodak or args.kcheck):
 		print("1.0 + 0.3: " + str(g1003 - b00))
 		print("1.0 + 0.4: " + str(g1004 - b00))
 		print("2.0: " + str(g20 - b00))
-		print("Brightness difference between blue and gray:")
-		print("2.0: " + str(gray20 - b00))
-		print("2.0 + 0.5: " + str(gray2005 - b00))
-		print("2.0 + 0.6: " + str(gray2006 - b00))
-		print("2.0 + 0.7: " + str(gray2007 - b00))
-		print("2.0 + 0.8: " + str(gray2008 - b00))
-		print("2.0 + 0.9: " + str(gray2009 - b00))
-		print("2.0 + 1.0: " + str(gray2010 - b00))
-		print("2.0 + 2.0: " + str(gray2020 - b00))
 	
 	if (args.kodak):
 		# red 25
@@ -3019,9 +2952,6 @@ if (args.kodak or args.kcheck):
 		red25e_0 = np.empty(61)
 		for i in range(0, 61):
 			red25e_0[i] = math.exp(-red25e[i])
-		red25e_01 = np.empty(61)
-		for i in range(0, 61):
-			red25e_01[i] = math.exp(-(red25e[i] + nd01[i]))
 		red25e_03 = np.empty(61)
 		for i in range(0, 61):
 			red25e_03[i] = math.exp(-(red25e[i] + nd03[i]))
@@ -3039,9 +2969,6 @@ if (args.kodak or args.kcheck):
 		yellow15e_0 = np.empty(61)
 		for i in range(0, 61):
 			yellow15e_0[i] = math.exp(-yellow15e[i])
-		yellow15e_01 = np.empty(61)
-		for i in range(0, 61):
-			yellow15e_01[i] = math.exp(-(yellow15e[i] + nd01[i]))
 		yellow15e_03 = np.empty(61)
 		for i in range(0, 61):
 			yellow15e_03[i] = math.exp(-(yellow15e[i] + nd03[i]))
@@ -3059,9 +2986,6 @@ if (args.kodak or args.kcheck):
 		green58e_0 = np.empty(61)
 		for i in range(0, 61):
 			green58e_0[i] = math.exp(-green58e[i])
-		green58e_01 = np.empty(61)
-		for i in range(0, 61):
-			green58e_01[i] = math.exp(-(green58e[i] + nd01[i]))
 		green58e_03 = np.empty(61)
 		for i in range(0, 61):
 			green58e_03[i] = math.exp(-(green58e[i] + nd03[i]))
@@ -3076,9 +3000,6 @@ if (args.kodak or args.kcheck):
 		blue47_0 = np.empty(61)
 		for i in range(0, 61):
 			blue47_0[i] = math.exp(-blue47[i])
-		blue47_01 = np.empty(61)
-		for i in range(0, 61):
-			blue47_01[i] = math.exp(-(blue47[i] + nd01[i]))
 		blue47_03 = np.empty(61)
 		for i in range(0, 61):
 			blue47_03[i] = math.exp(-(blue47[i] + nd03[i]))
