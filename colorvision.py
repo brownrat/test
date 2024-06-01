@@ -24,6 +24,11 @@
 # https://chittkalab.sbcs.qmul.ac.uk/1992/Chittka%201992%20J%20Comp%20Physiol_R.pdf
 # GOVARDOVSKII VI, FYHRQUIST N, REUTER T, KUZMIN DG, DONNER K. In search of the visual pigment template. Visual Neuroscience. 2000;17(4):509-528. doi:10.1017/S0952523800174036
 # https://journals.biologists.com/jeb/article/207/14/2471/14748/Interspecific-and-intraspecific-views-of-color
+# T.D. Lamb, Photoreceptor spectral sensitivities: Common shape in the long-wavelength region, Vision Research, Volume 35, Issue 22, 1995, Pages 3083-3091, ISSN 0042-6989, https://doi.org/10.1016/0042-6989(95)00114-F. (https://www.sciencedirect.com/science/article/pii/004269899500114F)
+# https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3652215/
+# https://royalsocietypublishing.org/doi/10.1098/rspb.1985.0045
+# https://labs.mcdb.ucsb.edu/fisher/steven/pubs/Fisher,Pfeffer&Anderson-1983.pdf
+# Nikonov SS, Kholodenko R, Lem J, Pugh EN Jr. Physiological features of the S- and M-cone photoreceptors of wild-type mice from single-cell recordings. J Gen Physiol. 2006 Apr;127(4):359-74. doi: 10.1085/jgp.200609490. PMID: 16567464; PMCID: PMC2151510.
 #
 # Further reading: https://xkcd.com/1926/
 
@@ -31,7 +36,6 @@ import sys
 import colorsys
 import math
 import numpy as np
-from numpy.polynomial.polynomial import Polynomial
 import time
 import argparse
 import colormath
@@ -39,6 +43,7 @@ from colormath.color_objects import LabColor, LCHabColor, LCHuvColor, sRGBColor,
 from colormath.color_conversions import convert_color
 from colormath import spectral_constants
 import matplotlib.pyplot as plt
+import scipy
 
 # execution time
 start_time = time.time()
@@ -48,12 +53,21 @@ parser = argparse.ArgumentParser()
 parser.add_argument("-l", "--lw", type=int, default=0, help="longwave cone sensitivity")
 parser.add_argument("-m", "--mw", type=int, default=0, help="mediumwave cone sensitivity")
 parser.add_argument("-s", "--sw", type=int, default=0, help="shortwave cone sensitivity")
-parser.add_argument("--rod", type=int, default=500, help="rod sensitivity")
-parser.add_argument("--weber", type=float, default=0.05, help="Weber fraction for L cones")
-parser.add_argument("--lp", type=int, default=10, help="proportion of L cones")
-parser.add_argument("--mp", type=int, default=5, help="proportion of M cones")
-parser.add_argument("--sp", type=int, default=1, help="proportion of S cones")
-parser.add_argument("--cutoff", type=int, default=300, help="lower limit of lens transmission")
+parser.add_argument("--rod", type=int, default=0, help="rod sensitivity")
+parser.add_argument("--weber", type=float, default=0.018, help="Weber fraction for L cones")
+parser.add_argument("--weberm", type=float, default=0, help="override Weber fraction for M cones")
+parser.add_argument("--webers", type=float, default=0, help="override Weber fraction for S cones")
+parser.add_argument("--weberb", type=float, default=0.14, help="Weber fraction for brightness")
+parser.add_argument("--lp", type=float, default=0.62, help="proportion of L cones")
+parser.add_argument("--mp", type=float, default=0.31, help="proportion of M cones")
+parser.add_argument("--sp", type=float, default=0.07, help="proportion of S cones")
+parser.add_argument("--filter", type=str, default="none", help="type of lens filtering")
+parser.add_argument("--qn", help="use quantum noise in color differences", action="store_true")
+parser.add_argument("--lb", type=float, default=0.68990272, help="contribution of L cones to perception of brightness")
+parser.add_argument("--mb", type=float, default=0.34832189, help="contribution of M cones to perception of brightness")
+parser.add_argument("--sb", type=float, default=0.0, help="contribution of S cones to perception of brightness")
+parser.add_argument("--rb", type=float, default=0.0, help="contribution of rods to perception of brightness")
+parser.add_argument("--novk", help="disable von Kries transform", action="store_true")
 parser.add_argument("--peak", help="show wavelength with maximum sensitivity", action="store_true")
 parser.add_argument("--primaries", help="show primary and secondary wavelengths", action="store_true")
 parser.add_argument("--white", default="e", help="reference white")
@@ -64,15 +78,13 @@ parser.add_argument("--sky", help="daylight and a clear blue sky", action="store
 parser.add_argument("--kodak", help="Kodak Wratten camera filters", action="store_true")
 parser.add_argument("--kcheck", help="check camera filter brightness matches", action="store_true")
 parser.add_argument("--check", help="show colormath spectral rendering for comparison", action="store_true")
-parser.add_argument("--lb", type=float, default=0.68990272, help="contribution of L cones to perception of brightness")
-parser.add_argument("--mb", type=float, default=0.34832189, help="contribution of M cones to perception of brightness")
-parser.add_argument("--sb", type=float, default=0.0, help="contribution of S cones to perception of brightness")
-parser.add_argument("--rb", type=float, default=0.0, help="contribution of rods to perception of brightness")
+parser.add_argument("--qcheck", help="show absolute quantum catches", action="store_true")
 parser.add_argument("--vpt", help="plot visual pigment templates", action="store_true")
 parser.add_argument("--triangle", help="plot color triangle", action="store_true")
 parser.add_argument("--triangle1", help="plot logarithmic noise-scaled color triangle", action="store_true")
 parser.add_argument("--hexagon", help="plot color hexagon", action="store_true")
 parser.add_argument("--wd", help="plot wavelength discrimination function", action="store_true")
+parser.add_argument("--blackbody", type=int, default=0, help="plot black body curve for a given temperature in Kelvin")
 args = parser.parse_args()
 
 # cone and rod peak sensitivities
@@ -91,6 +103,10 @@ if (s1 == 0 and m1 != 0):
 wl = args.weber
 wm = wl * math.sqrt(args.lp) / math.sqrt(args.mp)
 ws = wl * math.sqrt(args.lp) / math.sqrt(args.sp)
+if (args.weberm > 0):
+	wm = args.weberm
+if (args.webers > 0):
+	ws = args.webers
 
 # LMS to XYZ
 lms_to_xyz = np.array([
@@ -114,44 +130,231 @@ lms_to_xyz = np.array([
 # percentage of exclusive non-coexpressing S cones is 26% ("Number and Distribution of Mouse
 # Retinal Cone Photoreceptors").
 
-# At the moment "lens filtering" consists of removing wavelengths beyond a specified point
-# because I don't know the best way to implement anything more complex. This is obviously not
-# realistic. I think the way it should work is that brightness declines with filtering
-# whereas color is compensated for by normalizing everything to 1 at the highest point.
-# Something about von Kries transforms.
-def lens_filter(w, c=300):
-	# remove filter when cutoff is set to 0
-	if (c == 0):
-		return 1
-	elif (w < c):
+# function approximating human lens filtering, for real this time (Lamb 1995)
+def template_filter(w, a, b, c, d, e, f):
+	density = a*math.exp((b - w) / c) + d*math.exp((e - w) / f)
+	if (density < 0):
 		return 0
+	return math.exp(-density)
+def human_filter(w):
+	return template_filter(w, 1.1, 400, 15, 0.11, 500, 80)
+
+# array version for curve fitting
+def filter_fit(xdata, a, b, c, d, e, f):
+	ydata = np.empty(xdata.shape[0])
+	for i in range(xdata.shape[0]):
+		ydata[i] = template_filter(xdata[i], a, b, c, d, e, f)
+	return(ydata)
+
+# Data for Thylamys elegans from Palacios et al. (2010). They say the measurements were
+# every 20 nm, but the graph shows every 4 nm. Numbered because I can't count.
+opossum_filter_data = np.array([
+	4.198057132, # 300
+	4.940696766, # 304
+	5.078876161, # 308
+	5.501061962, # 312
+	6.584859955, # 316
+	7.209278612, # 320
+	7.901294748, # 324
+	8.620954224, # 328
+	9.398772899, # 332
+	10.347077491, # 336
+	10.347077491, # 340
+	11.277550076, # 344
+	11.7416299, # 348
+	12.36134807, # 352
+	12.706348891, # 356
+	13.514198455, # 360
+	13.671217103, # 364
+	13.883186681, # 368
+	14.331523604, # 372
+	14.679061196, # 376
+	14.956837592, # 380
+	15.445837458, # 384
+	15.658142785, # 388
+	16.148261815, # 392
+	16.148261815, # 396
+	16.469760201, # 400
+	17.049486926, # 404
+	17.049486926, # 408
+	17.049486926, # 412
+	17.754783802, # 416
+	18.383417975, # 420
+	18.665186055, # 424
+	18.465415359, # 428
+	18.800194486, # 432
+	18.800194486, # 436
+	19.319971349, # 440
+	19.747790274, # 444
+	19.747790274, # 448
+	19.747790274, # 452
+	19.554921087, # 456
+	19.96248315, # 460
+	19.627330969, # 464
+	19.76767408, # 468
+	19.860751183, # 472
+	19.921297931, # 476
+	20.081897902, # 480
+	21.329242998, # 484
+	21.266830976, # 488
+	20.999089747, # 492
+	21.050795104, # 496
+	20.877623195, # 500
+	20.972341738, # 504
+	21.270598827, # 508
+	21.485291704, # 512
+	21.705468482, # 516
+	21.848684112, # 520
+	21.723113961, # 526
+	22.91506046, # 530
+	22.780275861, # 534
+	22.620944276, # 536
+	23.162768661, # 540
+	23.162768661, # 544
+	22.572782937, # 548
+	22.581960078, # 552
+	22.620571221, # 556
+	22.597516452, # 560
+	23.17746701, # 564
+	23.074242824, # 568
+	23.545671821, # 572
+	23.609016479, # 576
+	23.112518217, # 580
+	23.144973961, # 584
+	23.489564422, # 588
+	23.638674313, # 592
+	24.366951349, # 596
+	23.92103928, # 600
+	24.628835622, # 604
+	24.580935422, # 608
+	24.381015504, # 612
+	23.953420413, # 616
+	24.122488721, # 620
+	24.43510841, # 624
+	24.616338296, # 628
+	24.61712171, # 632
+	24.756233741, # 636
+	24.676549295, # 640
+	24.652897639, # 644
+	24.798276986, # 648
+	25.008567819, # 652
+	25.276943241, # 656
+	25.865996329, # 660
+	25.24340564, # 664
+	25.300445676, # 668
+	25.404042916, # 672
+	25.44354939, # 676
+	25.638134628, # 680
+	25.358679486, # 684
+	25.557368324, # 688
+	25.510661898, # 692
+	26.081547231, # 696
+	26.750956263 # 700
+])
+
+# normalize to 1 at 700
+opossum_filter_data = opossum_filter_data / opossum_filter_data[100]
+
+xvalues = np.empty(101)
+for i in range(0, 101):
+	xvalues[i] = i*4 + 300
+
+opossum_fit = scipy.optimize.curve_fit(filter_fit, xvalues, opossum_filter_data, p0=[1.1, 400, 15, 0.11, 500, 80])
+
+# function
+def opossum_filter(w):
+	return template_filter(w, *opossum_fit[0])
+
+def lens_filter(w):
+	if (args.filter == "human"):
+		return human_filter(w)
+	elif (args.filter == "opossum"):
+		return opossum_filter(w)
 	return 1
 
-def sensitivity(w, l=l1, m=m1, s=s1, c=300):
-	value = (args.lb*vpt(w, l) + args.mb*vpt(w, m) + args.sb*vpt(w, s) + args.rb*vpt(w, rod)) * lens_filter(w, c)
-	return value
+def sensitivity(w, l=l1, m=m1, s=s1):
+	return (args.lb*vpt(w, l) + args.mb*vpt(w, m) + args.sb*vpt(w, s) + args.rb*vpt(w, rod)) * lens_filter(w)
 
-# black body
-# Note this expects a wavelength in meters.
+# black body -- SI units, returns energy in joules/m^3/sec/steradian = watts/m^3/steradian
+# https://yceo.yale.edu/sites/default/files/files/ComputingThePlanckFunction.pdf
+h = 6.626068e-34 # Planck's constant (joule sec)
+k = 1.38066e-23 # Boltzmann's constant (joule/deg)
+c = 2.997925e+8 # speed of light (m/s)
+
 def blackbody(w, t):
-	c1 = 3.74183e-16
-	c2 = 1.4388e-2
-	return c1*w**-5 / (math.exp(c2/(w*t)) - 1)
+	l = w / 1000000000 # wavelength (m)
+	return 2*h*c**2*l**-5 / (math.exp((h*c) / (k*l*t)) - 1)
 
 # normal distribution
 def normal(mu, std_dev, x):
 	return (1 / std_dev*math.sqrt(2*math.pi)) * math.exp((-1/2)*((x - mu)/std_dev)**2)
 
-# light sources
-d65 = spectral_constants.REF_ILLUM_TABLE["d65"]
-e = spectral_constants.REF_ILLUM_TABLE["e"]
-a = spectral_constants.REF_ILLUM_TABLE["a"]
-# incandescent lighting based on CIE A illuminant, extending from 300 to 900 nm
+# light sources -- standardize to 300-900
+d65 = np.zeros(61)
+for i in range(4, 54):
+	d65[i] = spectral_constants.REF_ILLUM_TABLE["d65"][i-4]
+
+e = np.empty(61)
+for i in range(0, 61):
+	e[i] = 100
+
+a = np.zeros(61)
+for i in range(4, 54):
+	a[i] = spectral_constants.REF_ILLUM_TABLE["a"][i-4]
+
+# incandescent lighting based on CIE A illuminant
 incandescent = np.empty(61)
 for i in range(0, 61):
 	w = i*10 + 300
 	# normalize to 100% at 560 nm
-	incandescent[i] = blackbody(w / 1000000000, 2856) / blackbody(560 / 1000000000, 2856)
+	incandescent[i] = 100*blackbody(w, 2856) / blackbody(560, 2856)
+
+# absolute number of photons
+# Since the output of blackbody() is joules/m^3/sec/sr, this should be photons/m^3/sec/sr.
+# I think what we really want is square meters. (No, the meters cancel, see the quantum
+# noise calculations)
+ia = np.empty(61)
+# scale it down to what amount of energy would be produced by a 6-watt bulb assuming 10%
+# is in the human-visible spectrum, as well as multiplying it by 2 because there are two
+# bulbs
+energy = 0
+for i in range(380, 780): # 380-780 nm
+	energy += blackbody(i, 2856)
+scale = 0.6 / energy
+for i in range(0, 61):
+	w = i*10 + 300 # nanometers
+	ia[i] = 2*scale*1e-9*w*blackbody(w, 2856) / (h*c) # meters * joules/m^3/sec/sr / joule*sec * m/s
+	#print(ia[i])
+
+if (args.blackbody != 0):
+	#xvalues = yvalues = np.empty(61) don't do this, it won't do what you think it does
+	xvalues = np.empty(61)
+	yvalues = np.empty(61)
+	for i in range(61):
+		w = i*10 + 300
+		xvalues[i] = w
+		yvalues[i] = blackbody(w, args.blackbody)
+	plt.plot(xvalues, yvalues)
+	#plt.plot(xvalues, ia)
+	#plt.plot(xvalues, a)
+	#plt.plot(xvalues, incandescent)
+	#plt.plot(xvalues, d65)
+	plt.show()
+	
+	# how much energy is within the (human-)visible spectrum? Incandescent bulbs usually
+	# have 10%. https://physlab.org/wp-content/uploads/2016/03/Planck_ref8.pdf
+	energy = 0
+	for i in range(380, 780): # 380-780 nm
+		energy += blackbody(i, args.blackbody)
+		#print(energy)
+	print(str(energy) + " J/m^3/s/sr = W/m^3/sr")
+	print(0.6 / energy)
+	print(0.6 / energy)
+	print(1e-9*300 / (h*c))
+	print((0.6 / energy) * 1e-9*300 / (h*c))
+	print(blackbody(300, args.blackbody))
+	print(blackbody(300, args.blackbody) * (0.6 / energy) * 1e-9*300 / (h*c))
+	print(blackbody(600, args.blackbody) * (0.6 / energy) * 1e-9*300 / (h*c))
 
 # white point
 if (args.white == "d65"):
@@ -187,44 +390,43 @@ def vpt(w, lmax):
 	return alpha + beta
 
 # estimate hue, saturation and lightness for a spectral power distribution
-def spectral_rendering(table, light_source=wp/100, start=340):
+# Lens filtering is now used for colors properly by normalizing each signal according to
+# the light source.
+def spectral_rendering(table, light_source=wp/100):
 	table_l = 0
 	table_m = 0
 	table_s = 0
 	brightness = 0
 	
-	# offset depending on the range of the SPDs
-	if (args.white == 'i' and start < 340):
-		ls_start = 300
-	else:
-		ls_start = 340
-	offset = int((ls_start - start) / 10)
-	
-	for i in range(offset, light_source.shape[0] + offset):
-		w = i*10 + start # wavelength
-		#print(i)
-		#print(w)
-		if (w >= args.cutoff):
-			table_l += vpt(w, l1) * table[i] * light_source[i - offset]
-			# remove either M or S for dichromacy
-			if (m1 != l1):
-				table_m += vpt(w, m1) * table[i] * light_source[i - offset]
-			if (s1 != m1):
-				table_s += vpt(w, s1) * table[i] * light_source[i - offset]
-			
-			# brightness
-			brightness += sensitivity(w, c=args.cutoff) * table[i] * light_source[i - offset]
-	
-	# normalize according to provided light source: the total sensitivity of the
-	# target phenotype to this light spectrum is "1"
-	n = 0
 	for i in range(0, light_source.shape[0]):
-		w = i*10 + ls_start
-		n += sensitivity(w, c=args.cutoff) * light_source[i]
+		w = i*10 + 300 # wavelength
+		table_l += vpt(w, l1) * table[i] * light_source[i] * lens_filter(w)
+		# remove either M or S for dichromacy
+		if (m1 != l1):
+			table_m += vpt(w, m1) * table[i] * light_source[i] * lens_filter(w)
+		if (s1 != m1):
+			table_s += vpt(w, s1) * table[i] * light_source[i] * lens_filter(w)
+		
+		# brightness
+		brightness += sensitivity(w) * table[i] * light_source[i] * lens_filter(w)
 	
-	table_l = table_l / n
-	table_m = table_m / n
-	table_s = table_s / n
+	# normalize according to provided light source
+	n = 0
+	wpl = 0
+	wpm = 0
+	wps = 0
+	for i in range(0, light_source.shape[0]):
+		w = i*10 + 300
+		n += sensitivity(w) * light_source[i]
+		wpl += vpt(w, l1) * light_source[i] * lens_filter(w)
+		wpm += vpt(w, m1) * light_source[i] * lens_filter(w)
+		wps += vpt(w, s1) * light_source[i] * lens_filter(w)
+	
+	# von Kries transform
+	if (args.novk == False):
+		table_l = table_l / wpl
+		table_m = table_m / wpm
+		table_s = table_s / wps
 	
 	# express brightness of reflected/emitted light proportional to the light source
 	brightness = brightness / n
@@ -242,22 +444,21 @@ def spectral_rendering(table, light_source=wp/100, start=340):
 		print("Cone response: l=" + str(table_l) + ", m=" + str(table_m) + ", s=" + str(table_s))
 		
 		# This should be the nearest wavelength on a line from the white point.
-		match = args.cutoff
+		match = 300
 		x0 = (table_l - table_s) / (table_l + table_m + table_s)
 		y0 = (table_m - table_l - table_s) / (table_l + table_m + table_s)
 		white_l = 0
 		white_m = 0
 		white_s = 0
 		for i in range(wp.shape[0]):
-			w = i*10 + ls_start
-			if (w >= args.cutoff):
-				white_l += vpt(w, l1) * wp[i]
-				white_m += vpt(w, m1) * wp[i]
-				white_s += vpt(w, s1) * wp[i]
+			w = i*10 + 300
+			white_l += vpt(w, l1) * wp[i]
+			white_m += vpt(w, m1) * wp[i]
+			white_s += vpt(w, s1) * wp[i]
 		wx = (white_l - white_s) / (white_l + white_m + white_s)
 		wy = (white_m - white_l - white_s) / (white_l + white_m + white_s)
 		
-		for i in range(args.cutoff, 800):
+		for i in range(300, 800):
 			x1 = (vpt(match, l1) - vpt(match, s1)) / (vpt(match, l1) + vpt(match, m1) + vpt(match, s1))
 			y1 = (vpt(match, m1) - vpt(match, l1) - vpt(match, s1)) / (vpt(match, l1) + vpt(match, m1) + vpt(match, s1))
 			x2 = (vpt(i, l1) - vpt(i, s1)) / (vpt(i, l1) + vpt(i, m1) + vpt(i, s1))
@@ -271,11 +472,10 @@ def spectral_rendering(table, light_source=wp/100, start=340):
 				match = i
 		print("Closest wavelength: " + str(match))
 		
-		posx = (table_l - table_s) / (table_l + table_m + table_s)
-		posy = (table_m - table_l - table_s) / (table_l + table_m + table_s)
+		posx = math.sqrt(1/2)*(table_l - table_s) / (table_l + table_m + table_s)
+		posy = math.sqrt(2/3)*(table_m - (table_l + table_s)/2) / (table_l + table_m + table_s)
 		dist = math.dist((posx, posy), (wx, wy))
 		print("Position in color triangle: " + str((posx, posy)))
-		print("Distance from white point: " + str(round(dist, 5)))
 		
 		lms = np.array([
 			[table_l],
@@ -294,8 +494,8 @@ def spectral_rendering(table, light_source=wp/100, start=340):
 		# typical dichromacy
 		print("Cone response: l/m=" + str(table_l) + ", s=" + str(table_s))
 		
-		match = args.cutoff
-		for i in range(args.cutoff, 800):
+		match = 300
+		for i in range(300, 800):
 			diff0 = abs(table_l / table_s - vpt(match, l1) / vpt(match, s1))
 			diff1 = abs(table_l / table_s - vpt(i, l1) / vpt(i, s1))
 			if (diff1 < diff0):
@@ -306,13 +506,12 @@ def spectral_rendering(table, light_source=wp/100, start=340):
 		white_l = 0
 		white_s = 0
 		for i in range(wp.shape[0]):
-			w = i*10 + ls_start
-			if (w >= args.cutoff):
+			w = i*10 + 300
+			if (w >= 300):
 				white_l += vpt(w, l1) * wp[i]
 				white_s += vpt(w, s1) * wp[i]
 		dist = pos - (white_l - white_s) / (white_l + white_s)
-		print("Position on color line: " + str(round(pos, 5)))
-		print("Distance from white point: " + str(round(dist, 5)))
+		print("Position on color line: " + str(pos))
 	elif (l1 != m1 == s1):
 		# tritanopia
 		print("Cone response: l=" + str(table_l) + ", m=" + str(table_m))
@@ -325,56 +524,56 @@ def spectral_rendering(table, light_source=wp/100, start=340):
 	
 	# "SpectralColor" conversion for comparison to check if our estimates are reasonable
 	if (args.check):
-		spectral = SpectralColor(spec_340nm=table[offset],
-		spec_350nm=table[offset+1],
-		spec_360nm=table[offset+2],
-		spec_370nm=table[offset+3],
-		spec_380nm=table[offset+4],
-		spec_390nm=table[offset+5],
-		spec_400nm=table[offset+6],
-		spec_410nm=table[offset+7],
-		spec_420nm=table[offset+8],
-		spec_430nm=table[offset+9],
-		spec_440nm=table[offset+10],
-		spec_450nm=table[offset+11],
-		spec_460nm=table[offset+12],
-		spec_470nm=table[offset+13],
-		spec_480nm=table[offset+14],
-		spec_490nm=table[offset+15],
-		spec_500nm=table[offset+16],
-		spec_510nm=table[offset+17],
-		spec_520nm=table[offset+18],
-		spec_530nm=table[offset+19],
-		spec_540nm=table[offset+20],
-		spec_550nm=table[offset+21],
-		spec_560nm=table[offset+22],
-		spec_570nm=table[offset+23],
-		spec_580nm=table[offset+24],
-		spec_590nm=table[offset+25],
-		spec_600nm=table[offset+26],
-		spec_610nm=table[offset+27],
-		spec_620nm=table[offset+28],
-		spec_630nm=table[offset+29],
-		spec_640nm=table[offset+30],
-		spec_650nm=table[offset+31],
-		spec_660nm=table[offset+32],
-		spec_670nm=table[offset+33],
-		spec_680nm=table[offset+34],
-		spec_690nm=table[offset+35],
-		spec_700nm=table[offset+36],
-		spec_710nm=table[offset+37],
-		spec_720nm=table[offset+38],
-		spec_730nm=table[offset+39],
-		spec_740nm=table[offset+40],
-		spec_750nm=table[offset+41],
-		spec_760nm=table[offset+42],
-		spec_770nm=table[offset+43],
-		spec_780nm=table[offset+44],
-		spec_790nm=table[offset+45],
-		spec_800nm=table[offset+46],
-		spec_810nm=table[offset+47],
-		spec_820nm=table[offset+48],
-		spec_830nm=table[offset+49], illuminant='e')
+		spectral = SpectralColor(spec_340nm=table[4],
+		spec_350nm=table[4+1],
+		spec_360nm=table[4+2],
+		spec_370nm=table[4+3],
+		spec_380nm=table[4+4],
+		spec_390nm=table[4+5],
+		spec_400nm=table[4+6],
+		spec_410nm=table[4+7],
+		spec_420nm=table[4+8],
+		spec_430nm=table[4+9],
+		spec_440nm=table[4+10],
+		spec_450nm=table[4+11],
+		spec_460nm=table[4+12],
+		spec_470nm=table[4+13],
+		spec_480nm=table[4+14],
+		spec_490nm=table[4+15],
+		spec_500nm=table[4+16],
+		spec_510nm=table[4+17],
+		spec_520nm=table[4+18],
+		spec_530nm=table[4+19],
+		spec_540nm=table[4+20],
+		spec_550nm=table[4+21],
+		spec_560nm=table[4+22],
+		spec_570nm=table[4+23],
+		spec_580nm=table[4+24],
+		spec_590nm=table[4+25],
+		spec_600nm=table[4+26],
+		spec_610nm=table[4+27],
+		spec_620nm=table[4+28],
+		spec_630nm=table[4+29],
+		spec_640nm=table[4+30],
+		spec_650nm=table[4+31],
+		spec_660nm=table[4+32],
+		spec_670nm=table[4+33],
+		spec_680nm=table[4+34],
+		spec_690nm=table[4+35],
+		spec_700nm=table[4+36],
+		spec_710nm=table[4+37],
+		spec_720nm=table[4+38],
+		spec_730nm=table[4+39],
+		spec_740nm=table[4+40],
+		spec_750nm=table[4+41],
+		spec_760nm=table[4+42],
+		spec_770nm=table[4+43],
+		spec_780nm=table[4+44],
+		spec_790nm=table[4+45],
+		spec_800nm=table[4+46],
+		spec_810nm=table[4+47],
+		spec_820nm=table[4+48],
+		spec_830nm=table[4+49], illuminant='e')
 		
 		print("colormath conversion:")
 		print(convert_color(spectral, XYZColor))
@@ -384,30 +583,178 @@ def spectral_rendering(table, light_source=wp/100, start=340):
 	# break up text
 	print("")
 	
-	# return brightness for comparisons
-	return(brightness)
+	# return brightness and color for comparisons
+	if (l1 != m1):
+		return(brightness, posx, posy)
+	elif (m1 != s1): # add zeroes for compatibility
+		return(brightness, pos, 0)
+	else:
+		return(brightness, 0, 0)
 
 # contrast sensitivity (Vorobyev and Osorio (1998); Vorobyev and Osorio (2001))
-def color_contrast(q1, q2):
+# This predicts that two very small values like 1e-5 and 1e-6 can produce a
+# large amount of contrast despite probably neither of them being noticeable.
+# Is this where quantum noise comes in? An alternative is to use the linear
+# model rather than log-linear, which makes the contrast proportional to the
+# size of the signals, but this reduces the contrast too much. For reference,
+# human trichromacy should show all the Kodak Wratten colors as "different" and
+# human-like dichromacy should show red, yellow and probably green as "the same".
+# Neither of these models do both of these.
+def color_contrast(table1, table2, quantum_noise=args.qn):
+	
+	# background light
+	wpl = 0
+	wpm = 0
+	wps = 0
+	
+	ql1 = 0
+	qm1 = 0
+	qs1 = 0
+	ql2 = 0
+	qm2 = 0
+	qs2 = 0
+	for i in range(0, wp.shape[0]):
+		w = i*10 + 300
+		ql1 += vpt(w, l1) * table1[i] * wp[i] * lens_filter(w)
+		qm1 += vpt(w, m1) * table1[i] * wp[i] * lens_filter(w)
+		qs1 += vpt(w, s1) * table1[i] * wp[i] * lens_filter(w)
+		wpl += vpt(w, l1) * wp[i] * lens_filter(w)
+		wpm += vpt(w, m1) * wp[i] * lens_filter(w)
+		wps += vpt(w, s1) * wp[i] * lens_filter(w)
+	for i in range(0, wp.shape[0]):
+		w = i*10 + 300
+		ql2 += vpt(w, l1) * table2[i] * wp[i] * lens_filter(w)
+		qm2 += vpt(w, m1) * table2[i] * wp[i] * lens_filter(w)
+		qs2 += vpt(w, s1) * table2[i] * wp[i] * lens_filter(w)
+	
+	# normalize
+	if (args.novk == False):
+		ql1 = ql1 / wpl
+		qm1 = qm1 / wpm
+		qs1 = qs1 / wps
+		ql2 = ql2 / wpl
+		qm2 = qm2 / wpm
+		qs2 = qs2 / wps
+	
 	# differences
-	dfl = math.log(q1[0] / q2[0])
-	dfm = math.log(q1[1] / q2[1])
-	dfs = math.log(q1[2] / q2[2])
+	dfl = math.log(ql1 / ql2)
+	dfm = math.log(qm1 / qm2)
+	dfs = math.log(qs1 / qs2)
+	
+	# quantum noise (needs work)
+	# Based on these equations:
+	# https://journals.biologists.com/jeb/article/218/2/184/14274/Bird-colour-vision-behavioural-thresholds-reveal
+	# https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5043323/
+	if (quantum_noise):
+		# v: number of cones per receptive field (not sure if this means total number of
+		# cones in the retina or if it's subdivided into multiple "receptive fields", but
+		# I'm guessing the former. A larger eye inherently catches more photons.)
+		# d: receptor diameter (um)
+		# f: focal length (um)
+		# D: pupil diameter (um)
+		# O/Ai: transmittance of ocular media
+		# T: integration time (ms), inverse of flicker fusion frequency (Hz)
+		# ui: optical density of pigment ("optical density units". Mouse study says um^-1, but
+		# optical density is supposed to be the negative log of transmission, and the
+		# units of the other terms already include m^-3 and cancel the m^3 in the
+		# illuminant. We would then have photons per meter, which doesn't make sense.)
+		# l: length of outer segment (um)
+		
+		# Where necessary, I've converted centimeters and micrometers to meters.
+		# Note that d and f cancel.
+		v = 3000 * 450 # cone density for Didelphis aurita (Ahnelt et al. 2009), retinal
+		# area for cats (Vaney 1985)
+		T = 1/22.4 # 22.4 Hz, brushtail possum (Signal, Temple & Foster 2011)
+		d = 1.2 / 1000000 # 1.2 um, mice (Nikonov et al. 2006)
+		f = 22.3 / 1000 # 22.3 mm, cats (Thomasy et al. 2016)
+		D = 11 / 1000 # 11 mm, maximum size of rabbit pupil (Peiffer et al. 1994)
+		Ai = 26 # Thylamys elegans (Palacios et al. 2010)
+		ui = 0.015 # mice (Yin et al. 2013)
+		l = 13.4 / 1000000 # mice
+		
+		# surface areas
+		sphere = 4*math.pi*5**2 # the filters were located 5 cm away from the light bulbs
+		sr = math.pi*3.8**2 / sphere # 3.8 cm diameter circle
+	
+		aql1 = 0
+		aqm1 = 0
+		aqs1 = 0
+		aql2 = 0
+		aqm2 = 0
+		aqs2 = 0
+		for i in range(wp.shape[0]):
+			w = i*10 + 300
+			aql1 += (v*args.lp)*T*sr*(d / f)**2*D**2*Ai*(1 - math.exp(-ui*l)) * vpt(w, l1) * table1[i] * ia[i] * lens_filter(w)
+			aqm1 += (v*args.mp)*T*sr*(d / f)**2*D**2*Ai*(1 - math.exp(-ui*l)) * vpt(w, m1) * table1[i] * ia[i] * lens_filter(w)
+			aqs1 += (v*args.sp)*T*sr*(d / f)**2*D**2*Ai*(1 - math.exp(-ui*l)) * vpt(w, s1) * table1[i] * ia[i] * lens_filter(w)
+		for i in range(wp.shape[0]):
+			w = i*10 + 300
+			aql2 += (v*args.lp)*T*sr*(d / f)**2*D**2*Ai*(1 - math.exp(-ui*l)) * vpt(w, l1) * table2[i] * ia[i] * lens_filter(w)
+			aqm2 += (v*args.mp)*T*sr*(d / f)**2*D**2*Ai*(1 - math.exp(-ui*l)) * vpt(w, m1) * table2[i] * ia[i] * lens_filter(w)
+			aqs2 += (v*args.sp)*T*sr*(d / f)**2*D**2*Ai*(1 - math.exp(-ui*l)) * vpt(w, s1) * table2[i] * ia[i] * lens_filter(w)
+		
+		el = math.sqrt((1 / aql1 + 1 / aql2) + 2*wl**2)
+		em = math.sqrt((1 / aqm1 + 1 / aqm2) + 2*wm**2)
+		es = math.sqrt((1 / aqs1 + 1 / aqs2) + 2*ws**2)
+		
+		if (args.qcheck):
+			print("aq1:")
+			print(aql1)
+			print(aqm1)
+			print(aqs1)
+			print("aq2:")
+			print(aql2)
+			print(aqm2)
+			print(aqs2)
+			print("noise:")
+			print(el)
+			print(em)
+			print(es)
+			print("Weber fractions:")
+			print(wl)
+			print(wm)
+			print(ws)
+	else:
+		el = wl
+		em = wm
+		es = ws
 	
 	if (l1 != m1):
-		delta_s = (ws**2*(dfl - dfm)**2 + wm**2*(dfl - dfs)**2 + wl**2*(dfs - dfm)**2) / ((wl*wm)**2 + (wl*ws)**2 + (wm*ws)**2)
+		delta_s = (es**2*(dfl - dfm)**2 + em**2*(dfl - dfs)**2 + el**2*(dfs - dfm)**2) / ((el*em)**2 + (el*es)**2 + (em*es)**2)
 	else:
-		delta_s = (dfl - dfs)**2 / (wl**2 + ws**2)
+		delta_s = (dfl - dfs)**2 / (el**2 + es**2)
 	return math.sqrt(delta_s)
 
-def brightness_contrast(q1, q2):
-	# differences
+# brightness contrast based on https://journals.biologists.com/jeb/article/207/14/2471/14748/Interspecific-and-intraspecific-views-of-color
+def brightness_contrast(table1, table2):
+	
+	# background light
+	wpt = 0
+	
+	ql1 = 0 # L cones
+	qm1 = 0 # M cones
+	qr1 = 0 # rods
+	ql2 = 0
+	qm2 = 0
+	qr2 = 0
+	for i in range(wp.shape[0]):
+		w = i*10 + 300
+		wpt += sensitivity(w, l1) * wp[i]
+		ql1 += vpt(w, l1) * table1[i] * wp[i] * lens_filter(w)
+		qm1 += vpt(w, m1) * table1[i] * wp[i] * lens_filter(w)
+		qr1 += vpt(w, rod) * table1[i] * wp[i] * lens_filter(w)
+	for i in range(wp.shape[0]):
+		w = i*10 + 300
+		ql2 += vpt(w, l1) * table2[i] * wp[i] * lens_filter(w)
+		qm2 += vpt(w, m1) * table2[i] * wp[i] * lens_filter(w)
+		qr2 += vpt(w, rod) * table2[i] * wp[i] * lens_filter(w)
+	
 	if (l1 != m1):
-		df = math.log((args.lb*q1[0] + args.mb*q1[1]) / (args.lb*q2[0] + args.mb*q2[1]))
+		df = math.log((args.lb*ql1 + args.mb*qm1 + args.rb*qr1) / (args.lb*ql2 + args.mb*qm2 + args.rb*qr2))
 	else:
-		df = math.log(q1[0] / q2[0])
-	delta_s = abs(df / wl)
-	return math.sqrt(delta_s)
+		df = math.log((args.lb*ql1 + args.rb*qr1) / (args.lb*ql2 + args.rb*qr2))
+	delta_s = abs(df / args.weberb)
+	return delta_s
 
 # print specified information
 print("L: " + str(l1) + ", M: " + str(m1) + ", S: " + str(s1) + ", rod: " + str(rod))
@@ -420,39 +767,61 @@ if (args.vpt):
 	mvalues = np.empty(400)
 	svalues = np.empty(400)
 	rvalues = np.empty(400)
+	lmax = 0
+	mmax = 0
+	smax = 0
+	rmax = 0
 	for i in range(0, 400):
 		xvalues[i] = i + 300
-		lvalues[i] = vpt(i+300, l1)
-		mvalues[i] = vpt(i+300, m1)
-		svalues[i] = vpt(i+300, s1)
-		rvalues[i] = vpt(i+300, rod)
+		if (args.filter == "human"):
+			lvalues[i] = vpt(i+300, l1) * human_filter(i+300)
+			mvalues[i] = vpt(i+300, m1) * human_filter(i+300)
+			svalues[i] = vpt(i+300, s1) * human_filter(i+300)
+			rvalues[i] = vpt(i+300, rod) * human_filter(i+300)
+			lmax = max(lmax, lvalues[i])
+			mmax = max(mmax, mvalues[i])
+			smax = max(smax, svalues[i])
+			rmax = max(rmax, rvalues[i])
+		else:
+			lvalues[i] = vpt(i+300, l1)
+			mvalues[i] = vpt(i+300, m1)
+			svalues[i] = vpt(i+300, s1)
+			rvalues[i] = vpt(i+300, rod)
+			lmax = 1
+			mmax = 1
+			smax = 1
+			rmax = 1
 
-	plt.plot(xvalues, lvalues, 'r')
+	plt.plot(xvalues, lvalues/lmax, 'r', label="L (" + str(args.lw) + ")")
 	# don't plot redundant curves
 	if (l1 != m1):
-		plt.plot(xvalues, mvalues, 'g')
+		plt.plot(xvalues, mvalues/mmax, 'g', label="M (" + str(args.mw) + ")")
 	if (m1 != s1):
-		plt.plot(xvalues, svalues, 'b')
-	plt.plot(xvalues, rvalues, ':k')
+		plt.plot(xvalues, svalues/smax, 'b', label="S (" + str(args.sw) + ")")
+	if (args.rod != 0):
+		plt.plot(xvalues, rvalues/rmax, ':k', label="rod (" + str(args.rod) + ")")
 	plt.xlabel("Wavelength (nm)")
 	plt.ylabel("Relative sensitivity")
-	
+	plt.legend()
 	plt.show()
 
-# maximum sensitivity
+# show luminous efficiency function and lens filtering
 if (args.peak):
 	xvalues = np.empty(500)
 	yvalues = np.empty(500)
+	yvalues1 = np.empty(500)
 	ms = 300
 	for i in range(300, 800):
-		if (sensitivity(i, c=args.cutoff) > (sensitivity(ms, c=args.cutoff))):
+		if (sensitivity(i) > (sensitivity(ms))):
 			ms = i
 		xvalues[i-300] = i
-		yvalues[i-300] = sensitivity(i, c=args.cutoff)
+		yvalues[i-300] = sensitivity(i)
+		yvalues1[i-300] = lens_filter(i)
 	print("Maximum sensitivity: " + str(ms))
 	print("")
 	
-	plt.plot(xvalues, yvalues, 'k')
+	plt.plot(xvalues, yvalues/ms, 'k')
+	plt.plot(xvalues, yvalues1, ':k')
 	plt.xlabel("Wavelength (nm)")
 	plt.ylabel("Relative sensitivity")
 	plt.show()
@@ -460,25 +829,7 @@ if (args.peak):
 # primary/secondary colors
 if (args.primaries):
 		
-	# color triangle
-	# This is based on the color triangles presented in the honey possum and
-	# dunnart studies. We make the LMS values relative to each other and
-	# convert them to xy coordinates with x = L - S, y = M - (L + S). This may
-	# or may not be how those triangles are constructed -- the points for
-	# 363-509-535 are in the same place on the LM side of the triangle, but
-	# toward the MS side the curve becomes concave, meaning it should not
-	# define a valid color space. I could not find any information on the
-	# correct way to do this. However, the primary colors given for dunnart
-	# values with E as the white point are the same as found in the study
-	# except for the UV primary being 360 rather than 350, and this
-	# transformation is reported as accurately describing opponent colors
-	# in humans (Pridmore 2021).
-	# Primary colors are in steps of 10 nm, and secondary colors are in
-	# steps of 5 nm. This seems to be what was done in the study, and
-	# trying to get more precise gives weirder results.
-	# These other triangles have a similar concave/curly shape:
-	# https://www.researchgate.net/figure/The-Maxwell-color-triangle-for-D-elpenor-with-the-different-colors-used-in-the_fig9_247756906
-	# https://www.researchgate.net/publication/233424444_Honeybees_Apis_mellifera_Learn_Color_Discriminations_via_Differential_Conditioning_Independent_of_Long_Wavelength_Green_Photoreceptor_Modulation#pf4
+	# Maxwell triangle
 		
 	# primaries
 	# For red and blue I've rounded off the values because wavelengths at the
@@ -549,7 +900,7 @@ if (args.primaries):
 	white_s = 0
 	for i in range(0, 50):
 		w = i*10 + 340
-		if (w >= args.cutoff):
+		if (w >= 300):
 			white_l += vpt(w, l1) * wp[i]
 			white_m += vpt(w, m1) * wp[i]
 			white_s += vpt(w, s1) * wp[i]
@@ -793,9 +1144,9 @@ if (args.wd):
 	
 	for i in range(wp.shape[0]):
 		w = i*10 + start
-		wpl += vpt(w, l1) * wp[i]/1
-		wpm += vpt(w, m1) * wp[i]/1
-		wps += vpt(w, s1) * wp[i]/1
+		wpl += vpt(w, l1) * wp[i]
+		wpm += vpt(w, m1) * wp[i]
+		wps += vpt(w, s1) * wp[i]
 	kl = 1
 	km = kl / wpm
 	ks = kl / wps
@@ -846,73 +1197,30 @@ if (args.lighting):
 	spectral_rendering(a/100, light_source=e)
 	
 	print("Incandescent lighting (approximated with 2856 K blackbody spectrum)")
-	spectral_rendering(incandescent, light_source=e, start=300)
+	spectral_rendering(incandescent/100, light_source=e)
 	
 	# color/brightness contrast test
-	le = 0
-	me = 0
-	se = 0
-	ld65 = 0
-	md65 = 0
-	sd65 = 0
-	la = 0
-	ma = 0
-	sa = 0
-	li = 0
-	mi = 0
-	si = 0
-	for i in range(e.shape[0]):
-		le += vpt(i*10+340, l1) * e[i]/100
-		me += vpt(i*10+340, m1) * e[i]/100
-		se += vpt(i*10+340, s1) * e[i]/100
-		ld65 += vpt(i*10+340, l1) * d65[i]/100
-		md65 += vpt(i*10+340, m1) * d65[i]/100
-		sd65 += vpt(i*10+340, s1) * d65[i]/100
-		la += vpt(i*10+340, l1) * a[i]/100
-		ma += vpt(i*10+340, m1) * a[i]/100
-		sa += vpt(i*10+340, s1) * a[i]/100
-	for i in range(incandescent.shape[0]):
-		li += vpt(i*10+300, l1) * incandescent[i]
-		mi += vpt(i*10+300, m1) * incandescent[i]
-		si += vpt(i*10+300, s1) * incandescent[i]
-	te = le + me + se
-	le = le / te
-	me = me / te
-	se = se / te
-	td65 = ld65 + md65 + sd65
-	ld65 = ld65 / td65
-	md65 = md65 / td65
-	sd65 = sd65 / td65
-	ta = la + ma + sa
-	la = la / ta
-	ma = ma / ta
-	sa = sa / ta
-	ti = li + mi + si
-	li = li / ti
-	mi = mi / ti
-	si = si / ti
-	
-	print("Color contrast between E and E: " + str(color_contrast([le, me, se], [le, me, se])))
-	print("Color contrast between E and D65: " + str(color_contrast([le, me, se], [ld65, md65, sd65])))
-	print("Color contrast between E and A: " + str(color_contrast([le, me, se], [la, ma, sa])))
-	print("Color contrast between E and incandescent: " + str(color_contrast([le, me, se], [li, mi, si])))
-	print("Color contrast between D65 and D65: " + str(color_contrast([ld65, md65, sd65], [ld65, md65, sd65])))
-	print("Color contrast between D65 and A: " + str(color_contrast([ld65, md65, sd65], [la, ma, sa])))
-	print("Color contrast between D65 and incandescent: " + str(color_contrast([ld65, md65, sd65], [li, mi, si])))
-	print("Color contrast between A and A: " + str(color_contrast([la, ma, sa], [la, ma, sa])))
-	print("Color contrast between A and incandescent: " + str(color_contrast([la, ma, sa], [li, mi, si])))
-	print("Color contrast between incandescent and incandescent: " + str(color_contrast([li, mi, si], [li, mi, si])))
-	print("Brightness contrast between E and E: " + str(brightness_contrast([le, me, se], [le, me, se])))
-	print("Brightness contrast between E and D65: " + str(brightness_contrast([le, me, se], [ld65, md65, sd65])))
-	print("Brightness contrast between E and A: " + str(brightness_contrast([le, me, se], [la, ma, sa])))
-	print("Brightness contrast between E and incandescent: " + str(brightness_contrast([le, me, se], [li, mi, si])))
-	print("Brightness contrast between D65 and D65: " + str(brightness_contrast([ld65, md65, sd65], [ld65, md65, sd65])))
-	print("Brightness contrast between D65 and A: " + str(brightness_contrast([ld65, md65, sd65], [la, ma, sa])))
-	print("Brightness contrast between D65 and incandescent: " + str(brightness_contrast([ld65, md65, sd65], [li, mi, si])))
-	print("Brightness contrast between A and A: " + str(brightness_contrast([la, ma, sa], [la, ma, sa])))
-	print("Brightness contrast between A and incandescent: " + str(brightness_contrast([la, ma, sa], [li, mi, si])))
-	print("Brightness contrast between incandescent and incandescent: " + str(brightness_contrast([li, mi, si], [li, mi, si])))
-	
+	print("Color contrast between E and E: " + str(color_contrast(e, e)))
+	print("Color contrast between E and D65: " + str(color_contrast(e, d65)))
+	print("Color contrast between E and A: " + str(color_contrast(e, a)))
+	print("Color contrast between E and incandescent: " + str(color_contrast(e, incandescent)))
+	print("Color contrast between D65 and D65: " + str(color_contrast(d65, d65)))
+	print("Color contrast between D65 and A: " + str(color_contrast(d65, a)))
+	print("Color contrast between D65 and incandescent: " + str(color_contrast(d65, incandescent)))
+	print("Color contrast between A and A: " + str(color_contrast(a, a)))
+	print("Color contrast between A and incandescent: " + str(color_contrast(a, incandescent)))
+	print("Color contrast between incandescent and incandescent: " + str(color_contrast(incandescent, incandescent)))
+	print("Brightness contrast between E and E: " + str(brightness_contrast(e, e)))
+	print("Brightness contrast between E and D65: " + str(brightness_contrast(e, d65)))
+	print("Brightness contrast between E and A: " + str(brightness_contrast(e, a)))
+	print("Brightness contrast between E and incandescent: " + str(brightness_contrast(e, incandescent)))
+	print("Brightness contrast between D65 and D65: " + str(brightness_contrast(d65, d65)))
+	print("Brightness contrast between D65 and A: " + str(brightness_contrast(d65, a)))
+	print("Brightness contrast between D65 and incandescent: " + str(brightness_contrast(d65, incandescent)))
+	print("Brightness contrast between A and A: " + str(brightness_contrast(a, a)))
+	print("Brightness contrast between A and incandescent: " + str(brightness_contrast(a, incandescent)))
+	print("Brightness contrast between incandescent and incandescent: " + str(brightness_contrast(incandescent, incandescent)))
+
 # leaves
 # Again, something is wrong with the XYZ conversions. The LCHab hues kind of make sense
 # if you interpret them as HSL/HSV hues, but they're not supposed to work that way --
@@ -932,13 +1240,17 @@ if (args.leaves):
 	# https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEgKwT9GhKlvdbOROD_JtEEym7Ovzq8GPfSCORiVcKklEQI9DSTuNjoaIJMWMdpJpc4ijq0T1m_PXF2seWczauKLz-4VPIY9TSXQqXdp1B80vu4w5O4lWaAF0k2kaA5ThrJrjCzlck8Ez1fF/s1600/LeafSpectra.jpg
 	# The graph has information for 300-400 but appears to be roughly 0 there.
 	leaf_table = np.array([
+		0.0, # 300
 		0.0,
 		0.0,
 		0.0,
 		0.0,
 		0.0,
 		0.0,
-		0.01,
+		0.0,
+		0.0,
+		0.0,
+		0.01, # 400
 		0.01,
 		0.02,
 		0.02,
@@ -948,7 +1260,7 @@ if (args.leaves):
 		0.03,
 		0.04,
 		0.04,
-		0.05,
+		0.05, # 500
 		0.08,
 		0.19,
 		0.23,
@@ -958,7 +1270,7 @@ if (args.leaves):
 		0.23,
 		0.19,
 		0.17,
-		0.17,
+		0.17, # 600
 		0.15,
 		0.14,
 		0.14,
@@ -968,7 +1280,7 @@ if (args.leaves):
 		0.04,
 		0.10,
 		0.30,
-		0.35,
+		0.35, # 700
 		0.45,
 		0.55,
 		0.60,
@@ -978,15 +1290,23 @@ if (args.leaves):
 		0.65,
 		0.65,
 		0.65,
+		0.65, # 800
 		0.65,
 		0.65,
 		0.65,
-		0.65
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0 # 900
 	])
 	print("Green maple leaf")
 	spectral_rendering(leaf_table)
 	
 	red_leaf_table = np.array([
+		0.0, # 300
 		0.0,
 		0.0,
 		0.0,
@@ -996,6 +1316,7 @@ if (args.leaves):
 		0.0,
 		0.0,
 		0.0,
+		0.0, # 400
 		0.0,
 		0.0,
 		0.0,
@@ -1005,9 +1326,7 @@ if (args.leaves):
 		0.0,
 		0.0,
 		0.0,
-		0.0,
-		0.0,
-		0.0,
+		0.0, # 500
 		0.01,
 		0.01,
 		0.02,
@@ -1017,7 +1336,7 @@ if (args.leaves):
 		0.06,
 		0.08,
 		0.10,
-		0.10,
+		0.10, # 600
 		0.09,
 		0.08,
 		0.05,
@@ -1027,7 +1346,7 @@ if (args.leaves):
 		0.45,
 		0.55,
 		0.60,
-		0.63,
+		0.63, # 700
 		0.65,
 		0.65,
 		0.65,
@@ -1036,50 +1355,35 @@ if (args.leaves):
 		0.65,
 		0.65,
 		0.65,
-		0.65
+		0.65,
+		0.0, # 800
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0 # 900
 	])
 	print("Red maple leaf")
 	spectral_rendering(red_leaf_table)
 	
 	# color/brightness contrast test
-	lg = 0
-	mg = 0
-	sg = 0
-	lr = 0
-	mr = 0
-	sr = 0
-	for i in range(leaf_table.shape[0]):
-		w = i*10 + 340
-		lg += vpt(w, l1) * leaf_table[i]
-		mg += vpt(w, m1) * leaf_table[i]
-		sg += vpt(w, s1) * leaf_table[i]
-		lr += vpt(w, l1) * red_leaf_table[i]
-		mr += vpt(w, m1) * red_leaf_table[i]
-		sr += vpt(w, s1) * red_leaf_table[i]
-	if (l1 != m1):
-		tg = lg + mg + sg
-		tr = lr + mr + sr
-	else:
-		tg = lg + sg
-		tr = lr + sr
-	lg = lg / tg
-	mg = mg / tg
-	sg = sg / tg
-	lr = lr / tr
-	mr = mr / tr
-	sr = sr / tr
-	g = [lg, mg, sg]
-	r = [lr, mr, sr]
-	print(g)
-	print(r)
-	
-	print("Color contrast between green and red maple leaves: " + str(color_contrast([lg, mg, sg], [lr, mr, sr])))
-	print("Brightness contrast between green and red maple leaves: " + str(brightness_contrast([lg, mg, sg], [lr, mr, sr])))
+	print("Color contrast between green and red maple leaves: " + str(color_contrast(leaf_table, red_leaf_table)))
+	print("Brightness contrast between green and red maple leaves: " + str(brightness_contrast(leaf_table, red_leaf_table)))
 	print("")
 	
 	# corn
 	# estimated from https://www.yorku.ca/planters/photosynthesis/2014_08_15_lab_manual_static_html/images/Corn_leaf_reflectance.png. Values below 400 are estimated to be the same as 400.
 	corn_table = np.array([
+		0.45,
+		0.45,
+		0.45,
+		0.45,
 		0.45,
 		0.45,
 		0.45,
@@ -1129,7 +1433,14 @@ if (args.leaves):
 		0.80,
 		0.80,
 		0.80,
-		0.80
+		0.80,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0
 	])
 	print("Corn leaf")
 	spectral_rendering(corn_table)
@@ -1137,6 +1448,10 @@ if (args.leaves):
 	# hydrangea
 	# estimated from https://spectralevolution.com/wp-content/uploads/2024/04/RT_hydrang_ref.jpg
 	hydrangea_table = np.array([
+		0.2,
+		0.2,
+		0.2,
+		0.2,
 		0.2,
 		0.2,
 		0.175,
@@ -1186,7 +1501,14 @@ if (args.leaves):
 		0.525,
 		0.525,
 		0.525,
-		0.525
+		0.525,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0
 	])
 	print("Hydrangea leaf")
 	spectral_rendering(hydrangea_table)
@@ -1196,10 +1518,10 @@ if (args.leaves):
 	
 if (args.flowers):
 	flower0_table = np.array([
-		#0.05,
-		#0.08,
-		#0.08,
-		#0.08,
+		0.05,
+		0.08,
+		0.08,
+		0.08,
 		0.08,
 		0.08,
 		0.08,
@@ -1249,15 +1571,23 @@ if (args.flowers):
 		0.08,
 		0.08,
 		0.08,
-		0.08
+		0.08,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0
 	])
 	print("Blue flower")
 	spectral_rendering(flower0_table)
 		
 	flower1_table = np.array([
-		#0.08,
-		#0.08,
-		#0.08,
+		0.08,
+		0.08,
+		0.08,
+		0.08,
 		0.08,
 		0.1,
 		0.1,
@@ -1307,13 +1637,24 @@ if (args.flowers):
 		0.1,
 		0.1,
 		0.1,
-		0.1
+		0.1,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0
 	])
 	print("Yellow flower")
 	spectral_rendering(flower1_table)
 	
 	# green flower
 	flower2_table = np.array([
+		0.0,
+		0.0,
+		0.0,
+		0.0,
 		0.120045133,
 		0.12964042,
 		0.135836894,
@@ -1363,6 +1704,13 @@ if (args.flowers):
 		0.0,
 		0.0,
 		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
 		0.0
 	])
 	print("Green flower")
@@ -1373,6 +1721,10 @@ if (args.flowers):
 	
 	# immature
 	banksia0_table = np.array([
+		0.0,
+		0.0,
+		0.0,
+		0.0,
 		0.0,
 		0.0,
 		0.0,
@@ -1422,13 +1774,24 @@ if (args.flowers):
 		0.9375,
 		0.9375,
 		0.9375,
-		0.9375
+		0.9375,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0
 	])
 	print("Immature Banksia attenuata flower")
 	spectral_rendering(banksia0_table)
 	
 	# mature
 	banksia1_table = np.array([
+		0.0,
+		0.0,
+		0.0,
+		0.0,
 		0.0,
 		0.0,
 		0.0,
@@ -1478,35 +1841,47 @@ if (args.flowers):
 		0.75,
 		0.75,
 		0.75,
-		0.75
+		0.75,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0,
+		0.0
 	])
 	print("Mature Banksia attenuata flower")
 	spectral_rendering(banksia1_table)
+	
+	print("Color contrast between blue and yellow flower: " + str(color_contrast(flower0_table, flower1_table)))
+	print("Brightness contrast between blue and yellow flower: " + str(brightness_contrast(flower0_table, flower1_table)))
+	print("Color contrast between Banksia flowers: " + str(color_contrast(banksia0_table, banksia1_table)))
+	print("Brightness contrast between Banksia flowers: " + str(brightness_contrast(banksia0_table, banksia1_table)))
 
 # sky and daylight
 # These are both normalized to "1" at 550 nm. If I try to make "sky" relative to "daylight",
 # the values are way too low and probably not meaningful.
 if (args.sky):
-	daylight_table = np.empty(50)
-	for i in range(0, 50):
-		w = i*10 + 340
+	daylight_table = np.empty(61)
+	for i in range(0, 61):
+		w = i*10 + 300
 		# normalize to 1 at 550
 		daylight_table[i] = blackbody(w / 1000000000, 5800) / blackbody(550 / 1000000000, 5800)
 	
 	print("Black body spectrum approximating daylight")
 	spectral_rendering(daylight_table, light_source=e)
 	
-	sky_table = np.empty(50)
-	for i in range(0, 50):
-		w = i*10 + 340
+	sky_table = np.empty(61)
+	for i in range(0, 61):
+		w = i*10 + 300
 		sky_table[i] = blackbody(w / 1000000000, 5800) * w**-4 / (blackbody(550 / 1000000000, 5800) * 550**-4)
 		
 	print("Black body spectrum with Rayleigh scattering approximating a blue sky")
 	spectral_rendering(sky_table, light_source=e)
 	
-	sky1_table = np.empty(50)
-	for i in range(0, 50):
-		w = i*10 + 340
+	sky1_table = np.empty(61)
+	for i in range(0, 61):
+		w = i*10 + 300
 		sky1_table[i] = d65[i] * w**-4 * 5e8
 	
 	print("D65 with Rayleigh scattering")
@@ -2479,6 +2854,41 @@ if (args.kodak or args.kcheck):
 	])
 	
 	if (args.kcheck):
+		# plot test
+		xvalues = np.empty(61)
+		for i in range(0, 61):
+			xvalues[i] = i*10 + 300
+		plt.plot(xvalues, red25, 'o-r', mec='k', label="red 25")
+		plt.plot(xvalues, yellow15, 's-y', mec='k', label="yellow 15")
+		plt.plot(xvalues, green58, '^-g', mec='k', label="green 58")
+		plt.plot(xvalues, blue47, 'D-b', mec='k', label="blue 47")
+		plt.xlabel("Wavelength (nm)")
+		plt.ylabel("Optical density")
+		plt.legend()
+		plt.show()
+		
+		# transmission
+		red25t = np.empty(61)
+		for i in range(0, 61):
+			red25t[i] = math.exp(-red25[i]) * 100
+		yellow15t = np.empty(61)
+		for i in range(0, 61):
+			yellow15t[i] = math.exp(-yellow15[i]) * 100
+		green58t = np.empty(61)
+		for i in range(0, 61):
+			green58t[i] = math.exp(-green58[i]) * 100
+		blue47t = np.empty(61)
+		for i in range(0, 61):
+			blue47t[i] = math.exp(-blue47[i]) * 100
+		plt.plot(xvalues, red25t, 'o-r', mec='k', label="red 25")
+		plt.plot(xvalues, yellow15t, 's-y', mec='k', label="yellow 15")
+		plt.plot(xvalues, green58t, '^-g', mec='k', label="green 58")
+		plt.plot(xvalues, blue47t, 'D-b', mec='k', label="blue 47")
+		plt.xlabel("Wavelength (nm)")
+		plt.ylabel("Transmission (%)")
+		plt.legend()
+		plt.show()
+		
 		# red brightness tests
 		red25_01 = np.empty(61)
 		for i in range(0, 61):
@@ -2552,6 +2962,18 @@ if (args.kodak or args.kcheck):
 		red25_1002t = np.empty(61)
 		for i in range(0, 61):
 			red25_1002t[i] = math.exp(-red25_1002[i])
+		red25_1003 = np.empty(61)
+		for i in range(0, 61):
+			red25_1003[i] = red25[i] + nd10[i] + nd03[i]
+		red25_1003t = np.empty(61)
+		for i in range(0, 61):
+			red25_1003t[i] = math.exp(-red25_1003[i])
+		red25_1004 = np.empty(61)
+		for i in range(0, 61):
+			red25_1004[i] = red25[i] + nd10[i] + nd04[i]
+		red25_1004t = np.empty(61)
+		for i in range(0, 61):
+			red25_1004t[i] = math.exp(-red25_1004[i])
 		red25_20 = np.empty(61)
 		for i in range(0, 61):
 			red25_20[i] = red25[i] + nd20[i]
@@ -2784,165 +3206,60 @@ if (args.kodak or args.kcheck):
 		for i in range(0, 61):
 			blue47t[i] = math.exp(-blue47[i])
 		
-		print("Kodak Wratten red 25")
-		print("+ 0.1")
-		r01 = spectral_rendering(red25_01t, start=300)
-		print("+ 0.2")
-		r02 = spectral_rendering(red25_02t, start=300)
-		print("+ 0.3")
-		r03 = spectral_rendering(red25_03t, start=300)
-		print("+ 0.4")
-		r04 = spectral_rendering(red25_04t, start=300)
-		print("+ 0.5")
-		r05 = spectral_rendering(red25_05t, start=300)
-		print("+ 0.6")
-		r06 = spectral_rendering(red25_06t, start=300)
-		print("+ 0.7")
-		r07 = spectral_rendering(red25_07t, start=300)
-		print("+ 0.8")
-		r08 = spectral_rendering(red25_08t, start=300)
-		print("+ 0.9")
-		r09 = spectral_rendering(red25_09t, start=300)
-		print("+ 1.0")
-		r10 = spectral_rendering(red25_10t, start=300)
-		print("+ 1.0 + 0.1")
-		r1001 = spectral_rendering(red25_1001t, start=300)
-		print("+ 1.0 + 0.2")
-		r1002 = spectral_rendering(red25_1002t, start=300)
-		print("+ 2.0")
-		r20 = spectral_rendering(red25_20t, start=300)
-		
-		print("Kodak Wratten yellow 15")
-		print("+ 0.1")
-		y01 = spectral_rendering(yellow15_01t, start=300)
-		print("+ 0.2")
-		y02 = spectral_rendering(yellow15_02t, start=300)
-		print("+ 0.3")
-		y03 = spectral_rendering(yellow15_03t, start=300)
-		print("+ 0.4")
-		y04 = spectral_rendering(yellow15_04t, start=300)
-		print("+ 0.5")
-		y05 = spectral_rendering(yellow15_05t, start=300)
-		print("+ 0.6")
-		y06 = spectral_rendering(yellow15_06t, start=300)
-		print("+ 0.7")
-		y07 = spectral_rendering(yellow15_07t, start=300)
-		print("+ 0.8")
-		y08 = spectral_rendering(yellow15_08t, start=300)
-		print("+ 0.9")
-		y09 = spectral_rendering(yellow15_09t, start=300)
-		print("+ 1.0")
-		y10 = spectral_rendering(yellow15_10t, start=300)
-		print("+ 1.0 + 0.1")
-		y1001 = spectral_rendering(yellow15_1001t, start=300)
-		print("+ 1.0 + 0.2")
-		y1002 = spectral_rendering(yellow15_1002t, start=300)
-		print("+ 1.0 + 1.0")
-		y1010 = spectral_rendering(yellow15_1010t, start=300)
-		print("+ 2.0")
-		y20 = spectral_rendering(yellow15_20t, start=300)
-		print("+ 2.0 + 0.1")
-		y2001 = spectral_rendering(yellow15_2001t, start=300)
-		print("+ 2.0 + 0.2")
-		y2002 = spectral_rendering(yellow15_2002t, start=300)
-		print("+ 2.0 + 0.3")
-		y2003 = spectral_rendering(yellow15_2003t, start=300)
-		print("+ 2.0 + 0.4")
-		y2004 = spectral_rendering(yellow15_2004t, start=300)
-		print("+ 2.0 + 0.5")
-		y2005 = spectral_rendering(yellow15_2005t, start=300)
-		print("+ 2.0 + 0.6")
-		y2006 = spectral_rendering(yellow15_2006t, start=300)
-		print("+ 2.0 + 0.7")
-		y2007 = spectral_rendering(yellow15_2007t, start=300)
-		
-		print("Kodak Wratten green 58")
-		print("+ 0.1")
-		g01 = spectral_rendering(green58_01t, start=300)
-		print("+ 0.2")
-		g02 = spectral_rendering(green58_02t, start=300)
-		print("+ 0.3")
-		g03 = spectral_rendering(green58_03t, start=300)
-		print("+ 0.4")
-		g04 = spectral_rendering(green58_04t, start=300)
-		print("+ 0.5")
-		g05 = spectral_rendering(green58_05t, start=300)
-		print("+ 0.6")
-		g06 = spectral_rendering(green58_06t, start=300)
-		print("+ 0.7")
-		g07 = spectral_rendering(green58_07t, start=300)
-		print("+ 0.8")
-		g08 = spectral_rendering(green58_08t, start=300)
-		print("+ 0.9")
-		g09 = spectral_rendering(green58_09t, start=300)
-		print("+ 1.0")
-		g10 = spectral_rendering(green58_10t, start=300)
-		print("+ 1.0 + 0.1")
-		g1001 = spectral_rendering(green58_1001t, start=300)
-		print("+ 1.0 + 0.2")
-		g1002 = spectral_rendering(green58_1002t, start=300)
-		print("+ 1.0 + 0.3")
-		g1003 = spectral_rendering(green58_1003t, start=300)
-		print("+ 1.0 + 0.4")
-		g1004 = spectral_rendering(green58_1004t, start=300)
-		print("+ 2.0")
-		g20 = spectral_rendering(green58_20t, start=300)
-		
-		print("Kodak Wratten blue 47 (unfiltered)")
-		b00 = spectral_rendering(blue47t, start=300)
-		
 		print("Brightness difference between blue and red:")
-		print("0.1: " + str(r01 - b00))
-		print("0.2: " + str(r02 - b00))
-		print("0.3: " + str(r03 - b00))
-		print("0.4: " + str(r04 - b00))
-		print("0.5: " + str(r05 - b00))
-		print("0.6: " + str(r06 - b00))
-		print("0.7: " + str(r07 - b00))
-		print("0.8: " + str(r08 - b00))
-		print("0.9: " + str(r09 - b00))
-		print("1.0: " + str(r10 - b00))
-		print("1.0 + 0.1: " + str(r1001 - b00))
-		print("1.0 + 0.2: " + str(r1002 - b00))
-		print("2.0: " + str(r20 - b00))
+		print("0.1: " + str(brightness_contrast(red25_01t, blue47t)))
+		print("0.2: " + str(brightness_contrast(red25_02t, blue47t)))
+		print("0.3: " + str(brightness_contrast(red25_03t, blue47t)))
+		print("0.4: " + str(brightness_contrast(red25_04t, blue47t)))
+		print("0.5: " + str(brightness_contrast(red25_05t, blue47t)))
+		print("0.6: " + str(brightness_contrast(red25_06t, blue47t)))
+		print("0.7: " + str(brightness_contrast(red25_07t, blue47t)))
+		print("0.8: " + str(brightness_contrast(red25_08t, blue47t)))
+		print("0.9: " + str(brightness_contrast(red25_09t, blue47t)))
+		print("1.0: " + str(brightness_contrast(red25_10t, blue47t)))
+		print("1.0 + 0.1: " + str(brightness_contrast(red25_1001t, blue47t)))
+		print("1.0 + 0.2: " + str(brightness_contrast(red25_1002t, blue47t)))
+		print("1.0 + 0.3: " + str(brightness_contrast(red25_1003t, blue47t)))
+		print("1.0 + 0.4: " + str(brightness_contrast(red25_1004t, blue47t)))
+		print("2.0: " + str(brightness_contrast(red25_20t, blue47t)))
 		print("Brightness difference between blue and yellow:")
-		print("0.1: " + str(y01 - b00))
-		print("0.2: " + str(y02 - b00))
-		print("0.3: " + str(y03 - b00))
-		print("0.4: " + str(y04 - b00))
-		print("0.5: " + str(y05 - b00))
-		print("0.6: " + str(y06 - b00))
-		print("0.7: " + str(y07 - b00))
-		print("0.8: " + str(y08 - b00))
-		print("0.9: " + str(y09 - b00))
-		print("1.0: " + str(y10 - b00))
-		print("1.0 + 0.1: " + str(y1001 - b00))
-		print("1.0 + 0.2: " + str(y1002 - b00))
-		print("1.0 + 1.0: " + str(y1010 - b00))
-		print("2.0: " + str(y20 - b00))
-		print("2.0 + 0.1: " + str(y2001 - b00))
-		print("2.0 + 0.2: " + str(y2002 - b00))
-		print("2.0 + 0.3: " + str(y2003 - b00))
-		print("2.0 + 0.4: " + str(y2004 - b00))
-		print("2.0 + 0.5: " + str(y2005 - b00))
-		print("2.0 + 0.6: " + str(y2006 - b00))
-		print("2.0 + 0.7: " + str(y2007 - b00))
+		print("0.1: " + str(brightness_contrast(yellow15_01t, blue47t)))
+		print("0.2: " + str(brightness_contrast(yellow15_02t, blue47t)))
+		print("0.3: " + str(brightness_contrast(yellow15_03t, blue47t)))
+		print("0.4: " + str(brightness_contrast(yellow15_04t, blue47t)))
+		print("0.5: " + str(brightness_contrast(yellow15_05t, blue47t)))
+		print("0.6: " + str(brightness_contrast(yellow15_06t, blue47t)))
+		print("0.7: " + str(brightness_contrast(yellow15_07t, blue47t)))
+		print("0.8: " + str(brightness_contrast(yellow15_08t, blue47t)))
+		print("0.9: " + str(brightness_contrast(yellow15_09t, blue47t)))
+		print("1.0: " + str(brightness_contrast(yellow15_10t, blue47t)))
+		print("1.0 + 0.1: " + str(brightness_contrast(yellow15_1001t, blue47t)))
+		print("1.0 + 0.2: " + str(brightness_contrast(yellow15_1002t, blue47t)))
+		print("1.0 + 1.0: " + str(brightness_contrast(yellow15_1010t, blue47t)))
+		print("2.0: " + str(brightness_contrast(yellow15_20t, blue47t)))
+		print("2.0 + 0.1: " + str(brightness_contrast(yellow15_2001t, blue47t)))
+		print("2.0 + 0.2: " + str(brightness_contrast(yellow15_2002t, blue47t)))
+		print("2.0 + 0.3: " + str(brightness_contrast(yellow15_2003t, blue47t)))
+		print("2.0 + 0.4: " + str(brightness_contrast(yellow15_2004t, blue47t)))
+		print("2.0 + 0.5: " + str(brightness_contrast(yellow15_2005t, blue47t)))
+		print("2.0 + 0.6: " + str(brightness_contrast(yellow15_2006t, blue47t)))
+		print("2.0 + 0.7: " + str(brightness_contrast(yellow15_2007t, blue47t)))
 		print("Brightness difference between blue and green:")
-		print("0.1: " + str(g01 - b00))
-		print("0.2: " + str(g02 - b00))
-		print("0.3: " + str(g03 - b00))
-		print("0.4: " + str(g04 - b00))
-		print("0.5: " + str(g05 - b00))
-		print("0.6: " + str(g06 - b00))
-		print("0.7: " + str(g07 - b00))
-		print("0.8: " + str(g08 - b00))
-		print("0.9: " + str(g09 - b00))
-		print("1.0: " + str(g10 - b00))
-		print("1.0 + 0.1: " + str(g1001 - b00))
-		print("1.0 + 0.2: " + str(g1002 - b00))
-		print("1.0 + 0.3: " + str(g1003 - b00))
-		print("1.0 + 0.4: " + str(g1004 - b00))
-		print("2.0: " + str(g20 - b00))
+		print("0.1: " + str(brightness_contrast(green58_01t, blue47t)))
+		print("0.2: " + str(brightness_contrast(green58_02t, blue47t)))
+		print("0.3: " + str(brightness_contrast(green58_03t, blue47t)))
+		print("0.4: " + str(brightness_contrast(green58_04t, blue47t)))
+		print("0.5: " + str(brightness_contrast(green58_05t, blue47t)))
+		print("0.6: " + str(brightness_contrast(green58_06t, blue47t)))
+		print("0.7: " + str(brightness_contrast(green58_07t, blue47t)))
+		print("0.8: " + str(brightness_contrast(green58_08t, blue47t)))
+		print("0.9: " + str(brightness_contrast(green58_09t, blue47t)))
+		print("1.0: " + str(brightness_contrast(green58_10t, blue47t)))
+		print("1.0 + 0.1: " + str(brightness_contrast(green58_1001t, blue47t)))
+		print("1.0 + 0.2: " + str(brightness_contrast(green58_1002t, blue47t)))
+		print("1.0 + 0.3: " + str(brightness_contrast(green58_1003t, blue47t)))
+		print("1.0 + 0.4: " + str(brightness_contrast(green58_1004t, blue47t)))
+		print("2.0: " + str(brightness_contrast(green58_20t, blue47t)))
 	
 	if (args.kodak):
 		# red 25
@@ -2965,7 +3282,7 @@ if (args.kodak or args.kcheck):
 		# yellow 15
 		yellow15e = np.empty(61)
 		for i in range(0, 61):
-			yellow15e[i] = yellow15[i] + nd10[i] + nd10[i]
+			yellow15e[i] = yellow15[i] + nd20[i] + nd05[i]
 		yellow15e_0 = np.empty(61)
 		for i in range(0, 61):
 			yellow15e_0[i] = math.exp(-yellow15e[i])
@@ -3010,139 +3327,322 @@ if (args.kodak or args.kcheck):
 		for i in range(0, 61):
 			blue47_10[i] = math.exp(-(blue47[i] + nd10[i]))
 		
-		# brightness levels
+		# brightness levels and color space coordinates
 		red25l = np.empty(4)
-		print("Red 25 (+ 1.0 + 0.1)")
-		red25l[0] = spectral_rendering(red25e_0, start=300)
+		red25cs = np.empty(4)
+		red25cs1 = np.empty(4)
+		print("Red 25 (+ 1.0 + 0.2)")
+		red25data = spectral_rendering(red25e_0)
+		red25l[0] = red25data[0]
+		red25cs[0] = red25data[1]
+		red25cs1[0] = red25data[2]
 		print("+ 0.3")
-		red25l[1] = spectral_rendering(red25e_03, start=300)
+		red25data = spectral_rendering(red25e_03)
+		red25l[1] = red25data[0]
+		red25cs[1] = red25data[1]
+		red25cs1[1] = red25data[2]
 		print("+ 0.7")
-		red25l[2] = spectral_rendering(red25e_07, start=300)
+		red25data = spectral_rendering(red25e_07)
+		red25l[2] = red25data[0]
+		red25cs[2] = red25data[1]
+		red25cs1[2] = red25data[2]
 		print("+ 1.0")
-		red25l[3] = spectral_rendering(red25e_10, start=300)
+		red25data = spectral_rendering(red25e_10)
+		red25l[3] = red25data[0]
+		red25cs[3] = red25data[1]
+		red25cs1[3] = red25data[2]
 		
 		yellow15l = np.empty(4)
-		print("Yellow 15 (+ 1.0 + 1.0)")
-		yellow15l[0] = spectral_rendering(yellow15e_0, start=300)
+		yellow15cs = np.empty(4)
+		yellow15cs1 = np.empty(4)
+		print("Yellow 15 (+ 2.0 + 0.6)")
+		yellow15data = spectral_rendering(yellow15e_0)
+		yellow15l[0] = yellow15data[0]
+		yellow15cs[0] = yellow15data[1]
+		yellow15cs1[0] = yellow15data[2]
 		print("+ 0.3")
-		yellow15l[1] = spectral_rendering(yellow15e_03, start=300)
+		yellow15data = spectral_rendering(yellow15e_03)
+		yellow15l[1] = yellow15data[0]
+		yellow15cs[1] = yellow15data[1]
+		yellow15cs1[1] = yellow15data[2]
 		print("+ 0.7")
-		yellow15l[2] = spectral_rendering(yellow15e_07, start=300)
+		yellow15data = spectral_rendering(yellow15e_07)
+		yellow15l[2] = yellow15data[0]
+		yellow15cs[2] = yellow15data[1]
+		yellow15cs1[2] = yellow15data[2]
 		print("+ 1.0")
-		yellow15l[3] = spectral_rendering(yellow15e_10, start=300)
+		yellow15data = spectral_rendering(yellow15e_10)
+		yellow15l[3] = yellow15data[0]
+		yellow15cs[3] = yellow15data[1]
+		yellow15cs1[3] = yellow15data[2]
 		
 		green58l = np.empty(4)
+		green58cs = np.empty(4)
+		green58cs1 = np.empty(4)
 		print("Green 58 (+ 1.0 + 0.3)")
-		green58l[0] = spectral_rendering(green58e_0, start=300)
+		green58data = spectral_rendering(green58e_0)
+		green58l[0] = green58data[0]
+		green58cs[0] = green58data[1]
+		green58cs1[0] = green58data[2]
 		print("+ 0.3")
-		green58l[1] = spectral_rendering(green58e_03, start=300)
+		green58data = spectral_rendering(green58e_03)
+		green58l[1] = green58data[0]
+		green58cs[1] = green58data[1]
+		green58cs1[1] = green58data[2]
 		print("+ 0.7")
-		green58l[2] = spectral_rendering(green58e_07, start=300)
+		green58data = spectral_rendering(green58e_07)
+		green58l[2] = green58data[0]
+		green58cs[2] = green58data[1]
+		green58cs1[2] = green58data[2]
 		print("+ 1.0")
-		green58l[3] = spectral_rendering(green58e_10, start=300)
+		green58data = spectral_rendering(green58e_10)
+		green58l[3] = green58data[0]
+		green58cs[3] = green58data[1]
+		green58cs1[3] = green58data[2]
 		
 		blue47l = np.empty(4)
+		blue47cs = np.empty(4)
+		blue47cs1 = np.empty(4)
 		print("Blue 47")
-		blue47l[0] = spectral_rendering(blue47_0, start=300)
+		blue47data = spectral_rendering(blue47_0)
+		blue47l[0] = blue47data[0]
+		blue47cs[0] = blue47data[1]
+		blue47cs1[0] = blue47data[2]
 		print("+ 0.3")
-		blue47l[1] = spectral_rendering(blue47_03, start=300)
+		blue47data = spectral_rendering(blue47_03)
+		blue47l[1] = blue47data[0]
+		blue47cs[1] = blue47data[1]
+		blue47cs1[1] = blue47data[2]
 		print("+ 0.7")
-		blue47l[2] = spectral_rendering(blue47_07, start=300)
+		blue47data = spectral_rendering(blue47_07)
+		blue47l[2] = blue47data[0]
+		blue47cs[2] = blue47data[1]
+		blue47cs1[2] = blue47data[2]
 		print("+ 1.0")
-		blue47l[3] = spectral_rendering(blue47_10, start=300)
+		blue47data = spectral_rendering(blue47_10)
+		blue47l[3] = blue47data[0]
+		blue47cs[3] = blue47data[1]
+		blue47cs1[3] = blue47data[2]
 		
 		# brightness differences between colors
+		# We want to know both the direction and the strength of the difference
+		# to judge whether it could be reliably used as a cue.
 		
 		# red-yellow
 		ry = 0 # red brighter
 		yr = 0 # yellow brighter
 		equal = 0
 		for i in range(0, 4):
+			if (i == 0):
+				rlevel = red25e
+			elif (i == 1):
+				rlevel = red25e_03
+			elif (i == 2):
+				rlevel = red25e_07
+			elif (i == 3):
+				rlevel = red25e_10
 			for j in range(0, 4):
+				if (j == 0):
+					ylevel = yellow15e
+				elif (j == 1):
+					ylevel = yellow15e_03
+				elif (j == 2):
+					ylevel = yellow15e_07
+				elif (j == 3):
+					ylevel = yellow15e_10
 				diff = red25l[i] - yellow15l[j]
-				#print(diff)
-				if (diff > 0):
-					ry += 1
-				elif (diff < 0):
-					yr += 1
+				contrast = brightness_contrast(rlevel, ylevel)
+				if (contrast >= 1):
+					if (diff > 0):
+						ry += 1
+					elif (diff < 0):
+						yr += 1
+				else:
+					equal += 1
 		print("R-Y brightness differences:")
 		print("Red brighter: " + str(ry))
 		print("Yellow brighter: " + str(yr))
+		print("Equal: " + str(equal))
 		
 		# red-green
 		rg = 0 # red brighter
 		gr = 0 # green brighter
 		equal = 0
 		for i in range(0, 4):
+			if (i == 0):
+				rlevel = red25e
+			elif (i == 1):
+				rlevel = red25e_03
+			elif (i == 2):
+				rlevel = red25e_07
+			elif (i == 3):
+				rlevel = red25e_10
 			for j in range(0, 4):
+				if (j == 0):
+					glevel = green58e
+				elif (j == 1):
+					glevel = green58e_03
+				elif (j == 2):
+					glevel = green58e_07
+				elif (j == 3):
+					glevel = green58e_10
 				diff = red25l[i] - green58l[j]
-				if (diff > 0):
-					rg += 1
-				elif (diff < 0):
-					gr += 1
+				contrast = brightness_contrast(rlevel, glevel)
+				if (contrast >= 1):
+					if (diff > 0):
+						rg += 1
+					elif (diff < 0):
+						gr += 1
+				else:
+					equal += 1
 		print("R-G brightness differences:")
 		print("Red brighter: " + str(rg))
 		print("Green brighter: " + str(gr))
+		print("Equal: " + str(equal))
 		
 		# red-blue
 		rb = 0 # red brighter
 		br = 0 # blue brighter
 		equal = 0
 		for i in range(0, 4):
+			if (i == 0):
+				rlevel = red25e
+			elif (i == 1):
+				rlevel = red25e_03
+			elif (i == 2):
+				rlevel = red25e_07
+			elif (i == 3):
+				rlevel = red25e_10
 			for j in range(0, 4):
+				if (j == 0):
+					blevel = blue47
+				elif (j == 1):
+					blevel = blue47_03
+				elif (j == 2):
+					blevel = blue47_07
+				elif (j == 3):
+					blevel = blue47_10
 				diff = red25l[i] - blue47l[j]
-				if (diff > 0):
-					rb += 1
-				elif (diff < 0):
-					br += 1
+				contrast = brightness_contrast(rlevel, blevel)
+				if (contrast >= 1):
+					if (diff > 0):
+						rb += 1
+					elif (diff < 0):
+						br += 1
+				else:
+					equal += 1
 		print("R-B brightness differences:")
 		print("Red brighter: " + str(rb))
 		print("Blue brighter: " + str(br))
+		print("Equal: " + str(equal))
 		
 		# yellow-green
 		yg = 0 # yellow brighter
 		gy = 0 # green brighter
 		equal = 0
 		for i in range(0, 4):
+			if (i == 0):
+				ylevel = yellow15e
+			elif (i == 1):
+				ylevel = yellow15e_03
+			elif (i == 2):
+				ylevel = yellow15e_07
+			elif (i == 3):
+				ylevel = yellow15e_10
 			for j in range(0, 4):
+				if (j == 0):
+					glevel = green58e
+				elif (j == 1):
+					glevel = green58e_03
+				elif (j == 2):
+					glevel = green58e_07
+				elif (j == 3):
+					glevel = green58e_10
 				diff = yellow15l[i] - green58l[j]
-				if (diff > 0):
-					yg += 1
-				elif (diff < 0):
-					gy += 1
+				contrast = brightness_contrast(ylevel, glevel)
+				if (contrast >= 1):
+					if (diff > 0):
+						yg += 1
+					elif (diff < 0):
+						gy += 1
+				else:
+					equal += 1
 		print("Y-G brightness differences:")
 		print("Yellow brighter: " + str(yg))
 		print("Green brighter: " + str(gy))
+		print("Equal: " + str(equal))
 		
 		# yellow-blue
 		yb = 0 # yellow brighter
 		by = 0 # blue brighter
 		equal = 0
 		for i in range(0, 4):
+			if (i == 0):
+				ylevel = yellow15e
+			elif (i == 1):
+				ylevel = yellow15e_03
+			elif (i == 2):
+				ylevel = yellow15e_07
+			elif (i == 3):
+				ylevel = yellow15e_10
 			for j in range(0, 4):
+				if (j == 0):
+					blevel = blue47
+				elif (j == 1):
+					blevel = blue47_03
+				elif (j == 2):
+					blevel = blue47_07
+				elif (j == 3):
+					blevel = blue47_10
 				diff = yellow15l[i] - blue47l[j]
-				if (diff > 0):
-					yb += 1
-				elif (diff < 0):
-					by += 1
+				contrast = brightness_contrast(ylevel, blevel)
+				if (contrast >= 1):
+					if (diff > 0):
+						yb += 1
+					elif (diff < 0):
+						by += 1
+				else:
+					equal += 1
 		print("Y-B brightness differences:")
 		print("Yellow brighter: " + str(yb))
 		print("Blue brighter: " + str(by))
+		print("Equal: " + str(equal))
 		
 		# green-blue
 		gb = 0 # green brighter
 		bg = 0 # blue brighter
 		equal = 0
 		for i in range(0, 4):
+			if (i == 0):
+				glevel = green58e
+			elif (i == 1):
+				glevel = green58e_03
+			elif (i == 2):
+				glevel = green58e_07
+			elif (i == 3):
+				glevel = green58e_10
 			for j in range(0, 4):
+				if (j == 0):
+					blevel = blue47
+				elif (j == 1):
+					blevel = blue47_03
+				elif (j == 2):
+					blevel = blue47_07
+				elif (j == 3):
+					blevel = blue47_10
 				diff = green58l[i] - blue47l[j]
-				if (diff > 0):
-					gb += 1
-				elif (diff < 0):
-					bg += 1
+				contrast = brightness_contrast(glevel, blevel)
+				if (contrast >= 1):
+					if (diff > 0):
+						gb += 1
+					elif (diff < 0):
+						bg += 1
+				else:
+					equal += 1
 		print("G-B brightness differences:")
 		print("Green brighter: " + str(gb))
 		print("Blue brighter: " + str(bg))
+		print("Equal: " + str(equal))
 		
 		# significance level of brightness choices assuming a normal distribution
 		integral = 0
@@ -3239,12 +3739,14 @@ if (args.kodak or args.kcheck):
 		x = np.array([0.0, 0.3, 0.7, 1.0])
 		#plt.barh(x, y, color="black")
 		#plt.xlabel("Perceived brightness")
-		plt.plot(x, red25l, 'o-k')
-		plt.plot(x, yellow15l, 's-k', mfc = 'w')
-		plt.plot(x, green58l, '^-k')
-		plt.plot(x, blue47l, 'D-k', mfc = 'w')
+		plt.plot(x, red25l, 'o-r', mec='k', label="red 25")
+		plt.plot(x, yellow15l, 's-y', mec='k', label="yellow 15")
+		plt.plot(x, green58l, '^-g', mec='k', label="green 58")
+		plt.plot(x, blue47l, 'D-b', mec='k', label="blue 47")
 		plt.xlabel("Filter optical density")
 		plt.ylabel("Perceived brightness")
+		plt.yscale("log")
+		plt.legend()
 		plt.show()
 		
 		x = np.array(["R-Y", "R-G", "R-B", "Y-G", "Y-B", "G-B"])
@@ -3255,6 +3757,272 @@ if (args.kodak or args.kcheck):
 		y[3] = (max(yg, gy) / 16) * 100
 		y[4] = (max(yb, by) / 16) * 100
 		y[5] = (max(gb, bg) / 16) * 100
+		plt.bar(x, y, color="black")
+		plt.ylabel("% correct")
+		plt.show()
+		
+		# color differences -- this is the hard part...
+		
+		# first we plot them in a two-dimensional color space with (L-S)/(L+S) on
+		# the x-axis and brightness on the y-axis. Not sure how much this tells us
+		# though.
+		if (l1 == m1):
+			plt.plot(red25cs, red25l, 'or', mec='k', label="red 25")
+			plt.plot(yellow15cs, yellow15l, 'sy', mec='k', label="yellow 15")
+			plt.plot(green58cs, green58l, '^g', mec='k', label="green 58")
+			plt.plot(blue47cs, blue47l, 'Db', mec='k', label="blue 47")
+			plt.xlabel("Chromaticity ((L-S)/(L+S))")
+			plt.ylabel("Brightness (L)")
+			plt.legend()
+			plt.show()
+		else:
+			plt.plot(red25cs, red25cs1, 'or', mec='k', label="red 25")
+			plt.plot(yellow15cs, yellow15cs1, 'sy', mec='k', label="yellow 15")
+			plt.plot(green58cs, green58cs1, '^g', mec='k', label="green 58")
+			plt.plot(blue47cs, blue47cs1, 'Db', mec='k', label="blue 47")
+			plt.xlabel("(L-S)/(L+M+S)")
+			plt.ylabel("(M-0.5(L+S))/(L+M+S)")
+			plt.legend()
+			plt.show()
+		
+		# Next we try to assess whether they're distinguishable. There appears
+		# to be no chromatic overlap, so we won't bother with the direction.
+		
+		y = np.empty(6)
+		
+		# R-Y
+		d = 0 # different
+		n = 0 # near threshold
+		s = 0 # same
+		
+		print("R-Y")
+		for i in range(0, 4):
+			if (i == 0):
+				rlevel = red25e
+			elif (i == 1):
+				rlevel = red25e_03
+			elif (i == 2):
+				rlevel = red25e_07
+			elif (i == 3):
+				rlevel = red25e_10
+			for j in range(0, 4):
+				if (j == 0):
+					ylevel = yellow15e
+				elif (j == 1):
+					ylevel = yellow15e_03
+				elif (j == 2):
+					ylevel = yellow15e_07
+				elif (j == 3):
+					ylevel = yellow15e_10
+				contrast = color_contrast(rlevel, ylevel)
+				print("R" + str(i) + " vs. Y" + str(j) + ": " + str(contrast))
+				if (contrast >= 4):
+					d += 1
+				elif (contrast >= 1):
+					n += 1
+				else:
+					s += 1
+		print("Different: " + str(d))
+		print("Close: " + str(n))
+		print("Same: " + str(s))
+		print("")
+		y[0] = d+n
+		
+		# R-G
+		d = 0
+		n = 0
+		s = 0
+		
+		print("R-G")
+		for i in range(0, 4):
+			if (i == 0):
+				rlevel = red25e
+			elif (i == 1):
+				rlevel = red25e_03
+			elif (i == 2):
+				rlevel = red25e_07
+			elif (i == 3):
+				rlevel = red25e_10
+			for j in range(0, 4):
+				if (j == 0):
+					glevel = green58e
+				elif (j == 1):
+					glevel = green58e_03
+				elif (j == 2):
+					glevel = green58e_07
+				elif (j == 3):
+					glevel = green58e_10
+				contrast = color_contrast(rlevel, glevel)
+				print("R" + str(i) + " vs. G" + str(j) + ": " + str(contrast))
+				if (contrast >= 4):
+					d += 1
+				elif (contrast >= 1):
+					n += 1
+				else:
+					s += 1
+		print("Different: " + str(d))
+		print("Close: " + str(n))
+		print("Same: " + str(s))
+		print("")
+		y[1] = d+n
+		
+		# R-B
+		d = 0
+		n = 0
+		s = 0
+		
+		print("R-B")
+		for i in range(0, 4):
+			if (i == 0):
+				rlevel = red25e
+			elif (i == 1):
+				rlevel = red25e_03
+			elif (i == 2):
+				rlevel = red25e_07
+			elif (i == 3):
+				rlevel = red25e_10
+			for j in range(0, 4):
+				if (j == 0):
+					blevel = blue47
+				elif (j == 1):
+					blevel = blue47_03
+				elif (j == 2):
+					blevel = blue47_07
+				elif (j == 3):
+					blevel = blue47_10
+				contrast = color_contrast(rlevel, blevel)
+				print("R" + str(i) + " vs. B" + str(j) + ": " + str(contrast))
+				if (contrast >= 4):
+					d += 1
+				elif (contrast >= 1):
+					n += 1
+				else:
+					s += 1
+		print("Different: " + str(d))
+		print("Close: " + str(n))
+		print("Same: " + str(s))
+		print("")
+		y[2] = d+n
+		
+		# Y-G
+		d = 0
+		n = 0
+		s = 0
+		
+		print("Y-G")
+		for i in range(0, 4):
+			if (i == 0):
+				ylevel = yellow15e
+			elif (i == 1):
+				ylevel = yellow15e_03
+			elif (i == 2):
+				ylevel = yellow15e_07
+			elif (i == 3):
+				ylevel = yellow15e_10
+			for j in range(0, 4):
+				if (j == 0):
+					glevel = green58e
+				elif (j == 1):
+					glevel = green58e_03
+				elif (j == 2):
+					glevel = green58e_07
+				elif (j == 3):
+					glevel = green58e_10
+				contrast = color_contrast(ylevel, glevel)
+				print("Y" + str(i) + " vs. G" + str(j) + ": " + str(contrast))
+				if (contrast >= 4):
+					d += 1
+				elif (contrast >= 1):
+					n += 1
+				else:
+					s += 1
+		print("Different: " + str(d))
+		print("Close: " + str(n))
+		print("Same: " + str(s))
+		print("")
+		y[3] = d+n
+		
+		# Y-B
+		d = 0
+		n = 0
+		s = 0
+		
+		print("Y-B")
+		for i in range(0, 4):
+			if (i == 0):
+				ylevel = yellow15e
+			elif (i == 1):
+				ylevel = yellow15e_03
+			elif (i == 2):
+				ylevel = yellow15e_07
+			elif (i == 3):
+				ylevel = yellow15e_10
+			for j in range(0, 4):
+				if (j == 0):
+					blevel = blue47
+				elif (j == 1):
+					blevel = blue47_03
+				elif (j == 2):
+					blevel = blue47_07
+				elif (j == 3):
+					blevel = blue47_10
+				contrast = color_contrast(rlevel, blevel)
+				print("Y" + str(i) + " vs. B" + str(j) + ": " + str(contrast))
+				if (contrast >= 4):
+					d += 1
+				elif (contrast >= 1):
+					n += 1
+				else:
+					s += 1
+		print("Different: " + str(d))
+		print("Close: " + str(n))
+		print("Same: " + str(s))
+		print("")
+		y[4] = d+n
+		
+		# G-B
+		d = 0
+		n = 0
+		s = 0
+		
+		print("G-B")
+		for i in range(0, 4):
+			if (i == 0):
+				glevel = green58e
+			elif (i == 1):
+				glevel = green58e_03
+			elif (i == 2):
+				glevel = green58e_07
+			elif (i == 3):
+				glevel = green58e_10
+			for j in range(0, 4):
+				if (j == 0):
+					blevel = blue47
+				elif (j == 1):
+					blevel = blue47_03
+				elif (j == 2):
+					blevel = blue47_07
+				elif (j == 3):
+					blevel = blue47_10
+				contrast = color_contrast(glevel, blevel)
+				print("G" + str(i) + " vs. B" + str(j) + ": " + str(contrast))
+				if (contrast >= 4):
+					d += 1
+				elif (contrast >= 1):
+					n += 1
+				else:
+					s += 1
+		print("Different: " + str(d))
+		print("Close: " + str(n))
+		print("Same: " + str(s))
+		print("")
+		y[5] = d+n
+		
+		# percentages
+		for i in range(6):
+			y[i] = y[i]*100 / 16
+		
+		# plot
 		plt.bar(x, y, color="black")
 		plt.ylabel("% correct")
 		plt.show()
