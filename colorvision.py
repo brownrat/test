@@ -85,6 +85,16 @@ parser.add_argument("--triangle1", help="plot logarithmic noise-scaled color tri
 parser.add_argument("--hexagon", help="plot color hexagon", action="store_true")
 parser.add_argument("--wd", help="plot wavelength discrimination function", action="store_true")
 parser.add_argument("--blackbody", type=int, default=0, help="plot black body curve for a given temperature in Kelvin")
+parser.add_argument("--convergence", type=float, default=1, help="cone-to-ganglion cell convergence ratio")
+parser.add_argument("--ff", type=float, default=22.4, help="flicker fusion frequency (Hz)")
+parser.add_argument("--osd", type=float, default=1.2, help="outer segment diameter (um)")
+parser.add_argument("--fl", type=float, default=22.3, help="focal length (mm)")
+parser.add_argument("--pupil", type=float, default=11, help="pupil diameter (mm)")
+parser.add_argument("--od", type=float, default=0.015, help="optical density of pigment (um)")
+parser.add_argument("--osl", type=float, default=13.4, help="outer segment length (um)")
+parser.add_argument("--dist", type=float, default=5, help="distance from light source (cm)")
+parser.add_argument("--width", type=float, default=3.8, help="width of object (cm)")
+parser.add_argument("--watts", type=int, default=12, help="number of watts produced by light source")
 args = parser.parse_args()
 
 # cone and rod peak sensitivities
@@ -275,7 +285,9 @@ def lens_filter(w):
 def sensitivity(w, l=l1, m=m1, s=s1):
 	return (args.lb*vpt(w, l) + args.mb*vpt(w, m) + args.sb*vpt(w, s) + args.rb*vpt(w, rod)) * lens_filter(w)
 
-# black body -- SI units, returns energy in joules/m^3/sec/steradian = watts/m^3/steradian
+# black body -- SI units, returns energy in joules/m^2/nm/sec/steradian = watts/m^2/nm/steradian
+# The "1e-9" converts from meters to nanometers, as this is not cubic meters but "per
+# wavelength".
 # https://yceo.yale.edu/sites/default/files/files/ComputingThePlanckFunction.pdf
 h = 6.626068e-34 # Planck's constant (joule sec)
 k = 1.38066e-23 # Boltzmann's constant (joule/deg)
@@ -283,7 +295,7 @@ c = 2.997925e+8 # speed of light (m/s)
 
 def blackbody(w, t):
 	l = w / 1000000000 # wavelength (m)
-	return 2*h*c**2*l**-5 / (math.exp((h*c) / (k*l*t)) - 1)
+	return 1e-9*2*h*c**2*l**-5 / (math.exp((h*c) / (k*l*t)) - 1)
 
 # normal distribution
 def normal(mu, std_dev, x):
@@ -314,16 +326,23 @@ for i in range(0, 61):
 # I think what we really want is square meters. (No, the meters cancel, see the quantum
 # noise calculations)
 ia = np.empty(61)
-# scale it down to what amount of energy would be produced by a 6-watt bulb assuming 10%
-# is in the human-visible spectrum, as well as multiplying it by 2 because there are two
-# bulbs
-energy = 0
-for i in range(380, 780): # 380-780 nm
-	energy += blackbody(i, 2856)
-scale = 0.6 / energy
+# scale it down to what amount of energy would be produced by the specified number of
+# watts
+
+# find total energy produced using Stefan-Boltzmann constant
+sigma = 5.670374419e-8
+energy = sigma * 2856**4
+
+# then find the amount of energy we "should" have in terms of the sphere corresponding to
+# the distance we chose
+sphere_area = 4*math.pi*args.dist**2 # sphere surface area
+watts_cm2 = args.watts / sphere_area
+watts_m2 = watts_cm2 * 100**2
+scale = watts_m2 / energy # scaling factor -- units should cancel (W/m^2)
+
 for i in range(0, 61):
 	w = i*10 + 300 # nanometers
-	ia[i] = 2*scale*1e-9*w*blackbody(w, 2856) / (h*c) # meters * joules/m^3/sec/sr / joule*sec * m/s
+	ia[i] = scale*1e-9*w*blackbody(w, 2856) / (h*c) # meters * joules/m^2/nm/sec/sr / joule*sec * m/s
 	#print(ia[i])
 
 if (args.blackbody != 0):
@@ -339,22 +358,28 @@ if (args.blackbody != 0):
 	#plt.plot(xvalues, a)
 	#plt.plot(xvalues, incandescent)
 	#plt.plot(xvalues, d65)
+	print(sphere_area)
+	print(watts_cm2)
+	print(watts_m2)
+	print(energy)
+	print(sigma * args.blackbody**4)
 	plt.show()
 	
 	# how much energy is within the (human-)visible spectrum? Incandescent bulbs usually
 	# have 10%. https://physlab.org/wp-content/uploads/2016/03/Planck_ref8.pdf
-	energy = 0
-	for i in range(380, 780): # 380-780 nm
-		energy += blackbody(i, args.blackbody)
+	#energy = 0
+	#for i in range(380, 780): # 380-780 nm
+		#energy += blackbody(i, args.blackbody)
 		#print(energy)
-	print(str(energy) + " J/m^3/s/sr = W/m^3/sr")
-	print(0.6 / energy)
-	print(0.6 / energy)
-	print(1e-9*300 / (h*c))
-	print((0.6 / energy) * 1e-9*300 / (h*c))
-	print(blackbody(300, args.blackbody))
-	print(blackbody(300, args.blackbody) * (0.6 / energy) * 1e-9*300 / (h*c))
-	print(blackbody(600, args.blackbody) * (0.6 / energy) * 1e-9*300 / (h*c))
+	#print(str(energy) + " J/m^3/s/sr = W/m^3/sr")
+	#print(0.6 / energy)
+	#print(1e-9*300 / (h*c))
+	#print((0.6 / energy) * 1e-9*300 / (h*c))
+	#print(blackbody(300, args.blackbody))
+	#print(blackbody(300, args.blackbody) * scale * 1e-9*300 / (h*c))
+	#print(blackbody(600, args.blackbody))
+	#print(blackbody(600, args.blackbody) * scale * 1e-9*600 / (h*c))
+	#print(h*c)
 
 # white point
 if (args.white == "d65"):
@@ -645,36 +670,95 @@ def color_contrast(table1, table2, quantum_noise=args.qn):
 	# Based on these equations:
 	# https://journals.biologists.com/jeb/article/218/2/184/14274/Bird-colour-vision-behavioural-thresholds-reveal
 	# https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5043323/
+	# https://www.ncbi.nlm.nih.gov/pmc/articles/PMC1691374/pdf/12816638.pdf
 	if (quantum_noise):
-		# v: number of cones per receptive field (not sure if this means total number of
-		# cones in the retina or if it's subdivided into multiple "receptive fields", but
-		# I'm guessing the former. A larger eye inherently catches more photons.)
+		# v: number of cones per receptive field (spatial summation)
 		# d: receptor diameter (um)
-		# f: focal length (um)
+		# f: focal length (um, cancels d)
 		# D: pupil diameter (um)
-		# O/Ai: transmittance of ocular media
+		# O/Ai: transmittance of ocular media. "Ai" is for oil droplets, so we don't need it
+		# because marsupial oil droplets are transparent.
 		# T: integration time (ms), inverse of flicker fusion frequency (Hz)
-		# ui: optical density of pigment ("optical density units". Mouse study says um^-1, but
-		# optical density is supposed to be the negative log of transmission, and the
-		# units of the other terms already include m^-3 and cancel the m^3 in the
-		# illuminant. We would then have photons per meter, which doesn't make sense.)
-		# l: length of outer segment (um)
+		# ui/k: optical density of pigment (um^-1)
+		# l: length of outer segment (um, cancels ui)
+		# I am not using the terms for transduction efficiency, oil droplets or the various
+		# refractive indices that appear in the two chicken studies because introducing
+		# more probably wrong estimates than I need to is a bad idea and I had a hard
+		# enough time figuring out the rest of this. This is like 1000% more math than I
+		# usually bother with. Accounting for oil droplets would be even harder than it
+		# sounds because in opossums some cones have them and others don't.
+		# I'm not sure how the units work. The amount of light going in should have units
+		# of photons/m^3/s/sr, and the value we get should have just photons, so we need
+		# to have units of m^3*s*sr for the product of these terms. I understand where
+		# s and sr come from (integration time and size/distance), but what about meters?
+		# All the terms with meters cancel out except for D, which is squared and gives us
+		# m^2. Where's the other meter term? According to the Yale page and Vorobyev (2003),
+		# the photons are not really expressed in cubic meters but in square meters "per
+		# wavelength" with the wavelength part given as nanometers or micrometers, which
+		# reduces the number by a factor of 1e-9 or 1e-6 and implies we have some extra
+		# term that cancels this unit. Do we multiply it by the wavelength?
+		# The answers to this StackExchange question says the missing term is the range of
+		# wavelengths being integrated over: https://physics.stackexchange.com/questions/690117/what-does-spectral-flux-density-mean-per-wavelength We're doing this one wavelength at
+		# a time, so this term would be 1 nm (I think) and we can then ignore it
+		# aside from the units and order of magnitude.
 		
-		# Where necessary, I've converted centimeters and micrometers to meters.
-		# Note that d and f cancel.
-		v = 3000 * 450 # cone density for Didelphis aurita (Ahnelt et al. 2009), retinal
-		# area for cats (Vaney 1985)
-		T = 1/22.4 # 22.4 Hz, brushtail possum (Signal, Temple & Foster 2011)
-		d = 1.2 / 1000000 # 1.2 um, mice (Nikonov et al. 2006)
-		f = 22.3 / 1000 # 22.3 mm, cats (Thomasy et al. 2016)
-		D = 11 / 1000 # 11 mm, maximum size of rabbit pupil (Peiffer et al. 1994)
-		Ai = 26 # Thylamys elegans (Palacios et al. 2010)
-		ui = 0.015 # mice (Yin et al. 2013)
-		l = 13.4 / 1000000 # mice
+		# Estimates used:
+		# Where necessary, I've converted centimeters, millimeters and micrometers to meters.
+		# v = 3000 * 450: cone density for Didelphis aurita (Ahnelt et al. 2009), retinal
+		# area for cats (Vaney 1985). This number is probably an overestimate because
+		# 3000/mm^2 is the maximum density, not the average density. (Not needed, see
+		# above)
+		# v = 3: cone to ganglion cell convergence in D. virginiana, finally the right
+		# species for once (Kolb & Wang, 1985; cited in Vlahos et al. 2014) now how do
+		# I turn this into radians? (You don't, you already have the angle from the
+		# d/f term. It's basically the same as increasing d.) I don't know if this applies
+		# to all cone classes equally or if some are more convergent than others. The
+		# chicken study seems to assume the latter. With the greater sparsity of S cones,
+		# surely connecting three of them to one ganglion cell and excluding L cones
+		# from that connection would be more difficult.
+		# dt = 1/22.4: 22.4 Hz = 45 ms, brushtail possum (Signal, Temple & Foster 2011)
+		# d = 1.2 / 1000000: 1.2 um, mice (Nikonov et al. 2006, Fu & Yau 2007)
+		# f = 22.3 / 1000: 22.3 mm, cats (axial length, Thomasy et al. 2016 -- note axial
+		# length and focal length are not necessarily the same and I don't really know what
+		# focal length is)
+		# D = 11 / 1000: 11 mm, maximum size of rabbit pupil (Peiffer et al. 1994)
+		# O: Thylamys elegans (see the lens filter functions)
+		# k = 0.015: mice (Yin et al. 2013)
+		# l = 13.4: mice
+		# sphere = 4*math.pi*5**2: the filters were located 5 cm away from the light bulbs
+		# sr = math.pi*3.8**2 / sphere: 3.8 cm diameter circle
+		# K = 0.5 (see The Optics of Life)
 		
-		# surface areas
-		sphere = 4*math.pi*5**2 # the filters were located 5 cm away from the light bulbs
-		sr = math.pi*3.8**2 / sphere # 3.8 cm diameter circle
+		# Some values for other species for comparison:
+		# area of retina: 1094 mm^2 (humans), 80 mm^2 (rats; Mayhew & Astle 1997)
+		# total number of cones: ~6 million (humans)
+		# outer segment length: 30 um (chickens), 6.2 um (cats; Fisher, Pfeffer & Anderson
+		# 1983), 7 um (gray squirrels; "), 20 um (honey possums), 25.1-40 um (humans),
+		# 15.2 um (goldfish red single cones, Harosi & Flamarique 2012), 5 um (tammar
+		# wallaby and fat-tailed dunnart; Ebeling, Natoli & Hemmi 2010)
+		# outer segment width: 1.73 um (chickens), 6.1 um (goldfish red single cones)
+		# optical density: 0.015 (coral reef triggerfish, birds)
+		# focal length: 8300 um = 8.3 mm (chickens), 2.6 mm (mice; Geng et al. 2011),
+		# 22.3 mm (humans; "), 2.5 mm (triggerfish)
+		# pupil size: 4900-3500 um = 4.9-3.5 mm (chickens), 2 mm (mice), 6 mm (humans)
+		# transmittance of ocular media: 80% (estimate for chickens)
+		# integration time/flicker fusion: 50-12 ms = 20-83 Hz (chickens),
+		# 70-80 Hz = 14-12 ms (cats and dogs), 18 Hz = 56 ms (rats; Gil, Valente & Shemesh 2024),
+		# 14 Hz = 71 ms (mice; "), 60 Hz = 17 ms (humans), 25 Hz = 40 ms (some fish)
+		
+		v = args.convergence
+		d = args.osd / 1000000
+		f = args.fl / 1000
+		D = args.pupil / 1000
+		K = 0.5
+		dt = 1 / args.ff
+		k = args.od
+		l = args.osl
+		sphere = 4*math.pi*args.dist**2
+		sr = math.pi*args.width**2 / sphere
+		
+		# lens filtering
+		T = 0.27 / lens_filter(700)
 	
 		aql1 = 0
 		aqm1 = 0
@@ -684,14 +768,22 @@ def color_contrast(table1, table2, quantum_noise=args.qn):
 		aqs2 = 0
 		for i in range(wp.shape[0]):
 			w = i*10 + 300
-			aql1 += (v*args.lp)*T*sr*(d / f)**2*D**2*Ai*(1 - math.exp(-ui*l)) * vpt(w, l1) * table1[i] * ia[i] * lens_filter(w)
-			aqm1 += (v*args.mp)*T*sr*(d / f)**2*D**2*Ai*(1 - math.exp(-ui*l)) * vpt(w, m1) * table1[i] * ia[i] * lens_filter(w)
-			aqs1 += (v*args.sp)*T*sr*(d / f)**2*D**2*Ai*(1 - math.exp(-ui*l)) * vpt(w, s1) * table1[i] * ia[i] * lens_filter(w)
+			aql1 += v*(math.pi/4)**2*(d / f)**2*D**2*K*T*dt*(1 - math.exp(-k*vpt(w, l1)*l)) * vpt(w, l1) * table1[i] * ia[i]*sr * lens_filter(w)
+			aqm1 += v*(math.pi/4)**2*(d / f)**2*D**2*K*T*dt*(1 - math.exp(-k*vpt(w, m1)*l)) * vpt(w, m1) * table1[i] * ia[i]*sr * lens_filter(w) 
+			aqs1 += v*(math.pi/4)**2*(d / f)**2*D**2*K*T*dt*(1 - math.exp(-k*vpt(w, s1)*l)) * vpt(w, s1) * table1[i] * ia[i]*sr * lens_filter(w)
 		for i in range(wp.shape[0]):
 			w = i*10 + 300
-			aql2 += (v*args.lp)*T*sr*(d / f)**2*D**2*Ai*(1 - math.exp(-ui*l)) * vpt(w, l1) * table2[i] * ia[i] * lens_filter(w)
-			aqm2 += (v*args.mp)*T*sr*(d / f)**2*D**2*Ai*(1 - math.exp(-ui*l)) * vpt(w, m1) * table2[i] * ia[i] * lens_filter(w)
-			aqs2 += (v*args.sp)*T*sr*(d / f)**2*D**2*Ai*(1 - math.exp(-ui*l)) * vpt(w, s1) * table2[i] * ia[i] * lens_filter(w)
+			aql2 += v*(math.pi/4)**2*(d / f)**2*D**2*K*T*dt*(1 - math.exp(-k*vpt(w, l1)*l)) * vpt(w, l1) * table2[i] * ia[i]*sr * lens_filter(w)
+			aqm2 += v*(math.pi/4)**2*(d / f)**2*D**2*K*T*dt*(1 - math.exp(-k*vpt(w, m1)*l)) * vpt(w, m1) * table2[i] * ia[i]*sr * lens_filter(w) 
+			aqs2 += v*(math.pi/4)**2*(d / f)**2*D**2*K*T*dt*(1 - math.exp(-k*vpt(w, s1)*l)) * vpt(w, s1) * table2[i] * ia[i]*sr * lens_filter(w)
+		
+		# wavelength interval (see The Optics of Life)
+		aql1 = aql1 * 600
+		aqm1 = aqm1 * 600
+		aqs1 = aqs1 * 600
+		aql2 = aql2 * 600
+		aqm2 = aqm2 * 600
+		aqs2 = aqs2 * 600
 		
 		el = math.sqrt((1 / aql1 + 1 / aql2) + 2*wl**2)
 		em = math.sqrt((1 / aqm1 + 1 / aqm2) + 2*wm**2)
@@ -977,8 +1069,8 @@ if (args.triangle):
 		yvalues[i] = math.sqrt(2/3)*(m - (l + s)/2)
 	plt.plot(xvalues, yvalues, '-k')
 	for i in range(0, 17):
-		plt.plot(xvalues[i*2+1], yvalues[i*2+1], 'ok')
-		plt.text(xvalues[i*2+1], yvalues[i*2+1], labels[i*2+1])
+		plt.plot(xvalues[i*2], yvalues[i*2], 'ok')
+		plt.text(xvalues[i*2], yvalues[i*2], labels[i*2])
 	ex = math.sqrt(1/2)*(el - es) / (el + em + es)
 	ey = math.sqrt(2/3)*(em - (el + es)/2) / (el + em + es)
 	d65x = math.sqrt(1/2)*(d65l - d65s) / (d65l + d65m + d65s)
@@ -3782,6 +3874,12 @@ if (args.kodak or args.kcheck):
 			plt.plot(blue47cs, blue47cs1, 'Db', mec='k', label="blue 47")
 			plt.xlabel("(L-S)/(L+M+S)")
 			plt.ylabel("(M-0.5(L+S))/(L+M+S)")
+			xborder = np.array([-math.sqrt(1/2), 0, math.sqrt(1/2), -math.sqrt(1/2)])
+			yborder = np.array([-math.sqrt(2/3)/2, math.sqrt(2/3), -math.sqrt(2/3)/2, -math.sqrt(2/3)/2])
+			plt.plot(xborder, yborder, '-k')
+			plt.text(-math.sqrt(1/2) - 0.05, -math.sqrt(2/3)/2 - 0.025, 'S')
+			plt.text(0 - 0.025, math.sqrt(2/3) + 0.0125, 'M')
+			plt.text(math.sqrt(1/2) + 0.0125, -math.sqrt(2/3)/2 - 0.025, 'L')
 			plt.legend()
 			plt.show()
 		
