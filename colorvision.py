@@ -44,6 +44,8 @@ from colormath.color_conversions import convert_color
 from colormath import spectral_constants
 import matplotlib.pyplot as plt
 import scipy
+from scipy.stats import binomtest
+import statistics
 
 # execution time
 start_time = time.time()
@@ -345,46 +347,10 @@ for i in range(0, 61):
 	ia[i] = scale*1e-9*w*blackbody(w, 2856) / (h*c) # meters * joules/m^2/nm/sec/sr / joule*sec * m/s
 	#print(ia[i])
 
-if (args.blackbody != 0):
-	#xvalues = yvalues = np.empty(61) don't do this, it won't do what you think it does
-	xvalues = np.empty(61)
-	yvalues = np.empty(61)
-	for i in range(61):
-		w = i*10 + 300
-		xvalues[i] = w
-		yvalues[i] = blackbody(w, args.blackbody)
-	plt.plot(xvalues, yvalues)
-	#plt.plot(xvalues, ia)
-	#plt.plot(xvalues, a)
-	#plt.plot(xvalues, incandescent)
-	#plt.plot(xvalues, d65)
-	print(sphere_area)
-	print(watts_cm2)
-	print(watts_m2)
-	print(energy)
-	print(sigma * args.blackbody**4)
-	plt.show()
-	
-	# how much energy is within the (human-)visible spectrum? Incandescent bulbs usually
-	# have 10%. https://physlab.org/wp-content/uploads/2016/03/Planck_ref8.pdf
-	#energy = 0
-	#for i in range(380, 780): # 380-780 nm
-		#energy += blackbody(i, args.blackbody)
-		#print(energy)
-	#print(str(energy) + " J/m^3/s/sr = W/m^3/sr")
-	#print(0.6 / energy)
-	#print(1e-9*300 / (h*c))
-	#print((0.6 / energy) * 1e-9*300 / (h*c))
-	#print(blackbody(300, args.blackbody))
-	#print(blackbody(300, args.blackbody) * scale * 1e-9*300 / (h*c))
-	#print(blackbody(600, args.blackbody))
-	#print(blackbody(600, args.blackbody) * scale * 1e-9*600 / (h*c))
-	#print(h*c)
-
 # white point
 if (args.white == "d65"):
 	wp = d65
-if (args.white == "a"):
+elif (args.white == "a"):
 	wp = a
 elif (args.white == "i"):
 	wp = incandescent
@@ -417,7 +383,7 @@ def vpt(w, lmax):
 # estimate hue, saturation and lightness for a spectral power distribution
 # Lens filtering is now used for colors properly by normalizing each signal according to
 # the light source.
-def spectral_rendering(table, light_source=wp/100):
+def spectral_rendering(table, light_source=wp):
 	table_l = 0
 	table_m = 0
 	table_s = 0
@@ -433,7 +399,7 @@ def spectral_rendering(table, light_source=wp/100):
 			table_s += vpt(w, s1) * table[i] * light_source[i] * lens_filter(w)
 		
 		# brightness
-		brightness += sensitivity(w) * table[i] * light_source[i] * lens_filter(w)
+		brightness += sensitivity(w) * table[i] * light_source[i]
 	
 	# normalize according to provided light source
 	n = 0
@@ -472,22 +438,14 @@ def spectral_rendering(table, light_source=wp/100):
 		match = 300
 		x0 = (table_l - table_s) / (table_l + table_m + table_s)
 		y0 = (table_m - table_l - table_s) / (table_l + table_m + table_s)
-		white_l = 0
-		white_m = 0
-		white_s = 0
-		for i in range(wp.shape[0]):
-			w = i*10 + 300
-			white_l += vpt(w, l1) * wp[i]
-			white_m += vpt(w, m1) * wp[i]
-			white_s += vpt(w, s1) * wp[i]
-		wx = (white_l - white_s) / (white_l + white_m + white_s)
-		wy = (white_m - white_l - white_s) / (white_l + white_m + white_s)
+		wx = math.sqrt(1/2)*(wpl - wps) / (wpl + wpm + wps)
+		wy = math.sqrt(2/3)*(wpm - 0.5*(wpl + wps)) / (wpl + wpm + wps)
 		
 		for i in range(300, 800):
-			x1 = (vpt(match, l1) - vpt(match, s1)) / (vpt(match, l1) + vpt(match, m1) + vpt(match, s1))
-			y1 = (vpt(match, m1) - vpt(match, l1) - vpt(match, s1)) / (vpt(match, l1) + vpt(match, m1) + vpt(match, s1))
-			x2 = (vpt(i, l1) - vpt(i, s1)) / (vpt(i, l1) + vpt(i, m1) + vpt(i, s1))
-			y2 = (vpt(i, m1) - vpt(i, l1) - vpt(i, s1)) / (vpt(i, l1) + vpt(i, m1) + vpt(i, s1))
+			x1 = math.sqrt(1/2)*(vpt(match, l1) - vpt(match, s1)) / (vpt(match, l1) + vpt(match, m1) + vpt(match, s1))
+			y1 = math.sqrt(2/3)*(vpt(match, m1) - 0.5*(vpt(match, l1) + vpt(match, s1))) / (vpt(match, l1) + vpt(match, m1) + vpt(match, s1))
+			x2 = math.sqrt(1/2)*(vpt(i, l1) - vpt(i, s1)) / (vpt(i, l1) + vpt(i, m1) + vpt(i, s1))
+			y2 = math.sqrt(2/3)*(vpt(i, m1) - 0.5*(vpt(i, l1) + vpt(i, s1))) / (vpt(i, l1) + vpt(i, m1) + vpt(i, s1))
 			d1 = np.linalg.norm(np.cross(np.asarray((wx, wy)) - np.asarray((x0, y0)), np.asarray((x0, y0)) - np.asarray((x1, y1)))) / np.linalg.norm(np.asarray((wx, wy)) - np.asarray((x0, y0)))
 			d2 = np.linalg.norm(np.cross(np.asarray((wx, wy)) - np.asarray((x0, y0)), np.asarray((x0, y0)) - np.asarray((x2, y2)))) / np.linalg.norm(np.asarray((wx, wy)) - np.asarray((x0, y0)))
 			
@@ -528,14 +486,7 @@ def spectral_rendering(table, light_source=wp/100):
 		print("Matching wavelength: " + str(match))
 		
 		pos = (table_l - table_s) / (table_l + table_s)
-		white_l = 0
-		white_s = 0
-		for i in range(wp.shape[0]):
-			w = i*10 + 300
-			if (w >= 300):
-				white_l += vpt(w, l1) * wp[i]
-				white_s += vpt(w, s1) * wp[i]
-		dist = pos - (white_l - white_s) / (white_l + white_s)
+		dist = pos - (wpl - wps) / (wpl + wps)
 		print("Position on color line: " + str(pos))
 	elif (l1 != m1 == s1):
 		# tritanopia
@@ -681,12 +632,13 @@ def color_contrast(table1, table2, quantum_noise=args.qn):
 		# T: integration time (ms), inverse of flicker fusion frequency (Hz)
 		# ui/k: optical density of pigment (um^-1)
 		# l: length of outer segment (um, cancels ui)
-		# I am not using the terms for transduction efficiency, oil droplets or the various
-		# refractive indices that appear in the two chicken studies because introducing
-		# more probably wrong estimates than I need to is a bad idea and I had a hard
-		# enough time figuring out the rest of this. This is like 1000% more math than I
-		# usually bother with. Accounting for oil droplets would be even harder than it
-		# sounds because in opossums some cones have them and others don't.
+		# I tried to keep this as simple as possible to avoid making too many assumptions,
+		# since almost none of the relevant information is available for any opossum
+		# species, so the equation I use is equivalent to the "simple model" without
+		# any terms for refractive indices or oil droplets. This means it probably
+		# produces overestimates. Including oil droplets would be more complicated than
+		# in birds or fish because in opossums there are separate classes of cones with
+		# and without them.
 		# I'm not sure how the units work. The amount of light going in should have units
 		# of photons/m^3/s/sr, and the value we get should have just photons, so we need
 		# to have units of m^3*s*sr for the product of these terms. I understand where
@@ -701,6 +653,12 @@ def color_contrast(table1, table2, quantum_noise=args.qn):
 		# wavelengths being integrated over: https://physics.stackexchange.com/questions/690117/what-does-spectral-flux-density-mean-per-wavelength We're doing this one wavelength at
 		# a time, so this term would be 1 nm (I think) and we can then ignore it
 		# aside from the units and order of magnitude.
+		# According to The Optics of Life, the "per nanometer" unit is there because
+		# the energy/photons are binned into 1-nm intervals. In this case we're using
+		# 10 nm intervals, which would suggest we should multiply (or divide?) by 10 nm,
+		# but this probably isn't needed because at the end I multiply the sum by 600 nm
+		# (value of dλ, the whole range). Without the 600 nm the numbers look way too
+		# small.
 		
 		# Estimates used:
 		# Where necessary, I've converted centimeters, millimeters and micrometers to meters.
@@ -726,7 +684,8 @@ def color_contrast(table1, table2, quantum_noise=args.qn):
 		# k = 0.015: mice (Yin et al. 2013)
 		# l = 13.4: mice
 		# sphere = 4*math.pi*5**2: the filters were located 5 cm away from the light bulbs
-		# sr = math.pi*3.8**2 / sphere: 3.8 cm diameter circle
+		# sr = math.pi*3.8**2 / sphere: 3.8 cm diameter circle (oops, this is wrong, it's
+		# diameter not radius -- divide by 2)
 		# K = 0.5 (see The Optics of Life)
 		
 		# Some values for other species for comparison:
@@ -741,7 +700,7 @@ def color_contrast(table1, table2, quantum_noise=args.qn):
 		# focal length: 8300 um = 8.3 mm (chickens), 2.6 mm (mice; Geng et al. 2011),
 		# 22.3 mm (humans; "), 2.5 mm (triggerfish)
 		# pupil size: 4900-3500 um = 4.9-3.5 mm (chickens), 2 mm (mice), 6 mm (humans)
-		# transmittance of ocular media: 80% (estimate for chickens)
+		# transmittance of ocular media: 80% (general estimate from The Optics of Light)
 		# integration time/flicker fusion: 50-12 ms = 20-83 Hz (chickens),
 		# 70-80 Hz = 14-12 ms (cats and dogs), 18 Hz = 56 ms (rats; Gil, Valente & Shemesh 2024),
 		# 14 Hz = 71 ms (mice; "), 60 Hz = 17 ms (humans), 25 Hz = 40 ms (some fish)
@@ -755,10 +714,10 @@ def color_contrast(table1, table2, quantum_noise=args.qn):
 		k = args.od
 		l = args.osl
 		sphere = 4*math.pi*args.dist**2
-		sr = math.pi*args.width**2 / sphere
+		sr = math.pi*(args.width/2)**2 / sphere
 		
-		# lens filtering
-		T = 0.27 / lens_filter(700)
+		# lens filtering scaling factor
+		T = 0.8 / lens_filter(700)
 	
 		aql1 = 0
 		aqm1 = 0
@@ -865,11 +824,11 @@ if (args.vpt):
 	rmax = 0
 	for i in range(0, 400):
 		xvalues[i] = i + 300
-		if (args.filter == "human"):
-			lvalues[i] = vpt(i+300, l1) * human_filter(i+300)
-			mvalues[i] = vpt(i+300, m1) * human_filter(i+300)
-			svalues[i] = vpt(i+300, s1) * human_filter(i+300)
-			rvalues[i] = vpt(i+300, rod) * human_filter(i+300)
+		if (args.filter != "none"):
+			lvalues[i] = vpt(i+300, l1) * lens_filter(i+300)
+			mvalues[i] = vpt(i+300, m1) * lens_filter(i+300)
+			svalues[i] = vpt(i+300, s1) * lens_filter(i+300)
+			rvalues[i] = vpt(i+300, rod) * lens_filter(i+300)
 			lmax = max(lmax, lvalues[i])
 			mmax = max(mmax, mvalues[i])
 			smax = max(smax, svalues[i])
@@ -884,12 +843,12 @@ if (args.vpt):
 			smax = 1
 			rmax = 1
 
-	plt.plot(xvalues, lvalues/lmax, 'r', label="L (" + str(args.lw) + ")")
+	plt.plot(xvalues, lvalues/lmax, 'gray', label="L (" + str(args.lw) + ")")
 	# don't plot redundant curves
 	if (l1 != m1):
-		plt.plot(xvalues, mvalues/mmax, 'g', label="M (" + str(args.mw) + ")")
+		plt.plot(xvalues, mvalues/mmax, 'silver', label="M (" + str(args.mw) + ")")
 	if (m1 != s1):
-		plt.plot(xvalues, svalues/smax, 'b', label="S (" + str(args.sw) + ")")
+		plt.plot(xvalues, svalues/smax, 'k', label="S (" + str(args.sw) + ")")
 	if (args.rod != 0):
 		plt.plot(xvalues, rvalues/rmax, ':k', label="rod (" + str(args.rod) + ")")
 	plt.xlabel("Wavelength (nm)")
@@ -912,8 +871,9 @@ if (args.peak):
 	print("Maximum sensitivity: " + str(ms))
 	print("")
 	
-	plt.plot(xvalues, yvalues/ms, 'k')
-	plt.plot(xvalues, yvalues1, ':k')
+	plt.plot(xvalues, yvalues/sensitivity(ms), 'k')
+	if (args.filter == "none"):
+		plt.plot(xvalues, yvalues1, ':k')
 	plt.xlabel("Wavelength (nm)")
 	plt.ylabel("Relative sensitivity")
 	plt.show()
@@ -1049,28 +1009,56 @@ if (args.triangle):
 	d65l = 0
 	d65m = 0
 	d65s = 0
+	wl = 0
+	wm = 0
+	ws = 0
 	xvalues = np.empty(37)
 	yvalues = np.empty(37)
 	labels = np.empty(37)
 	
+	# white
+	for i in range(0, 41):
+		w = i*10 + 300
+		wl += vpt(w, l1) * wp[i] * lens_filter(w)
+		wm += vpt(w, m1) * wp[i] * lens_filter(w)
+		ws += vpt(w, s1) * wp[i] * lens_filter(w)
+		el += vpt(w, l1) * e[i] * lens_filter(w)
+		em += vpt(w, m1) * e[i] * lens_filter(w)
+		es += vpt(w, s1) * e[i] * lens_filter(w)
+		d65l += vpt(w, l1) * d65[i] * lens_filter(w)
+		d65m += vpt(w, m1) * d65[i] * lens_filter(w)
+		d65s += vpt(w, s1) * d65[i] * lens_filter(w)
+	
 	for i in range(0, 37):
 		w = i*10 + 340
 		labels[i] = w
-		el += vpt(w, l1) * e[i]
-		em += vpt(w, m1) * e[i]
-		es += vpt(w, s1) * e[i]
-		d65l += vpt(w, l1) * d65[i]
-		d65m += vpt(w, m1) * d65[i]
-		d65s += vpt(w, s1) * d65[i]
-		l = vpt(w, l1) / (vpt(w, l1) + vpt(w, m1) + vpt(w, s1))
-		m = vpt(w, m1) / (vpt(w, l1) + vpt(w, m1) + vpt(w, s1))
-		s = vpt(w, s1) / (vpt(w, l1) + vpt(w, m1) + vpt(w, s1))
+		l = vpt(w, l1) * lens_filter(w)
+		m = vpt(w, m1) * lens_filter(w)
+		s = vpt(w, s1) * lens_filter(w)
+		if (args.novk == False):
+			l = l / wl
+			m = m / wm
+			s = s / ws
+		total = l + m + s
+		l = l / total
+		m = m / total
+		s = s / total
 		xvalues[i] = math.sqrt(1/2)*(l - s)
 		yvalues[i] = math.sqrt(2/3)*(m - (l + s)/2)
 	plt.plot(xvalues, yvalues, '-k')
-	for i in range(0, 17):
-		plt.plot(xvalues[i*2], yvalues[i*2], 'ok')
-		plt.text(xvalues[i*2], yvalues[i*2], labels[i*2])
+	for i in range(0, 37):
+		plt.plot(xvalues[i], yvalues[i], 'ok')
+		plt.text(xvalues[i], yvalues[i], labels[i])
+	
+	# E and D65
+	if (args.novk == False):
+		el = el / wl
+		em = em / wm
+		es = es / ws
+		d65l = d65l / wl
+		d65m = d65m / wm
+		d65s = d65s / ws
+	
 	ex = math.sqrt(1/2)*(el - es) / (el + em + es)
 	ey = math.sqrt(2/3)*(em - (el + es)/2) / (el + em + es)
 	d65x = math.sqrt(1/2)*(d65l - d65s) / (d65l + d65m + d65s)
@@ -1981,2149 +1969,2253 @@ if (args.sky):
 
 # Kodak Wratten camera filters
 # Note these are 300-900 nm rather than 340-830 nm.
-if (args.kodak or args.kcheck):
 
-	# optical density (-log transmission)
-	red25 = np.array([
-		2.423441558, # 300
-		2.300623377,
-		2.095532468,
-		1.826415584,
-		1.785675325,
-		1.919655844,
-		2.181538961,
-		2.589188312,
-		3.0,
-		3.0,
-		3.0, # 400
-		3.0,
-		3.0,
-		3.0,
-		3.0,
-		3.0,
-		3.0,
-		3.0,
-		3.0,
-		3.0,
-		3.0, # 500
-		3.0,
-		3.0,
-		3.0,
-		3.0,
-		3.0,
-		3.0,
-		3.0,
-		1.813064935,
-		0.525675325,
-		0.12974026, # 600
-		0.061480519,
-		0.048883117,
-		0.048883117,
-		0.0385,
-		0.0385,
-		0.0385,
-		0.0385,
-		0.0385,
-		0.0385,
-		0.0385, # 700
-		0.0385,
-		0.0385,
-		0.0385,
-		0.0385,
-		0.0385,
-		0.0385,
-		0.0385,
-		0.0385,
-		0.0385,
-		0.0385, # 800
-		0.0385,
-		0.0385,
-		0.0385,
-		0.0385,
-		0.0385,
-		0.0385,
-		0.0385,
-		0.0385,
-		0.0385,
-		0.0385 # 900
-	])
+# optical density (-log transmission)
+red25 = np.array([
+	2.423441558, # 300
+	2.300623377,
+	2.095532468,
+	1.826415584,
+	1.785675325,
+	1.919655844,
+	2.181538961,
+	2.589188312,
+	3.0,
+	3.0,
+	3.0, # 400
+	3.0,
+	3.0,
+	3.0,
+	3.0,
+	3.0,
+	3.0,
+	3.0,
+	3.0,
+	3.0,
+	3.0, # 500
+	3.0,
+	3.0,
+	3.0,
+	3.0,
+	3.0,
+	3.0,
+	3.0,
+	1.813064935,
+	0.525675325,
+	0.12974026, # 600
+	0.061480519,
+	0.048883117,
+	0.048883117,
+	0.0385,
+	0.0385,
+	0.0385,
+	0.0385,
+	0.0385,
+	0.0385,
+	0.0385, # 700
+	0.0385,
+	0.0385,
+	0.0385,
+	0.0385,
+	0.0385,
+	0.0385,
+	0.0385,
+	0.0385,
+	0.0385,
+	0.0385, # 800
+	0.0385,
+	0.0385,
+	0.0385,
+	0.0385,
+	0.0385,
+	0.0385,
+	0.0385,
+	0.0385,
+	0.0385,
+	0.0385 # 900
+])
 
-	yellow15 = np.array([
-		3.0, # 300
-		2.012928025,
-		1.90243502,
-		2.381175769,
-		3.0,
-		3.0,
-		3.0,
-		3.0,
-		3.0,
-		3.0,
-		3.0, # 400
-		3.0,
-		3.0,
-		3.0,
-		3.0,
-		3.0,
-		3.0,
-		3.0,
-		3.0,
-		3.0,
-		3.0, # 500
-		1.442115433,
-		0.538040586,
-		0.197090581,
-		0.087322195,
-		0.051651715,
-		0.044886722,
-		0.039887986,
-		0.039887986,
-		0.039887986,
-		0.039887986, # 600
-		0.039887986,
-		0.039887986,
-		0.039887986,
-		0.039887986,
-		0.039887986,
-		0.039887986,
-		0.039887986,
-		0.039887986,
-		0.039887986,
-		0.039887986, # 700
-		0.039887986,
-		0.039887986,
-		0.039887986,
-		0.039887986,
-		0.039887986,
-		0.039887986,
-		0.039887986,
-		0.039887986,
-		0.039887986,
-		0.039887986, # 800
-		0.039887986,
-		0.039887986,
-		0.039887986,
-		0.039887986,
-		0.039887986,
-		0.039887986,
-		0.039887986,
-		0.039887986,
-		0.039887986,
-		0.039887986 # 900
-	])
+yellow15 = np.array([
+	3.0, # 300
+	2.012928025,
+	1.90243502,
+	2.381175769,
+	3.0,
+	3.0,
+	3.0,
+	3.0,
+	3.0,
+	3.0,
+	3.0, # 400
+	3.0,
+	3.0,
+	3.0,
+	3.0,
+	3.0,
+	3.0,
+	3.0,
+	3.0,
+	3.0,
+	3.0, # 500
+	1.442115433,
+	0.538040586,
+	0.197090581,
+	0.087322195,
+	0.051651715,
+	0.044886722,
+	0.039887986,
+	0.039887986,
+	0.039887986,
+	0.039887986, # 600
+	0.039887986,
+	0.039887986,
+	0.039887986,
+	0.039887986,
+	0.039887986,
+	0.039887986,
+	0.039887986,
+	0.039887986,
+	0.039887986,
+	0.039887986, # 700
+	0.039887986,
+	0.039887986,
+	0.039887986,
+	0.039887986,
+	0.039887986,
+	0.039887986,
+	0.039887986,
+	0.039887986,
+	0.039887986,
+	0.039887986, # 800
+	0.039887986,
+	0.039887986,
+	0.039887986,
+	0.039887986,
+	0.039887986,
+	0.039887986,
+	0.039887986,
+	0.039887986,
+	0.039887986,
+	0.039887986 # 900
+])
+
+green58 = np.array([
+	3.0, # 300
+	3.0,
+	3.0,
+	3.0,
+	3.0,
+	3.0,
+	3.0,
+	3.0,
+	3.0,
+	3.0,
+	3.0, # 400
+	3.0,
+	3.0,
+	3.0,
+	3.0,
+	3.0,
+	3.0,
+	2.099148329,
+	1.44207606,
+	0.903494563,
+	0.505296555, # 500
+	0.304288077,
+	0.265710889,
+	0.284540692,
+	0.353630693,
+	0.450726311,
+	0.603871935,
+	0.824304706,
+	1.116218359,
+	1.557238985,
+	2.058303034, # 600
+	2.586623128,
+	3.0,
+	3.0,
+	3.0,
+	3.0,
+	3.0,
+	3.0,
+	3.0,
+	3.0,
+	3.0, # 700
+	2.194344166,
+	1.485783951,
+	0.889530526,
+	0.575549687,
+	0.367349181,
+	0.239760136,
+	0.16994641,
+	0.121469681,
+	0.10261403,
+	0.085315682, # 800
+	0.07716084,
+	0.071661813,
+	0.069529406,
+	0.067338842,
+	0.065083659,
+	0.062027209,
+	0.062027209,
+	0.062027209,
+	0.062027209,
+	0.062027209 # 900
+])
+
+blue47 = np.array([
+	2.806412992, #300
+	2.941547894,
+	2.72582778,
+	2.540505092,
+	2.601416432,
+	2.502024554,
+	2.174584034,
+	1.826738344,
+	1.532238615,
+	1.211871628,
+	0.899497151, # 400
+	0.577505776,
+	0.382462642,
+	0.312497438,
+	0.310284128,
+	0.33718038,
+	0.402880755,
+	0.493788277,
+	0.61670467,
+	0.81348221,
+	1.084716293, # 500
+	1.532238615,
+	2.067976245,
+	2.782500178,
+	3.0,
+	3.0,
+	3.0,
+	3.0,
+	3.0,
+	3.0,
+	3.0, # 600
+	3.0,
+	3.0,
+	3.0,
+	3.0,
+	3.0,
+	3.0,
+	3.0,
+	3.0,
+	2.939224565,
+	2.454930225, # 700
+	2.015037999,
+	1.644936243,
+	1.272291122,
+	0.941084091,
+	0.625933268,
+	0.393477421,
+	0.256006247,
+	0.15697031,
+	0.118942788,
+	0.088875418, # 800
+	0.065046736,
+	0.065046736,
+	0.050944971,
+	0.050944971,
+	0.050944971,
+	0.043864966,
+	0.043864966,
+	0.043864966,
+	0.043864966,
+	0.043864966 # 900
+])
+
+# neutral density filters
+nd01 = np.array([
+	0.338821199, # 300
+	0.296074593,
+	0.250350004,
+	0.229619894,
+	0.214813592,
+	0.194578741,
+	0.171481681,
+	0.159318902,
+	0.149683871,
+	0.144904947,
+	0.139180529, # 400
+	0.126323102,
+	0.12428418,
+	0.120341407,
+	0.120341407,
+	0.113311308,
+	0.113311308,
+	0.113311308,
+	0.113311308,
+	0.110474826,
+	0.110474826, # 500
+	0.107882759,
+	0.107882759,
+	0.107882759,
+	0.107882759,
+	0.107882759,
+	0.107882759,
+	0.107882759,
+	0.107882759,
+	0.107882759,
+	0.107882759, # 600
+	0.107882759,
+	0.107882759,
+	0.107882759,
+	0.107882759,
+	0.107882759,
+	0.107882759,
+	0.107882759,
+	0.107882759,
+	0.103804915,
+	0.103804915, # 700
+	0.099592001,
+	0.096472515,
+	0.086831052,
+	0.084386919,
+	0.082309406,
+	0.081621189,
+	0.081621189,
+	0.077298933,
+	0.075253579,
+	0.075253579, # 800
+	0.075253579,
+	0.075253579,
+	0.075253579,
+	0.075253579,
+	0.073652028,
+	0.073652028,
+	0.073652028,
+	0.073652028,
+	0.073652028,
+	0.073652028 # 900
+])
+
+nd02 = np.array([
+	0.512531049, # 300
+	0.468346895,
+	0.39609636,
+	0.360025696,
+	0.33735546,
+	0.30890364,
+	0.288263383,
+	0.265792291,
+	0.262085653,
+	0.254447537,
+	0.247426124, # 400
+	0.235850107,
+	0.231963597,
+	0.22562955,
+	0.218222698,
+	0.212762313,
+	0.209428266,
+	0.200126338,
+	0.200126338,
+	0.200126338,
+	0.200126338, # 500
+	0.197325482,
+	0.197325482,
+	0.197325482,
+	0.197325482,
+	0.197325482,
+	0.197325482,
+	0.197325482,
+	0.197325482,
+	0.197325482,
+	0.197325482, # 600
+	0.197325482,
+	0.197325482,
+	0.202066381,
+	0.202066381,
+	0.202066381,
+	0.202066381,
+	0.202066381,
+	0.202066381,
+	0.202066381,
+	0.196194861, # 700
+	0.186533191,
+	0.172336188,
+	0.163124197,
+	0.150077088,
+	0.14179015,
+	0.13417773,
+	0.13417773,
+	0.13417773,
+	0.130040685,
+	0.130040685, # 800
+	0.126777302,
+	0.125852248,
+	0.125852248,
+	0.125852248,
+	0.121316916,
+	0.121316916,
+	0.121316916,
+	0.121316916,
+	0.121316916,
+	0.121316916 # 900
+])
+
+nd03 = np.array([
+	0.854971744, # 300
+	0.760632686,
+	0.631502736,
+	0.57084613,
+	0.540373666,
+	0.49574778,
+	0.457375285,
+	0.425115222,
+	0.41742022,
+	0.396359877,
+	0.392637316, # 400
+	0.377010247,
+	0.363689757,
+	0.355629546,
+	0.346345568,
+	0.337343505,
+	0.332083225,
+	0.32595157,
+	0.32595157,
+	0.317667109,
+	0.317667109, # 500
+	0.317667109,
+	0.317667109,
+	0.317667109,
+	0.317667109,
+	0.317667109,
+	0.319204828,
+	0.320345303,
+	0.312272279,
+	0.307524571,
+	0.306268768, # 600
+	0.309100733,
+	0.312797666,
+	0.323478406,
+	0.32595157,
+	0.32595157,
+	0.32595157,
+	0.32595157,
+	0.32595157,
+	0.32595157,
+	0.315347717, # 700
+	0.301418546,
+	0.277737674,
+	0.252845848,
+	0.235014715,
+	0.218529086,
+	0.210834084,
+	0.20336974,
+	0.197148386,
+	0.197148386,
+	0.193701332, # 800
+	0.192157206,
+	0.192157206,
+	0.184346875,
+	0.184346875,
+	0.184346875,
+	0.179906712,
+	0.179906712,
+	0.178779051,
+	0.178779051,
+	0.178779051 # 900
+])
+
+nd04 = np.array([
+	1.029570513, # 300
+	0.926320513,
+	0.800365385,
+	0.727153846,
+	0.692576923,
+	0.633108974,
+	0.584423077,
+	0.550814103,
+	0.535929487,
+	0.518224359,
+	0.502814103, # 400
+	0.481301282,
+	0.467788462,
+	0.453423077,
+	0.442448718,
+	0.433044872,
+	0.423653846,
+	0.414519231,
+	0.414519231,
+	0.414519231,
+	0.40699359, # 500
+	0.40699359,
+	0.40699359,
+	0.40699359,
+	0.40699359,
+	0.40699359,
+	0.40699359,
+	0.40699359,
+	0.403378205,
+	0.394410256,
+	0.39400641, # 600
+	0.397480769,
+	0.403339744,
+	0.40699359,
+	0.414371795,
+	0.414371795,
+	0.414371795,
+	0.414371795,
+	0.414371795,
+	0.414371795,
+	0.40699359, # 700
+	0.384628205,
+	0.360371795,
+	0.328782051,
+	0.304942308,
+	0.304942308,
+	0.269974359,
+	0.2575,
+	0.252064103,
+	0.247923077,
+	0.241929487, # 800
+	0.239083333,
+	0.239083333,
+	0.235544872,
+	0.230679487,
+	0.230679487,
+	0.226410256,
+	0.223673077,
+	0.223673077,
+	0.221519231,
+	0.221519231 # 900
+])
+
+nd05 = np.array([
+	1.135265525, # 300
+	1.045072805,
+	0.963321199,
+	0.900211991,
+	0.855880086,
+	0.791775161,
+	0.724541756,
+	0.688085653,
+	0.658124197,
+	0.645398287,
+	0.621770878, # 400
+	0.601650964,
+	0.578762313,
+	0.563171306,
+	0.543481799,
+	0.532817987,
+	0.524762313,
+	0.520985011,
+	0.50933833,
+	0.506126338,
+	0.501995717, # 500
+	0.501211991,
+	0.499618844,
+	0.497640257,
+	0.493773019,
+	0.493773019,
+	0.493773019,
+	0.493773019,
+	0.488987152,
+	0.477520343,
+	0.475252677, # 600
+	0.48,
+	0.488139186,
+	0.497640257,
+	0.499618844,
+	0.499618844,
+	0.499618844,
+	0.499618844,
+	0.499618844,
+	0.495436831,
+	0.485678801, # 700
+	0.461762313,
+	0.429359743,
+	0.399199143,
+	0.371948608,
+	0.352310493,
+	0.334856531,
+	0.324880086,
+	0.317897216,
+	0.310837259,
+	0.305248394, # 800
+	0.303745182,
+	0.29832334,
+	0.29832334,
+	0.293087794,
+	0.288250535,
+	0.284479657,
+	0.283188437,
+	0.277477516,
+	0.277477516,
+	0.277477516 # 900
+])
+
+nd06 = np.array([
+	1.323256959, # 300
+	1.24437045,
+	1.112158458,
+	1.052364026,
+	1.01943469,
+	0.930738758,
+	0.849501071,
+	0.811066381,
+	0.785858672,
+	0.760342612,
+	0.735012848, # 400
+	0.707254818,
+	0.680884368,
+	0.663353319,
+	0.643246253,
+	0.624706638,
+	0.620100642,
+	0.607291221,
+	0.60003212,
+	0.60003212,
+	0.60003212, # 500
+	0.60003212,
+	0.60003212,
+	0.60003212,
+	0.596119914,
+	0.596036403,
+	0.597674518,
+	0.60003212,
+	0.592265525,
+	0.577554604,
+	0.570970021, # 600
+	0.576796574,
+	0.591115632,
+	0.60003212,
+	0.609366167,
+	0.609366167,
+	0.609366167,
+	0.609366167,
+	0.609366167,
+	0.609366167,
+	0.60003212, # 700
+	0.573738758,
+	0.532130621,
+	0.486558887,
+	0.444276231,
+	0.412862955,
+	0.392421842,
+	0.375372591,
+	0.363835118,
+	0.352856531,
+	0.352856531, # 800
+	0.347852248,
+	0.340734475,
+	0.340734475,
+	0.330089936,
+	0.330089936,
+	0.325117773,
+	0.325117773,
+	0.31866167,
+	0.31866167,
+	0.31866167 # 900
+])
+
+nd07 = np.array([
+	1.543503212, #300
+	1.451524625,
+	1.323366167,
+	1.241633833,
+	1.193717345,
+	1.090805139,
+	1.010550321,
+	0.957025696,
+	0.925586724,
+	0.899152034,
+	0.87072591, # 400
+	0.839049251,
+	0.805477516,
+	0.780366167,
+	0.759982869,
+	0.747122056,
+	0.730226981,
+	0.719203426,
+	0.705571734,
+	0.701961456,
+	0.695447537, # 500
+	0.695447537,
+	0.695447537,
+	0.695447537,
+	0.687057816,
+	0.688278373,
+	0.689184154,
+	0.695447537,
+	0.683293362,
+	0.666122056,
+	0.660648822, # 600
+	0.669186296,
+	0.679316916,
+	0.690070664,
+	0.695447537,
+	0.695447537,
+	0.695447537,
+	0.695447537,
+	0.695447537,
+	0.695447537,
+	0.688593148, # 700
+	0.655336188,
+	0.614961456,
+	0.556265525,
+	0.517053533,
+	0.473152034,
+	0.454246253,
+	0.438289079,
+	0.423411135,
+	0.417147752,
+	0.409561028, # 800
+	0.404595289,
+	0.401164882,
+	0.39382227,
+	0.391252677,
+	0.388271949,
+	0.3808394,
+	0.37882227,
+	0.376593148,
+	0.371094218,
+	0.367901499 # 900
+])
+
+nd08 = np.array([
+	1.733531049, # 300
+	1.63137045,
+	1.490531049,
+	1.411541756,
+	1.355505353,
+	1.235119914,
+	1.145216274,
+	1.091762313,
+	1.048374732,
+	1.02243469,
+	0.98766167, # 400
+	0.953184154,
+	0.918231263,
+	0.890357602,
+	0.864443255,
+	0.845788009,
+	0.832438972,
+	0.819957173,
+	0.8071606,
+	0.802959315,
+	0.794511777, # 500
+	0.793284797,
+	0.788980728,
+	0.788980728,
+	0.777841542,
+	0.774044968,
+	0.777841542,
+	0.783680942,
+	0.774237687,
+	0.754149893,
+	0.748156317, # 600
+	0.756526767,
+	0.767029979,
+	0.780327623,
+	0.791922912,
+	0.791922912,
+	0.791922912,
+	0.785498929,
+	0.791922912,
+	0.787149893,
+	0.777025696, # 700
+	0.739586724,
+	0.690353319,
+	0.631766595,
+	0.583124197,
+	0.543809422,
+	0.515890792,
+	0.4934197,
+	0.478111349,
+	0.468025696,
+	0.462610278, # 800
+	0.454940043,
+	0.449062099,
+	0.443620985,
+	0.438077088,
+	0.435648822,
+	0.429147752,
+	0.42369379,
+	0.418432548,
+	0.418432548,
+	0.418432548 # 900
+])
+
+nd09 = np.array([
+	1.876477516, # 300
+	1.76406424,
+	1.621329764,
+	1.535800857,
+	1.460492505,
+	1.34320985,
+	1.242269807,
+	1.171824411,
+	1.129361884,
+	1.094267666,
+	1.060477516, # 400
+	1.019139186,
+	0.988773019,
+	0.959029979,
+	0.932331906,
+	0.914678801,
+	0.896865096,
+	0.887453961,
+	0.876655246,
+	0.864635974,
+	0.857293362, # 500
+	0.852321199,
+	0.852321199,
+	0.850079229,
+	0.845023555,
+	0.839473233,
+	0.838670236,
+	0.838021413,
+	0.834199143,
+	0.815942184,
+	0.814085653, # 600
+	0.819404711,
+	0.829824411,
+	0.844143469,
+	0.852321199,
+	0.852321199,
+	0.852321199,
+	0.848511777,
+	0.852321199,
+	0.852321199,
+	0.835059957, # 700
+	0.801295503,
+	0.752672377,
+	0.687449679,
+	0.632319058,
+	0.593569593,
+	0.568162741,
+	0.545788009,
+	0.529477516,
+	0.519655246,
+	0.51079015, # 800
+	0.504089936,
+	0.496740899,
+	0.492256959,
+	0.489873662,
+	0.484888651,
+	0.479794433,
+	0.472554604,
+	0.47008137,
+	0.465494647,
+	0.465494647 # 900
+])
+
+nd10 = np.array([
+	2.158094421, # 300
+	2.02001073,
+	1.860347639,
+	1.766027897,
+	1.68323176,
+	1.554251073,
+	1.424053648,
+	1.355980687,
+	1.311186695,
+	1.269270386,
+	1.232182403, # 400
+	1.186332618,
+	1.150751073,
+	1.118201717,
+	1.092251073,
+	1.069648069,
+	1.048821888,
+	1.035334764,
+	1.024345494,
+	1.013658798,
+	1.00543133, # 500
+	1.00543133,
+	1.00543133,
+	1.00543133,
+	0.999199571,
+	0.999199571,
+	0.999199571,
+	0.999199571,
+	0.985667382,
+	0.969347639,
+	0.961075107, # 600
+	0.969412017,
+	0.98622103,
+	0.999199571,
+	1.008012876,
+	1.016349785,
+	1.008012876,
+	1.008012876,
+	1.008012876,
+	1.008012876,
+	0.986774678, # 700
+	0.948154506,
+	0.884697425,
+	0.816296137,
+	0.757435622,
+	0.712487124,
+	0.6777103,
+	0.655281116,
+	0.640944206,
+	0.629040773,
+	0.620652361, # 800
+	0.611948498,
+	0.603263948,
+	0.600251073,
+	0.595545064,
+	0.584961373,
+	0.579225322,
+	0.574680258,
+	0.567914163,
+	0.564830472,
+	0.560774678 # 900
+])
+
+nd20 = np.array([
+	3.0, # 300
+	3.0,
+	2.862978678,
+	2.791944563,
+	2.647950959,
+	2.418345416,
+	2.243904051,
+	2.156552239,
+	2.064997868,
+	2.000859275,
+	1.938486141, # 400
+	1.858381663,
+	1.784085288,
+	1.739296375,
+	1.687420043,
+	1.654081023,
+	1.623345416,
+	1.593639659,
+	1.57201919,
+	1.554255864,
+	1.541648188, # 500
+	1.529712154,
+	1.529712154,
+	1.526603412,
+	1.526603412,
+	1.500850746,
+	1.510228145,
+	1.510228145,
+	1.488102345,
+	1.448168443,
+	1.42961194, # 600
+	1.436123667,
+	1.455249467,
+	1.481014925,
+	1.504816631,
+	1.504816631,
+	1.493034115,
+	1.490008529,
+	1.490008529,
+	1.490008529,
+	1.473486141, # 700
+	1.414791045,
+	1.323473348,
+	1.210765458,
+	1.12065032,
+	1.04263113,
+	0.980597015,
+	0.941353945,
+	0.91608742,
+	0.895823028,
+	0.880324094, # 800
+	0.865970149,
+	0.855428571,
+	0.84817484,
+	0.837108742,
+	0.82473774,
+	0.816882729,
+	0.808157783,
+	0.799995736,
+	0.789978678,
+	0.783383795 # 900
+])
+
+if (args.kcheck):
+	# plot test
+	xvalues = np.empty(61)
+	for i in range(0, 61):
+		xvalues[i] = i*10 + 300
+	plt.plot(xvalues, red25, marker='o', linestyle='-', color='0.3', mec='k', label="red 25")
+	plt.plot(xvalues, yellow15, marker='s', linestyle='-', color='0.7', mfc='w', mec='k', label="yellow 15")
+	plt.plot(xvalues, green58, marker='^', linestyle='-', color='0.5', mec='k', label="green 58")
+	plt.plot(xvalues, blue47, 'D-k', label="blue 47")
+	plt.xlabel("Wavelength (nm)")
+	plt.ylabel("Optical density")
+	plt.legend()
+	plt.show()
 	
-	green58 = np.array([
-		3.0, # 300
-		3.0,
-		3.0,
-		3.0,
-		3.0,
-		3.0,
-		3.0,
-		3.0,
-		3.0,
-		3.0,
-		3.0, # 400
-		3.0,
-		3.0,
-		3.0,
-		3.0,
-		3.0,
-		3.0,
-		2.099148329,
-		1.44207606,
-		0.903494563,
-		0.505296555, # 500
-		0.304288077,
-		0.265710889,
-		0.284540692,
-		0.353630693,
-		0.450726311,
-		0.603871935,
-		0.824304706,
-		1.116218359,
-		1.557238985,
-		2.058303034, # 600
-		2.586623128,
-		3.0,
-		3.0,
-		3.0,
-		3.0,
-		3.0,
-		3.0,
-		3.0,
-		3.0,
-		3.0, # 700
-		2.194344166,
-		1.485783951,
-		0.889530526,
-		0.575549687,
-		0.367349181,
-		0.239760136,
-		0.16994641,
-		0.121469681,
-		0.10261403,
-		0.085315682, # 800
-		0.07716084,
-		0.071661813,
-		0.069529406,
-		0.067338842,
-		0.065083659,
-		0.062027209,
-		0.062027209,
-		0.062027209,
-		0.062027209,
-		0.062027209 # 900
-	])
+	# transmission
+	red25t = np.empty(61)
+	for i in range(0, 61):
+		red25t[i] = math.exp(-red25[i]) * 100
+	yellow15t = np.empty(61)
+	for i in range(0, 61):
+		yellow15t[i] = math.exp(-yellow15[i]) * 100
+	green58t = np.empty(61)
+	for i in range(0, 61):
+		green58t[i] = math.exp(-green58[i]) * 100
+	blue47t = np.empty(61)
+	for i in range(0, 61):
+		blue47t[i] = math.exp(-blue47[i]) * 100
+	plt.plot(xvalues, red25t, marker='o', linestyle='-', color='0.3', mec='k', label="red 25")
+	plt.plot(xvalues, yellow15t, marker='s', linestyle='-', color='0.7', mfc='w', mec='k', label="yellow 15")
+	plt.plot(xvalues, green58t, marker='^', linestyle='-', color='0.5', mec='k', label="green 58")
+	plt.plot(xvalues, blue47t, 'D-k', mec='k', label="blue 47")
+	plt.xlabel("Wavelength (nm)")
+	plt.ylabel("Transmission (%)")
+	plt.legend()
+	plt.show()
 	
-	blue47 = np.array([
-		2.806412992, #300
-		2.941547894,
-		2.72582778,
-		2.540505092,
-		2.601416432,
-		2.502024554,
-		2.174584034,
-		1.826738344,
-		1.532238615,
-		1.211871628,
-		0.899497151, # 400
-		0.577505776,
-		0.382462642,
-		0.312497438,
-		0.310284128,
-		0.33718038,
-		0.402880755,
-		0.493788277,
-		0.61670467,
-		0.81348221,
-		1.084716293, # 500
-		1.532238615,
-		2.067976245,
-		2.782500178,
-		3.0,
-		3.0,
-		3.0,
-		3.0,
-		3.0,
-		3.0,
-		3.0, # 600
-		3.0,
-		3.0,
-		3.0,
-		3.0,
-		3.0,
-		3.0,
-		3.0,
-		3.0,
-		2.939224565,
-		2.454930225, # 700
-		2.015037999,
-		1.644936243,
-		1.272291122,
-		0.941084091,
-		0.625933268,
-		0.393477421,
-		0.256006247,
-		0.15697031,
-		0.118942788,
-		0.088875418, # 800
-		0.065046736,
-		0.065046736,
-		0.050944971,
-		0.050944971,
-		0.050944971,
-		0.043864966,
-		0.043864966,
-		0.043864966,
-		0.043864966,
-		0.043864966 # 900
-	])
+	# red brightness tests
+	red25_01 = np.empty(61)
+	for i in range(0, 61):
+		red25_01[i] = red25[i] + nd01[i]
+	red25_01t = np.empty(61)
+	for i in range(0, 61):
+		red25_01t[i] = math.exp(-red25_01[i])
+	red25_02 = np.empty(61)
+	for i in range(0, 61):
+		red25_02[i] = red25[i] + nd02[i]
+	red25_02t = np.empty(61)
+	for i in range(0, 61):
+		red25_02t[i] = math.exp(-red25_02[i])
+	red25_03 = np.empty(61)
+	for i in range(0, 61):
+		red25_03[i] = red25[i] + nd03[i]
+	red25_03t = np.empty(61)
+	for i in range(0, 61):
+		red25_03t[i] = math.exp(-red25_03[i])
+	red25_04 = np.empty(61)
+	for i in range(0, 61):
+		red25_04[i] = red25[i] + nd04[i]
+	red25_04t = np.empty(61)
+	for i in range(0, 61):
+		red25_04t[i] = math.exp(-red25_04[i])
+	red25_05 = np.empty(61)
+	for i in range(0, 61):
+		red25_05[i] = red25[i] + nd05[i]
+	red25_05t = np.empty(61)
+	for i in range(0, 61):
+		red25_05t[i] = math.exp(-red25_05[i])
+	red25_06 = np.empty(61)
+	for i in range(0, 61):
+		red25_06[i] = red25[i] + nd06[i]
+	red25_06t = np.empty(61)
+	for i in range(0, 61):
+		red25_06t[i] = math.exp(-red25_06[i])
+	red25_07 = np.empty(61)
+	for i in range(0, 61):
+		red25_07[i] = red25[i] + nd07[i]
+	red25_07t = np.empty(61)
+	for i in range(0, 61):
+		red25_07t[i] = math.exp(-red25_07[i])
+	red25_08 = np.empty(61)
+	for i in range(0, 61):
+		red25_08[i] = red25[i] + nd08[i]
+	red25_08t = np.empty(61)
+	for i in range(0, 61):
+		red25_08t[i] = math.exp(-red25_08[i])
+	red25_09 = np.empty(61)
+	for i in range(0, 61):
+		red25_09[i] = red25[i] + nd09[i]
+	red25_09t = np.empty(61)
+	for i in range(0, 61):
+		red25_09t[i] = math.exp(-red25_09[i])
+	red25_10 = np.empty(61)
+	for i in range(0, 61):
+		red25_10[i] = red25[i] + nd10[i]
+	red25_10t = np.empty(61)
+	for i in range(0, 61):
+		red25_10t[i] = math.exp(-red25_10[i])
+	red25_1001 = np.empty(61)
+	for i in range(0, 61):
+		red25_1001[i] = red25[i] + nd10[i] + nd01[i]
+	red25_1001t = np.empty(61)
+	for i in range(0, 61):
+		red25_1001t[i] = math.exp(-red25_1001[i])
+	red25_1002 = np.empty(61)
+	for i in range(0, 61):
+		red25_1002[i] = red25[i] + nd10[i] + nd02[i]
+	red25_1002t = np.empty(61)
+	for i in range(0, 61):
+		red25_1002t[i] = math.exp(-red25_1002[i])
+	red25_1003 = np.empty(61)
+	for i in range(0, 61):
+		red25_1003[i] = red25[i] + nd10[i] + nd03[i]
+	red25_1003t = np.empty(61)
+	for i in range(0, 61):
+		red25_1003t[i] = math.exp(-red25_1003[i])
+	red25_1004 = np.empty(61)
+	for i in range(0, 61):
+		red25_1004[i] = red25[i] + nd10[i] + nd04[i]
+	red25_1004t = np.empty(61)
+	for i in range(0, 61):
+		red25_1004t[i] = math.exp(-red25_1004[i])
+	red25_20 = np.empty(61)
+	for i in range(0, 61):
+		red25_20[i] = red25[i] + nd20[i]
+	red25_20t = np.empty(61)
+	for i in range(0, 61):
+		red25_20t[i] = math.exp(-red25_20[i])
 	
-	# neutral density filters
-	nd01 = np.array([
-		0.338821199, # 300
-		0.296074593,
-		0.250350004,
-		0.229619894,
-		0.214813592,
-		0.194578741,
-		0.171481681,
-		0.159318902,
-		0.149683871,
-		0.144904947,
-		0.139180529, # 400
-		0.126323102,
-		0.12428418,
-		0.120341407,
-		0.120341407,
-		0.113311308,
-		0.113311308,
-		0.113311308,
-		0.113311308,
-		0.110474826,
-		0.110474826, # 500
-		0.107882759,
-		0.107882759,
-		0.107882759,
-		0.107882759,
-		0.107882759,
-		0.107882759,
-		0.107882759,
-		0.107882759,
-		0.107882759,
-		0.107882759, # 600
-		0.107882759,
-		0.107882759,
-		0.107882759,
-		0.107882759,
-		0.107882759,
-		0.107882759,
-		0.107882759,
-		0.107882759,
-		0.103804915,
-		0.103804915, # 700
-		0.099592001,
-		0.096472515,
-		0.086831052,
-		0.084386919,
-		0.082309406,
-		0.081621189,
-		0.081621189,
-		0.077298933,
-		0.075253579,
-		0.075253579, # 800
-		0.075253579,
-		0.075253579,
-		0.075253579,
-		0.075253579,
-		0.073652028,
-		0.073652028,
-		0.073652028,
-		0.073652028,
-		0.073652028,
-		0.073652028 # 900
-	])
+	# yellow brightness tests
+	yellow15_01 = np.empty(61)
+	for i in range(0, 61):
+		yellow15_01[i] = yellow15[i] + nd01[i]
+	yellow15_01t = np.empty(61)
+	for i in range(0, 61):
+		yellow15_01t[i] = math.exp(-yellow15_01[i])
+	yellow15_02 = np.empty(61)
+	for i in range(0, 61):
+		yellow15_02[i] = yellow15[i] + nd02[i]
+	yellow15_02t = np.empty(61)
+	for i in range(0, 61):
+		yellow15_02t[i] = math.exp(-yellow15_02[i])
+	yellow15_03 = np.empty(61)
+	for i in range(0, 61):
+		yellow15_03[i] = yellow15[i] + nd03[i]
+	yellow15_03t = np.empty(61)
+	for i in range(0, 61):
+		yellow15_03t[i] = math.exp(-yellow15_03[i])
+	yellow15_04 = np.empty(61)
+	for i in range(0, 61):
+		yellow15_04[i] = yellow15[i] + nd04[i]
+	yellow15_04t = np.empty(61)
+	for i in range(0, 61):
+		yellow15_04t[i] = math.exp(-yellow15_04[i])
+	yellow15_05 = np.empty(61)
+	for i in range(0, 61):
+		yellow15_05[i] = yellow15[i] + nd05[i]
+	yellow15_05t = np.empty(61)
+	for i in range(0, 61):
+		yellow15_05t[i] = math.exp(-yellow15_05[i])
+	yellow15_06 = np.empty(61)
+	for i in range(0, 61):
+		yellow15_06[i] = yellow15[i] + nd06[i]
+	yellow15_06t = np.empty(61)
+	for i in range(0, 61):
+		yellow15_06t[i] = math.exp(-yellow15_06[i])
+	yellow15_07 = np.empty(61)
+	for i in range(0, 61):
+		yellow15_07[i] = yellow15[i] + nd07[i]
+	yellow15_07t = np.empty(61)
+	for i in range(0, 61):
+		yellow15_07t[i] = math.exp(-yellow15_07[i])
+	yellow15_08 = np.empty(61)
+	for i in range(0, 61):
+		yellow15_08[i] = yellow15[i] + nd08[i]
+	yellow15_08t = np.empty(61)
+	for i in range(0, 61):
+		yellow15_08t[i] = math.exp(-yellow15_08[i])
+	yellow15_09 = np.empty(61)
+	for i in range(0, 61):
+		yellow15_09[i] = yellow15[i] + nd09[i]
+	yellow15_09t = np.empty(61)
+	for i in range(0, 61):
+		yellow15_09t[i] = math.exp(-yellow15_09[i])
+	yellow15_10 = np.empty(61)
+	for i in range(0, 61):
+		yellow15_10[i] = yellow15[i] + nd10[i]
+	yellow15_10t = np.empty(61)
+	for i in range(0, 61):
+		yellow15_10t[i] = math.exp(-yellow15_10[i])
+	yellow15_1001 = np.empty(61)
+	for i in range(0, 61):
+		yellow15_1001[i] = yellow15[i] + nd10[i] + nd01[i]
+	yellow15_1001t = np.empty(61)
+	for i in range(0, 61):
+		yellow15_1001t[i] = math.exp(-yellow15_1001[i])
+	yellow15_1002 = np.empty(61)
+	for i in range(0, 61):
+		yellow15_1002[i] = yellow15[i] + nd10[i] + nd02[i]
+	yellow15_1002t = np.empty(61)
+	for i in range(0, 61):
+		yellow15_1002t[i] = math.exp(-yellow15_1002[i])
+	yellow15_1010 = np.empty(61)
+	for i in range(0, 61):
+		yellow15_1010[i] = yellow15[i] + nd10[i] + nd10[i]
+	yellow15_1010t = np.empty(61)
+	for i in range(0, 61):
+		yellow15_1010t[i] = math.exp(-yellow15_1010[i])
+	yellow15_20 = np.empty(61)
+	for i in range(0, 61):
+		yellow15_20[i] = yellow15[i] + nd20[i]
+	yellow15_20t = np.empty(61)
+	for i in range(0, 61):
+		yellow15_20t[i] = math.exp(-yellow15_20[i])
+	yellow15_2001 = np.empty(61)
+	for i in range(0, 61):
+		yellow15_2001[i] = yellow15[i] + nd20[i] + nd01[i]
+	yellow15_2001t = np.empty(61)
+	for i in range(0, 61):
+		yellow15_2001t[i] = math.exp(-yellow15_2001[i])
+	yellow15_2002 = np.empty(61)
+	for i in range(0, 61):
+		yellow15_2002[i] = yellow15[i] + nd20[i] + nd02[i]
+	yellow15_2002t = np.empty(61)
+	for i in range(0, 61):
+		yellow15_2002t[i] = math.exp(-yellow15_2002[i])
+	yellow15_2003 = np.empty(61)
+	for i in range(0, 61):
+		yellow15_2003[i] = yellow15[i] + nd20[i] + nd03[i]
+	yellow15_2003t = np.empty(61)
+	for i in range(0, 61):
+		yellow15_2003t[i] = math.exp(-yellow15_2003[i])
+	yellow15_2004 = np.empty(61)
+	for i in range(0, 61):
+		yellow15_2004[i] = yellow15[i] + nd20[i] + nd04[i]
+	yellow15_2004t = np.empty(61)
+	for i in range(0, 61):
+		yellow15_2004t[i] = math.exp(-yellow15_2004[i])
+	yellow15_2005 = np.empty(61)
+	for i in range(0, 61):
+		yellow15_2005[i] = yellow15[i] + nd20[i] + nd05[i]
+	yellow15_2005t = np.empty(61)
+	for i in range(0, 61):
+		yellow15_2005t[i] = math.exp(-yellow15_2005[i])
+	yellow15_2006 = np.empty(61)
+	for i in range(0, 61):
+		yellow15_2006[i] = yellow15[i] + nd20[i] + nd06[i]
+	yellow15_2006t = np.empty(61)
+	for i in range(0, 61):
+		yellow15_2006t[i] = math.exp(-yellow15_2006[i])
+	yellow15_2007 = np.empty(61)
+	for i in range(0, 61):
+		yellow15_2007[i] = yellow15[i] + nd20[i] + nd07[i]
+	yellow15_2007t = np.empty(61)
+	for i in range(0, 61):
+		yellow15_2007t[i] = math.exp(-yellow15_2007[i])
 	
-	nd02 = np.array([
-		0.512531049, # 300
-		0.468346895,
-		0.39609636,
-		0.360025696,
-		0.33735546,
-		0.30890364,
-		0.288263383,
-		0.265792291,
-		0.262085653,
-		0.254447537,
-		0.247426124, # 400
-		0.235850107,
-		0.231963597,
-		0.22562955,
-		0.218222698,
-		0.212762313,
-		0.209428266,
-		0.200126338,
-		0.200126338,
-		0.200126338,
-		0.200126338, # 500
-		0.197325482,
-		0.197325482,
-		0.197325482,
-		0.197325482,
-		0.197325482,
-		0.197325482,
-		0.197325482,
-		0.197325482,
-		0.197325482,
-		0.197325482, # 600
-		0.197325482,
-		0.197325482,
-		0.202066381,
-		0.202066381,
-		0.202066381,
-		0.202066381,
-		0.202066381,
-		0.202066381,
-		0.202066381,
-		0.196194861, # 700
-		0.186533191,
-		0.172336188,
-		0.163124197,
-		0.150077088,
-		0.14179015,
-		0.13417773,
-		0.13417773,
-		0.13417773,
-		0.130040685,
-		0.130040685, # 800
-		0.126777302,
-		0.125852248,
-		0.125852248,
-		0.125852248,
-		0.121316916,
-		0.121316916,
-		0.121316916,
-		0.121316916,
-		0.121316916,
-		0.121316916 # 900
-	])
+	# green brightness tests
+	green58_01 = np.empty(61)
+	for i in range(0, 61):
+		green58_01[i] = green58[i] + nd01[i]
+	green58_01t = np.empty(61)
+	for i in range(0, 61):
+		green58_01t[i] = math.exp(-green58_01[i])
+	green58_02 = np.empty(61)
+	for i in range(0, 61):
+		green58_02[i] = green58[i] + nd02[i]
+	green58_02t = np.empty(61)
+	for i in range(0, 61):
+		green58_02t[i] = math.exp(-green58_02[i])
+	green58_03 = np.empty(61)
+	for i in range(0, 61):
+		green58_03[i] = green58[i] + nd03[i]
+	green58_03t = np.empty(61)
+	for i in range(0, 61):
+		green58_03t[i] = math.exp(-green58_03[i])
+	green58_04 = np.empty(61)
+	for i in range(0, 61):
+		green58_04[i] = green58[i] + nd04[i]
+	green58_04t = np.empty(61)
+	for i in range(0, 61):
+		green58_04t[i] = math.exp(-green58_04[i])
+	green58_05 = np.empty(61)
+	for i in range(0, 61):
+		green58_05[i] = green58[i] + nd05[i]
+	green58_05t = np.empty(61)
+	for i in range(0, 61):
+		green58_05t[i] = math.exp(-green58_05[i])
+	green58_06 = np.empty(61)
+	for i in range(0, 61):
+		green58_06[i] = green58[i] + nd06[i]
+	green58_06t = np.empty(61)
+	for i in range(0, 61):
+		green58_06t[i] = math.exp(-green58_06[i])
+	green58_07 = np.empty(61)
+	for i in range(0, 61):
+		green58_07[i] = green58[i] + nd07[i]
+	green58_07t = np.empty(61)
+	for i in range(0, 61):
+		green58_07t[i] = math.exp(-green58_07[i])
+	green58_08 = np.empty(61)
+	for i in range(0, 61):
+		green58_08[i] = green58[i] + nd08[i]
+	green58_08t = np.empty(61)
+	for i in range(0, 61):
+		green58_08t[i] = math.exp(-green58_08[i])
+	green58_09 = np.empty(61)
+	for i in range(0, 61):
+		green58_09[i] = green58[i] + nd09[i]
+	green58_09t = np.empty(61)
+	for i in range(0, 61):
+		green58_09t[i] = math.exp(-green58_09[i])
+	green58_10 = np.empty(61)
+	for i in range(0, 61):
+		green58_10[i] = green58[i] + nd10[i]
+	green58_10t = np.empty(61)
+	for i in range(0, 61):
+		green58_10t[i] = math.exp(-green58_10[i])
+	green58_1001 = np.empty(61)
+	for i in range(0, 61):
+		green58_1001[i] = green58[i] + nd10[i] + nd01[i]
+	green58_1001t = np.empty(61)
+	for i in range(0, 61):
+		green58_1001t[i] = math.exp(-green58_1001[i])
+	green58_1002 = np.empty(61)
+	for i in range(0, 61):
+		green58_1002[i] = green58[i] + nd10[i] + nd02[i]
+	green58_1002t = np.empty(61)
+	for i in range(0, 61):
+		green58_1002t[i] = math.exp(-green58_1002[i])
+	green58_1003 = np.empty(61)
+	for i in range(0, 61):
+		green58_1003[i] = green58[i] + nd10[i] + nd03[i]
+	green58_1003t = np.empty(61)
+	for i in range(0, 61):
+		green58_1003t[i] = math.exp(-green58_1003[i])
+	green58_1004 = np.empty(61)
+	for i in range(0, 61):
+		green58_1004[i] = green58[i] + nd10[i] + nd04[i]
+	green58_1004t = np.empty(61)
+	for i in range(0, 61):
+		green58_1004t[i] = math.exp(-green58_1004[i])
+	green58_20 = np.empty(61)
+	for i in range(0, 61):
+		green58_20[i] = green58[i] + nd20[i]
+	green58_20t = np.empty(61)
+	for i in range(0, 61):
+		green58_20t[i] = math.exp(-green58_20[i])
 	
-	nd03 = np.array([
-		0.854971744, # 300
-		0.760632686,
-		0.631502736,
-		0.57084613,
-		0.540373666,
-		0.49574778,
-		0.457375285,
-		0.425115222,
-		0.41742022,
-		0.396359877,
-		0.392637316, # 400
-		0.377010247,
-		0.363689757,
-		0.355629546,
-		0.346345568,
-		0.337343505,
-		0.332083225,
-		0.32595157,
-		0.32595157,
-		0.317667109,
-		0.317667109, # 500
-		0.317667109,
-		0.317667109,
-		0.317667109,
-		0.317667109,
-		0.317667109,
-		0.319204828,
-		0.320345303,
-		0.312272279,
-		0.307524571,
-		0.306268768, # 600
-		0.309100733,
-		0.312797666,
-		0.323478406,
-		0.32595157,
-		0.32595157,
-		0.32595157,
-		0.32595157,
-		0.32595157,
-		0.32595157,
-		0.315347717, # 700
-		0.301418546,
-		0.277737674,
-		0.252845848,
-		0.235014715,
-		0.218529086,
-		0.210834084,
-		0.20336974,
-		0.197148386,
-		0.197148386,
-		0.193701332, # 800
-		0.192157206,
-		0.192157206,
-		0.184346875,
-		0.184346875,
-		0.184346875,
-		0.179906712,
-		0.179906712,
-		0.178779051,
-		0.178779051,
-		0.178779051 # 900
-	])
+	# blue
+	blue47t = np.empty(61)
+	for i in range(0, 61):
+		blue47t[i] = math.exp(-blue47[i])
 	
-	nd04 = np.array([
-		1.029570513, # 300
-		0.926320513,
-		0.800365385,
-		0.727153846,
-		0.692576923,
-		0.633108974,
-		0.584423077,
-		0.550814103,
-		0.535929487,
-		0.518224359,
-		0.502814103, # 400
-		0.481301282,
-		0.467788462,
-		0.453423077,
-		0.442448718,
-		0.433044872,
-		0.423653846,
-		0.414519231,
-		0.414519231,
-		0.414519231,
-		0.40699359, # 500
-		0.40699359,
-		0.40699359,
-		0.40699359,
-		0.40699359,
-		0.40699359,
-		0.40699359,
-		0.40699359,
-		0.403378205,
-		0.394410256,
-		0.39400641, # 600
-		0.397480769,
-		0.403339744,
-		0.40699359,
-		0.414371795,
-		0.414371795,
-		0.414371795,
-		0.414371795,
-		0.414371795,
-		0.414371795,
-		0.40699359, # 700
-		0.384628205,
-		0.360371795,
-		0.328782051,
-		0.304942308,
-		0.304942308,
-		0.269974359,
-		0.2575,
-		0.252064103,
-		0.247923077,
-		0.241929487, # 800
-		0.239083333,
-		0.239083333,
-		0.235544872,
-		0.230679487,
-		0.230679487,
-		0.226410256,
-		0.223673077,
-		0.223673077,
-		0.221519231,
-		0.221519231 # 900
-	])
+	print("Brightness difference between blue and red:")
+	print("0.1: " + str(brightness_contrast(red25_01t, blue47t)))
+	print("0.2: " + str(brightness_contrast(red25_02t, blue47t)))
+	print("0.3: " + str(brightness_contrast(red25_03t, blue47t)))
+	print("0.4: " + str(brightness_contrast(red25_04t, blue47t)))
+	print("0.5: " + str(brightness_contrast(red25_05t, blue47t)))
+	print("0.6: " + str(brightness_contrast(red25_06t, blue47t)))
+	print("0.7: " + str(brightness_contrast(red25_07t, blue47t)))
+	print("0.8: " + str(brightness_contrast(red25_08t, blue47t)))
+	print("0.9: " + str(brightness_contrast(red25_09t, blue47t)))
+	print("1.0: " + str(brightness_contrast(red25_10t, blue47t)))
+	print("1.0 + 0.1: " + str(brightness_contrast(red25_1001t, blue47t)))
+	print("1.0 + 0.2: " + str(brightness_contrast(red25_1002t, blue47t)))
+	print("1.0 + 0.3: " + str(brightness_contrast(red25_1003t, blue47t)))
+	print("1.0 + 0.4: " + str(brightness_contrast(red25_1004t, blue47t)))
+	print("2.0: " + str(brightness_contrast(red25_20t, blue47t)))
+	print("Brightness difference between blue and yellow:")
+	print("0.1: " + str(brightness_contrast(yellow15_01t, blue47t)))
+	print("0.2: " + str(brightness_contrast(yellow15_02t, blue47t)))
+	print("0.3: " + str(brightness_contrast(yellow15_03t, blue47t)))
+	print("0.4: " + str(brightness_contrast(yellow15_04t, blue47t)))
+	print("0.5: " + str(brightness_contrast(yellow15_05t, blue47t)))
+	print("0.6: " + str(brightness_contrast(yellow15_06t, blue47t)))
+	print("0.7: " + str(brightness_contrast(yellow15_07t, blue47t)))
+	print("0.8: " + str(brightness_contrast(yellow15_08t, blue47t)))
+	print("0.9: " + str(brightness_contrast(yellow15_09t, blue47t)))
+	print("1.0: " + str(brightness_contrast(yellow15_10t, blue47t)))
+	print("1.0 + 0.1: " + str(brightness_contrast(yellow15_1001t, blue47t)))
+	print("1.0 + 0.2: " + str(brightness_contrast(yellow15_1002t, blue47t)))
+	print("1.0 + 1.0: " + str(brightness_contrast(yellow15_1010t, blue47t)))
+	print("2.0: " + str(brightness_contrast(yellow15_20t, blue47t)))
+	print("2.0 + 0.1: " + str(brightness_contrast(yellow15_2001t, blue47t)))
+	print("2.0 + 0.2: " + str(brightness_contrast(yellow15_2002t, blue47t)))
+	print("2.0 + 0.3: " + str(brightness_contrast(yellow15_2003t, blue47t)))
+	print("2.0 + 0.4: " + str(brightness_contrast(yellow15_2004t, blue47t)))
+	print("2.0 + 0.5: " + str(brightness_contrast(yellow15_2005t, blue47t)))
+	print("2.0 + 0.6: " + str(brightness_contrast(yellow15_2006t, blue47t)))
+	print("2.0 + 0.7: " + str(brightness_contrast(yellow15_2007t, blue47t)))
+	print("Brightness difference between blue and green:")
+	print("0.1: " + str(brightness_contrast(green58_01t, blue47t)))
+	print("0.2: " + str(brightness_contrast(green58_02t, blue47t)))
+	print("0.3: " + str(brightness_contrast(green58_03t, blue47t)))
+	print("0.4: " + str(brightness_contrast(green58_04t, blue47t)))
+	print("0.5: " + str(brightness_contrast(green58_05t, blue47t)))
+	print("0.6: " + str(brightness_contrast(green58_06t, blue47t)))
+	print("0.7: " + str(brightness_contrast(green58_07t, blue47t)))
+	print("0.8: " + str(brightness_contrast(green58_08t, blue47t)))
+	print("0.9: " + str(brightness_contrast(green58_09t, blue47t)))
+	print("1.0: " + str(brightness_contrast(green58_10t, blue47t)))
+	print("1.0 + 0.1: " + str(brightness_contrast(green58_1001t, blue47t)))
+	print("1.0 + 0.2: " + str(brightness_contrast(green58_1002t, blue47t)))
+	print("1.0 + 0.3: " + str(brightness_contrast(green58_1003t, blue47t)))
+	print("1.0 + 0.4: " + str(brightness_contrast(green58_1004t, blue47t)))
+	print("2.0: " + str(brightness_contrast(green58_20t, blue47t)))
+
+if (args.kodak):
+	# red 25
+	red25e = np.empty(61)
+	for i in range(0, 61):
+		red25e[i] = red25[i] + nd10[i] + nd01[i]
+	red25e_0 = np.empty(61)
+	for i in range(0, 61):
+		red25e_0[i] = math.exp(-red25e[i])
+	red25e_03 = np.empty(61)
+	for i in range(0, 61):
+		red25e_03[i] = math.exp(-(red25e[i] + nd03[i]))
+	red25e_07 = np.empty(61)
+	for i in range(0, 61):
+		red25e_07[i] = math.exp(-(red25e[i] + nd07[i]))
+	red25e_10 = np.empty(61)
+	for i in range(0, 61):
+		red25e_10[i] = math.exp(-(red25e[i] + nd10[i]))
 	
-	nd05 = np.array([
-		1.135265525, # 300
-		1.045072805,
-		0.963321199,
-		0.900211991,
-		0.855880086,
-		0.791775161,
-		0.724541756,
-		0.688085653,
-		0.658124197,
-		0.645398287,
-		0.621770878, # 400
-		0.601650964,
-		0.578762313,
-		0.563171306,
-		0.543481799,
-		0.532817987,
-		0.524762313,
-		0.520985011,
-		0.50933833,
-		0.506126338,
-		0.501995717, # 500
-		0.501211991,
-		0.499618844,
-		0.497640257,
-		0.493773019,
-		0.493773019,
-		0.493773019,
-		0.493773019,
-		0.488987152,
-		0.477520343,
-		0.475252677, # 600
-		0.48,
-		0.488139186,
-		0.497640257,
-		0.499618844,
-		0.499618844,
-		0.499618844,
-		0.499618844,
-		0.499618844,
-		0.495436831,
-		0.485678801, # 700
-		0.461762313,
-		0.429359743,
-		0.399199143,
-		0.371948608,
-		0.352310493,
-		0.334856531,
-		0.324880086,
-		0.317897216,
-		0.310837259,
-		0.305248394, # 800
-		0.303745182,
-		0.29832334,
-		0.29832334,
-		0.293087794,
-		0.288250535,
-		0.284479657,
-		0.283188437,
-		0.277477516,
-		0.277477516,
-		0.277477516 # 900
-	])
+	# yellow 15
+	yellow15e = np.empty(61)
+	for i in range(0, 61):
+		yellow15e[i] = yellow15[i] + nd20[i] + nd05[i]
+	yellow15e_0 = np.empty(61)
+	for i in range(0, 61):
+		yellow15e_0[i] = math.exp(-yellow15e[i])
+	yellow15e_03 = np.empty(61)
+	for i in range(0, 61):
+		yellow15e_03[i] = math.exp(-(yellow15e[i] + nd03[i]))
+	yellow15e_07 = np.empty(61)
+	for i in range(0, 61):
+		yellow15e_07[i] = math.exp(-(yellow15e[i] + nd07[i]))
+	yellow15e_10 = np.empty(61)
+	for i in range(0, 61):
+		yellow15e_10[i] = math.exp(-(yellow15e[i] + nd10[i]))
 	
-	nd06 = np.array([
-		1.323256959, # 300
-		1.24437045,
-		1.112158458,
-		1.052364026,
-		1.01943469,
-		0.930738758,
-		0.849501071,
-		0.811066381,
-		0.785858672,
-		0.760342612,
-		0.735012848, # 400
-		0.707254818,
-		0.680884368,
-		0.663353319,
-		0.643246253,
-		0.624706638,
-		0.620100642,
-		0.607291221,
-		0.60003212,
-		0.60003212,
-		0.60003212, # 500
-		0.60003212,
-		0.60003212,
-		0.60003212,
-		0.596119914,
-		0.596036403,
-		0.597674518,
-		0.60003212,
-		0.592265525,
-		0.577554604,
-		0.570970021, # 600
-		0.576796574,
-		0.591115632,
-		0.60003212,
-		0.609366167,
-		0.609366167,
-		0.609366167,
-		0.609366167,
-		0.609366167,
-		0.609366167,
-		0.60003212, # 700
-		0.573738758,
-		0.532130621,
-		0.486558887,
-		0.444276231,
-		0.412862955,
-		0.392421842,
-		0.375372591,
-		0.363835118,
-		0.352856531,
-		0.352856531, # 800
-		0.347852248,
-		0.340734475,
-		0.340734475,
-		0.330089936,
-		0.330089936,
-		0.325117773,
-		0.325117773,
-		0.31866167,
-		0.31866167,
-		0.31866167 # 900
-	])
+	# green 58
+	green58e = np.empty(61)
+	for i in range(0, 61):
+		green58e[i] = green58[i] + nd10[i] + nd03[i]
+	green58e_0 = np.empty(61)
+	for i in range(0, 61):
+		green58e_0[i] = math.exp(-green58e[i])
+	green58e_03 = np.empty(61)
+	for i in range(0, 61):
+		green58e_03[i] = math.exp(-(green58e[i] + nd03[i]))
+	green58e_07 = np.empty(61)
+	for i in range(0, 61):
+		green58e_07[i] = math.exp(-(green58e[i] + nd07[i]))
+	green58e_10 = np.empty(61)
+	for i in range(0, 61):
+		green58e_10[i] = math.exp(-(green58e[i] + nd10[i]))
 	
-	nd07 = np.array([
-		1.543503212, #300
-		1.451524625,
-		1.323366167,
-		1.241633833,
-		1.193717345,
-		1.090805139,
-		1.010550321,
-		0.957025696,
-		0.925586724,
-		0.899152034,
-		0.87072591, # 400
-		0.839049251,
-		0.805477516,
-		0.780366167,
-		0.759982869,
-		0.747122056,
-		0.730226981,
-		0.719203426,
-		0.705571734,
-		0.701961456,
-		0.695447537, # 500
-		0.695447537,
-		0.695447537,
-		0.695447537,
-		0.687057816,
-		0.688278373,
-		0.689184154,
-		0.695447537,
-		0.683293362,
-		0.666122056,
-		0.660648822, # 600
-		0.669186296,
-		0.679316916,
-		0.690070664,
-		0.695447537,
-		0.695447537,
-		0.695447537,
-		0.695447537,
-		0.695447537,
-		0.695447537,
-		0.688593148, # 700
-		0.655336188,
-		0.614961456,
-		0.556265525,
-		0.517053533,
-		0.473152034,
-		0.454246253,
-		0.438289079,
-		0.423411135,
-		0.417147752,
-		0.409561028, # 800
-		0.404595289,
-		0.401164882,
-		0.39382227,
-		0.391252677,
-		0.388271949,
-		0.3808394,
-		0.37882227,
-		0.376593148,
-		0.371094218,
-		0.367901499 # 900
-	])
+	# blue 47
+	blue47_0 = np.empty(61)
+	for i in range(0, 61):
+		blue47_0[i] = math.exp(-blue47[i])
+	blue47_03 = np.empty(61)
+	for i in range(0, 61):
+		blue47_03[i] = math.exp(-(blue47[i] + nd03[i]))
+	blue47_07 = np.empty(61)
+	for i in range(0, 61):
+		blue47_07[i] = math.exp(-(blue47[i] + nd07[i]))
+	blue47_10 = np.empty(61)
+	for i in range(0, 61):
+		blue47_10[i] = math.exp(-(blue47[i] + nd10[i]))
 	
-	nd08 = np.array([
-		1.733531049, # 300
-		1.63137045,
-		1.490531049,
-		1.411541756,
-		1.355505353,
-		1.235119914,
-		1.145216274,
-		1.091762313,
-		1.048374732,
-		1.02243469,
-		0.98766167, # 400
-		0.953184154,
-		0.918231263,
-		0.890357602,
-		0.864443255,
-		0.845788009,
-		0.832438972,
-		0.819957173,
-		0.8071606,
-		0.802959315,
-		0.794511777, # 500
-		0.793284797,
-		0.788980728,
-		0.788980728,
-		0.777841542,
-		0.774044968,
-		0.777841542,
-		0.783680942,
-		0.774237687,
-		0.754149893,
-		0.748156317, # 600
-		0.756526767,
-		0.767029979,
-		0.780327623,
-		0.791922912,
-		0.791922912,
-		0.791922912,
-		0.785498929,
-		0.791922912,
-		0.787149893,
-		0.777025696, # 700
-		0.739586724,
-		0.690353319,
-		0.631766595,
-		0.583124197,
-		0.543809422,
-		0.515890792,
-		0.4934197,
-		0.478111349,
-		0.468025696,
-		0.462610278, # 800
-		0.454940043,
-		0.449062099,
-		0.443620985,
-		0.438077088,
-		0.435648822,
-		0.429147752,
-		0.42369379,
-		0.418432548,
-		0.418432548,
-		0.418432548 # 900
-	])
+	# brightness levels and color space coordinates
+	red25l = np.empty(4)
+	red25cs = np.empty(4)
+	red25cs1 = np.empty(4)
+	print("Red 25 (+ 1.0 + 0.1)")
+	red25data = spectral_rendering(red25e_0)
+	red25l[0] = red25data[0]
+	red25cs[0] = red25data[1]
+	red25cs1[0] = red25data[2]
+	print("+ 0.3")
+	red25data = spectral_rendering(red25e_03)
+	red25l[1] = red25data[0]
+	red25cs[1] = red25data[1]
+	red25cs1[1] = red25data[2]
+	print("+ 0.7")
+	red25data = spectral_rendering(red25e_07)
+	red25l[2] = red25data[0]
+	red25cs[2] = red25data[1]
+	red25cs1[2] = red25data[2]
+	print("+ 1.0")
+	red25data = spectral_rendering(red25e_10)
+	red25l[3] = red25data[0]
+	red25cs[3] = red25data[1]
+	red25cs1[3] = red25data[2]
 	
-	nd09 = np.array([
-		1.876477516, # 300
-		1.76406424,
-		1.621329764,
-		1.535800857,
-		1.460492505,
-		1.34320985,
-		1.242269807,
-		1.171824411,
-		1.129361884,
-		1.094267666,
-		1.060477516, # 400
-		1.019139186,
-		0.988773019,
-		0.959029979,
-		0.932331906,
-		0.914678801,
-		0.896865096,
-		0.887453961,
-		0.876655246,
-		0.864635974,
-		0.857293362, # 500
-		0.852321199,
-		0.852321199,
-		0.850079229,
-		0.845023555,
-		0.839473233,
-		0.838670236,
-		0.838021413,
-		0.834199143,
-		0.815942184,
-		0.814085653, # 600
-		0.819404711,
-		0.829824411,
-		0.844143469,
-		0.852321199,
-		0.852321199,
-		0.852321199,
-		0.848511777,
-		0.852321199,
-		0.852321199,
-		0.835059957, # 700
-		0.801295503,
-		0.752672377,
-		0.687449679,
-		0.632319058,
-		0.593569593,
-		0.568162741,
-		0.545788009,
-		0.529477516,
-		0.519655246,
-		0.51079015, # 800
-		0.504089936,
-		0.496740899,
-		0.492256959,
-		0.489873662,
-		0.484888651,
-		0.479794433,
-		0.472554604,
-		0.47008137,
-		0.465494647,
-		0.465494647 # 900
-	])
+	yellow15l = np.empty(4)
+	yellow15cs = np.empty(4)
+	yellow15cs1 = np.empty(4)
+	print("Yellow 15 (+ 2.0 + 0.5)")
+	yellow15data = spectral_rendering(yellow15e_0)
+	yellow15l[0] = yellow15data[0]
+	yellow15cs[0] = yellow15data[1]
+	yellow15cs1[0] = yellow15data[2]
+	print("+ 0.3")
+	yellow15data = spectral_rendering(yellow15e_03)
+	yellow15l[1] = yellow15data[0]
+	yellow15cs[1] = yellow15data[1]
+	yellow15cs1[1] = yellow15data[2]
+	print("+ 0.7")
+	yellow15data = spectral_rendering(yellow15e_07)
+	yellow15l[2] = yellow15data[0]
+	yellow15cs[2] = yellow15data[1]
+	yellow15cs1[2] = yellow15data[2]
+	print("+ 1.0")
+	yellow15data = spectral_rendering(yellow15e_10)
+	yellow15l[3] = yellow15data[0]
+	yellow15cs[3] = yellow15data[1]
+	yellow15cs1[3] = yellow15data[2]
 	
-	nd10 = np.array([
-		2.158094421, # 300
-		2.02001073,
-		1.860347639,
-		1.766027897,
-		1.68323176,
-		1.554251073,
-		1.424053648,
-		1.355980687,
-		1.311186695,
-		1.269270386,
-		1.232182403, # 400
-		1.186332618,
-		1.150751073,
-		1.118201717,
-		1.092251073,
-		1.069648069,
-		1.048821888,
-		1.035334764,
-		1.024345494,
-		1.013658798,
-		1.00543133, # 500
-		1.00543133,
-		1.00543133,
-		1.00543133,
-		0.999199571,
-		0.999199571,
-		0.999199571,
-		0.999199571,
-		0.985667382,
-		0.969347639,
-		0.961075107, # 600
-		0.969412017,
-		0.98622103,
-		0.999199571,
-		1.008012876,
-		1.016349785,
-		1.008012876,
-		1.008012876,
-		1.008012876,
-		1.008012876,
-		0.986774678, # 700
-		0.948154506,
-		0.884697425,
-		0.816296137,
-		0.757435622,
-		0.712487124,
-		0.6777103,
-		0.655281116,
-		0.640944206,
-		0.629040773,
-		0.620652361, # 800
-		0.611948498,
-		0.603263948,
-		0.600251073,
-		0.595545064,
-		0.584961373,
-		0.579225322,
-		0.574680258,
-		0.567914163,
-		0.564830472,
-		0.560774678 # 900
-	])
+	green58l = np.empty(4)
+	green58cs = np.empty(4)
+	green58cs1 = np.empty(4)
+	print("Green 58 (+ 1.0 + 0.3)")
+	green58data = spectral_rendering(green58e_0)
+	green58l[0] = green58data[0]
+	green58cs[0] = green58data[1]
+	green58cs1[0] = green58data[2]
+	print("+ 0.3")
+	green58data = spectral_rendering(green58e_03)
+	green58l[1] = green58data[0]
+	green58cs[1] = green58data[1]
+	green58cs1[1] = green58data[2]
+	print("+ 0.7")
+	green58data = spectral_rendering(green58e_07)
+	green58l[2] = green58data[0]
+	green58cs[2] = green58data[1]
+	green58cs1[2] = green58data[2]
+	print("+ 1.0")
+	green58data = spectral_rendering(green58e_10)
+	green58l[3] = green58data[0]
+	green58cs[3] = green58data[1]
+	green58cs1[3] = green58data[2]
 	
-	nd20 = np.array([
-		3.0, # 300
-		3.0,
-		2.862978678,
-		2.791944563,
-		2.647950959,
-		2.418345416,
-		2.243904051,
-		2.156552239,
-		2.064997868,
-		2.000859275,
-		1.938486141, # 400
-		1.858381663,
-		1.784085288,
-		1.739296375,
-		1.687420043,
-		1.654081023,
-		1.623345416,
-		1.593639659,
-		1.57201919,
-		1.554255864,
-		1.541648188, # 500
-		1.529712154,
-		1.529712154,
-		1.526603412,
-		1.526603412,
-		1.500850746,
-		1.510228145,
-		1.510228145,
-		1.488102345,
-		1.448168443,
-		1.42961194, # 600
-		1.436123667,
-		1.455249467,
-		1.481014925,
-		1.504816631,
-		1.504816631,
-		1.493034115,
-		1.490008529,
-		1.490008529,
-		1.490008529,
-		1.473486141, # 700
-		1.414791045,
-		1.323473348,
-		1.210765458,
-		1.12065032,
-		1.04263113,
-		0.980597015,
-		0.941353945,
-		0.91608742,
-		0.895823028,
-		0.880324094, # 800
-		0.865970149,
-		0.855428571,
-		0.84817484,
-		0.837108742,
-		0.82473774,
-		0.816882729,
-		0.808157783,
-		0.799995736,
-		0.789978678,
-		0.783383795 # 900
-	])
+	blue47l = np.empty(4)
+	blue47cs = np.empty(4)
+	blue47cs1 = np.empty(4)
+	print("Blue 47")
+	blue47data = spectral_rendering(blue47_0)
+	blue47l[0] = blue47data[0]
+	blue47cs[0] = blue47data[1]
+	blue47cs1[0] = blue47data[2]
+	print("+ 0.3")
+	blue47data = spectral_rendering(blue47_03)
+	blue47l[1] = blue47data[0]
+	blue47cs[1] = blue47data[1]
+	blue47cs1[1] = blue47data[2]
+	print("+ 0.7")
+	blue47data = spectral_rendering(blue47_07)
+	blue47l[2] = blue47data[0]
+	blue47cs[2] = blue47data[1]
+	blue47cs1[2] = blue47data[2]
+	print("+ 1.0")
+	blue47data = spectral_rendering(blue47_10)
+	blue47l[3] = blue47data[0]
+	blue47cs[3] = blue47data[1]
+	blue47cs1[3] = blue47data[2]
 	
-	if (args.kcheck):
-		# plot test
-		xvalues = np.empty(61)
-		for i in range(0, 61):
-			xvalues[i] = i*10 + 300
-		plt.plot(xvalues, red25, 'o-r', mec='k', label="red 25")
-		plt.plot(xvalues, yellow15, 's-y', mec='k', label="yellow 15")
-		plt.plot(xvalues, green58, '^-g', mec='k', label="green 58")
-		plt.plot(xvalues, blue47, 'D-b', mec='k', label="blue 47")
-		plt.xlabel("Wavelength (nm)")
-		plt.ylabel("Optical density")
-		plt.legend()
-		plt.show()
-		
-		# transmission
-		red25t = np.empty(61)
-		for i in range(0, 61):
-			red25t[i] = math.exp(-red25[i]) * 100
-		yellow15t = np.empty(61)
-		for i in range(0, 61):
-			yellow15t[i] = math.exp(-yellow15[i]) * 100
-		green58t = np.empty(61)
-		for i in range(0, 61):
-			green58t[i] = math.exp(-green58[i]) * 100
-		blue47t = np.empty(61)
-		for i in range(0, 61):
-			blue47t[i] = math.exp(-blue47[i]) * 100
-		plt.plot(xvalues, red25t, 'o-r', mec='k', label="red 25")
-		plt.plot(xvalues, yellow15t, 's-y', mec='k', label="yellow 15")
-		plt.plot(xvalues, green58t, '^-g', mec='k', label="green 58")
-		plt.plot(xvalues, blue47t, 'D-b', mec='k', label="blue 47")
-		plt.xlabel("Wavelength (nm)")
-		plt.ylabel("Transmission (%)")
-		plt.legend()
-		plt.show()
-		
-		# red brightness tests
-		red25_01 = np.empty(61)
-		for i in range(0, 61):
-			red25_01[i] = red25[i] + nd01[i]
-		red25_01t = np.empty(61)
-		for i in range(0, 61):
-			red25_01t[i] = math.exp(-red25_01[i])
-		red25_02 = np.empty(61)
-		for i in range(0, 61):
-			red25_02[i] = red25[i] + nd02[i]
-		red25_02t = np.empty(61)
-		for i in range(0, 61):
-			red25_02t[i] = math.exp(-red25_02[i])
-		red25_03 = np.empty(61)
-		for i in range(0, 61):
-			red25_03[i] = red25[i] + nd03[i]
-		red25_03t = np.empty(61)
-		for i in range(0, 61):
-			red25_03t[i] = math.exp(-red25_03[i])
-		red25_04 = np.empty(61)
-		for i in range(0, 61):
-			red25_04[i] = red25[i] + nd04[i]
-		red25_04t = np.empty(61)
-		for i in range(0, 61):
-			red25_04t[i] = math.exp(-red25_04[i])
-		red25_05 = np.empty(61)
-		for i in range(0, 61):
-			red25_05[i] = red25[i] + nd05[i]
-		red25_05t = np.empty(61)
-		for i in range(0, 61):
-			red25_05t[i] = math.exp(-red25_05[i])
-		red25_06 = np.empty(61)
-		for i in range(0, 61):
-			red25_06[i] = red25[i] + nd06[i]
-		red25_06t = np.empty(61)
-		for i in range(0, 61):
-			red25_06t[i] = math.exp(-red25_06[i])
-		red25_07 = np.empty(61)
-		for i in range(0, 61):
-			red25_07[i] = red25[i] + nd07[i]
-		red25_07t = np.empty(61)
-		for i in range(0, 61):
-			red25_07t[i] = math.exp(-red25_07[i])
-		red25_08 = np.empty(61)
-		for i in range(0, 61):
-			red25_08[i] = red25[i] + nd08[i]
-		red25_08t = np.empty(61)
-		for i in range(0, 61):
-			red25_08t[i] = math.exp(-red25_08[i])
-		red25_09 = np.empty(61)
-		for i in range(0, 61):
-			red25_09[i] = red25[i] + nd09[i]
-		red25_09t = np.empty(61)
-		for i in range(0, 61):
-			red25_09t[i] = math.exp(-red25_09[i])
-		red25_10 = np.empty(61)
-		for i in range(0, 61):
-			red25_10[i] = red25[i] + nd10[i]
-		red25_10t = np.empty(61)
-		for i in range(0, 61):
-			red25_10t[i] = math.exp(-red25_10[i])
-		red25_1001 = np.empty(61)
-		for i in range(0, 61):
-			red25_1001[i] = red25[i] + nd10[i] + nd01[i]
-		red25_1001t = np.empty(61)
-		for i in range(0, 61):
-			red25_1001t[i] = math.exp(-red25_1001[i])
-		red25_1002 = np.empty(61)
-		for i in range(0, 61):
-			red25_1002[i] = red25[i] + nd10[i] + nd02[i]
-		red25_1002t = np.empty(61)
-		for i in range(0, 61):
-			red25_1002t[i] = math.exp(-red25_1002[i])
-		red25_1003 = np.empty(61)
-		for i in range(0, 61):
-			red25_1003[i] = red25[i] + nd10[i] + nd03[i]
-		red25_1003t = np.empty(61)
-		for i in range(0, 61):
-			red25_1003t[i] = math.exp(-red25_1003[i])
-		red25_1004 = np.empty(61)
-		for i in range(0, 61):
-			red25_1004[i] = red25[i] + nd10[i] + nd04[i]
-		red25_1004t = np.empty(61)
-		for i in range(0, 61):
-			red25_1004t[i] = math.exp(-red25_1004[i])
-		red25_20 = np.empty(61)
-		for i in range(0, 61):
-			red25_20[i] = red25[i] + nd20[i]
-		red25_20t = np.empty(61)
-		for i in range(0, 61):
-			red25_20t[i] = math.exp(-red25_20[i])
-		
-		# yellow brightness tests
-		yellow15_01 = np.empty(61)
-		for i in range(0, 61):
-			yellow15_01[i] = yellow15[i] + nd01[i]
-		yellow15_01t = np.empty(61)
-		for i in range(0, 61):
-			yellow15_01t[i] = math.exp(-yellow15_01[i])
-		yellow15_02 = np.empty(61)
-		for i in range(0, 61):
-			yellow15_02[i] = yellow15[i] + nd02[i]
-		yellow15_02t = np.empty(61)
-		for i in range(0, 61):
-			yellow15_02t[i] = math.exp(-yellow15_02[i])
-		yellow15_03 = np.empty(61)
-		for i in range(0, 61):
-			yellow15_03[i] = yellow15[i] + nd03[i]
-		yellow15_03t = np.empty(61)
-		for i in range(0, 61):
-			yellow15_03t[i] = math.exp(-yellow15_03[i])
-		yellow15_04 = np.empty(61)
-		for i in range(0, 61):
-			yellow15_04[i] = yellow15[i] + nd04[i]
-		yellow15_04t = np.empty(61)
-		for i in range(0, 61):
-			yellow15_04t[i] = math.exp(-yellow15_04[i])
-		yellow15_05 = np.empty(61)
-		for i in range(0, 61):
-			yellow15_05[i] = yellow15[i] + nd05[i]
-		yellow15_05t = np.empty(61)
-		for i in range(0, 61):
-			yellow15_05t[i] = math.exp(-yellow15_05[i])
-		yellow15_06 = np.empty(61)
-		for i in range(0, 61):
-			yellow15_06[i] = yellow15[i] + nd06[i]
-		yellow15_06t = np.empty(61)
-		for i in range(0, 61):
-			yellow15_06t[i] = math.exp(-yellow15_06[i])
-		yellow15_07 = np.empty(61)
-		for i in range(0, 61):
-			yellow15_07[i] = yellow15[i] + nd07[i]
-		yellow15_07t = np.empty(61)
-		for i in range(0, 61):
-			yellow15_07t[i] = math.exp(-yellow15_07[i])
-		yellow15_08 = np.empty(61)
-		for i in range(0, 61):
-			yellow15_08[i] = yellow15[i] + nd08[i]
-		yellow15_08t = np.empty(61)
-		for i in range(0, 61):
-			yellow15_08t[i] = math.exp(-yellow15_08[i])
-		yellow15_09 = np.empty(61)
-		for i in range(0, 61):
-			yellow15_09[i] = yellow15[i] + nd09[i]
-		yellow15_09t = np.empty(61)
-		for i in range(0, 61):
-			yellow15_09t[i] = math.exp(-yellow15_09[i])
-		yellow15_10 = np.empty(61)
-		for i in range(0, 61):
-			yellow15_10[i] = yellow15[i] + nd10[i]
-		yellow15_10t = np.empty(61)
-		for i in range(0, 61):
-			yellow15_10t[i] = math.exp(-yellow15_10[i])
-		yellow15_1001 = np.empty(61)
-		for i in range(0, 61):
-			yellow15_1001[i] = yellow15[i] + nd10[i] + nd01[i]
-		yellow15_1001t = np.empty(61)
-		for i in range(0, 61):
-			yellow15_1001t[i] = math.exp(-yellow15_1001[i])
-		yellow15_1002 = np.empty(61)
-		for i in range(0, 61):
-			yellow15_1002[i] = yellow15[i] + nd10[i] + nd02[i]
-		yellow15_1002t = np.empty(61)
-		for i in range(0, 61):
-			yellow15_1002t[i] = math.exp(-yellow15_1002[i])
-		yellow15_1010 = np.empty(61)
-		for i in range(0, 61):
-			yellow15_1010[i] = yellow15[i] + nd10[i] + nd10[i]
-		yellow15_1010t = np.empty(61)
-		for i in range(0, 61):
-			yellow15_1010t[i] = math.exp(-yellow15_1010[i])
-		yellow15_20 = np.empty(61)
-		for i in range(0, 61):
-			yellow15_20[i] = yellow15[i] + nd20[i]
-		yellow15_20t = np.empty(61)
-		for i in range(0, 61):
-			yellow15_20t[i] = math.exp(-yellow15_20[i])
-		yellow15_2001 = np.empty(61)
-		for i in range(0, 61):
-			yellow15_2001[i] = yellow15[i] + nd20[i] + nd01[i]
-		yellow15_2001t = np.empty(61)
-		for i in range(0, 61):
-			yellow15_2001t[i] = math.exp(-yellow15_2001[i])
-		yellow15_2002 = np.empty(61)
-		for i in range(0, 61):
-			yellow15_2002[i] = yellow15[i] + nd20[i] + nd02[i]
-		yellow15_2002t = np.empty(61)
-		for i in range(0, 61):
-			yellow15_2002t[i] = math.exp(-yellow15_2002[i])
-		yellow15_2003 = np.empty(61)
-		for i in range(0, 61):
-			yellow15_2003[i] = yellow15[i] + nd20[i] + nd03[i]
-		yellow15_2003t = np.empty(61)
-		for i in range(0, 61):
-			yellow15_2003t[i] = math.exp(-yellow15_2003[i])
-		yellow15_2004 = np.empty(61)
-		for i in range(0, 61):
-			yellow15_2004[i] = yellow15[i] + nd20[i] + nd04[i]
-		yellow15_2004t = np.empty(61)
-		for i in range(0, 61):
-			yellow15_2004t[i] = math.exp(-yellow15_2004[i])
-		yellow15_2005 = np.empty(61)
-		for i in range(0, 61):
-			yellow15_2005[i] = yellow15[i] + nd20[i] + nd05[i]
-		yellow15_2005t = np.empty(61)
-		for i in range(0, 61):
-			yellow15_2005t[i] = math.exp(-yellow15_2005[i])
-		yellow15_2006 = np.empty(61)
-		for i in range(0, 61):
-			yellow15_2006[i] = yellow15[i] + nd20[i] + nd06[i]
-		yellow15_2006t = np.empty(61)
-		for i in range(0, 61):
-			yellow15_2006t[i] = math.exp(-yellow15_2006[i])
-		yellow15_2007 = np.empty(61)
-		for i in range(0, 61):
-			yellow15_2007[i] = yellow15[i] + nd20[i] + nd07[i]
-		yellow15_2007t = np.empty(61)
-		for i in range(0, 61):
-			yellow15_2007t[i] = math.exp(-yellow15_2007[i])
-		
-		# green brightness tests
-		green58_01 = np.empty(61)
-		for i in range(0, 61):
-			green58_01[i] = green58[i] + nd01[i]
-		green58_01t = np.empty(61)
-		for i in range(0, 61):
-			green58_01t[i] = math.exp(-green58_01[i])
-		green58_02 = np.empty(61)
-		for i in range(0, 61):
-			green58_02[i] = green58[i] + nd02[i]
-		green58_02t = np.empty(61)
-		for i in range(0, 61):
-			green58_02t[i] = math.exp(-green58_02[i])
-		green58_03 = np.empty(61)
-		for i in range(0, 61):
-			green58_03[i] = green58[i] + nd03[i]
-		green58_03t = np.empty(61)
-		for i in range(0, 61):
-			green58_03t[i] = math.exp(-green58_03[i])
-		green58_04 = np.empty(61)
-		for i in range(0, 61):
-			green58_04[i] = green58[i] + nd04[i]
-		green58_04t = np.empty(61)
-		for i in range(0, 61):
-			green58_04t[i] = math.exp(-green58_04[i])
-		green58_05 = np.empty(61)
-		for i in range(0, 61):
-			green58_05[i] = green58[i] + nd05[i]
-		green58_05t = np.empty(61)
-		for i in range(0, 61):
-			green58_05t[i] = math.exp(-green58_05[i])
-		green58_06 = np.empty(61)
-		for i in range(0, 61):
-			green58_06[i] = green58[i] + nd06[i]
-		green58_06t = np.empty(61)
-		for i in range(0, 61):
-			green58_06t[i] = math.exp(-green58_06[i])
-		green58_07 = np.empty(61)
-		for i in range(0, 61):
-			green58_07[i] = green58[i] + nd07[i]
-		green58_07t = np.empty(61)
-		for i in range(0, 61):
-			green58_07t[i] = math.exp(-green58_07[i])
-		green58_08 = np.empty(61)
-		for i in range(0, 61):
-			green58_08[i] = green58[i] + nd08[i]
-		green58_08t = np.empty(61)
-		for i in range(0, 61):
-			green58_08t[i] = math.exp(-green58_08[i])
-		green58_09 = np.empty(61)
-		for i in range(0, 61):
-			green58_09[i] = green58[i] + nd09[i]
-		green58_09t = np.empty(61)
-		for i in range(0, 61):
-			green58_09t[i] = math.exp(-green58_09[i])
-		green58_10 = np.empty(61)
-		for i in range(0, 61):
-			green58_10[i] = green58[i] + nd10[i]
-		green58_10t = np.empty(61)
-		for i in range(0, 61):
-			green58_10t[i] = math.exp(-green58_10[i])
-		green58_1001 = np.empty(61)
-		for i in range(0, 61):
-			green58_1001[i] = green58[i] + nd10[i] + nd01[i]
-		green58_1001t = np.empty(61)
-		for i in range(0, 61):
-			green58_1001t[i] = math.exp(-green58_1001[i])
-		green58_1002 = np.empty(61)
-		for i in range(0, 61):
-			green58_1002[i] = green58[i] + nd10[i] + nd02[i]
-		green58_1002t = np.empty(61)
-		for i in range(0, 61):
-			green58_1002t[i] = math.exp(-green58_1002[i])
-		green58_1003 = np.empty(61)
-		for i in range(0, 61):
-			green58_1003[i] = green58[i] + nd10[i] + nd03[i]
-		green58_1003t = np.empty(61)
-		for i in range(0, 61):
-			green58_1003t[i] = math.exp(-green58_1003[i])
-		green58_1004 = np.empty(61)
-		for i in range(0, 61):
-			green58_1004[i] = green58[i] + nd10[i] + nd04[i]
-		green58_1004t = np.empty(61)
-		for i in range(0, 61):
-			green58_1004t[i] = math.exp(-green58_1004[i])
-		green58_20 = np.empty(61)
-		for i in range(0, 61):
-			green58_20[i] = green58[i] + nd20[i]
-		green58_20t = np.empty(61)
-		for i in range(0, 61):
-			green58_20t[i] = math.exp(-green58_20[i])
-		
-		# blue
-		blue47t = np.empty(61)
-		for i in range(0, 61):
-			blue47t[i] = math.exp(-blue47[i])
-		
-		print("Brightness difference between blue and red:")
-		print("0.1: " + str(brightness_contrast(red25_01t, blue47t)))
-		print("0.2: " + str(brightness_contrast(red25_02t, blue47t)))
-		print("0.3: " + str(brightness_contrast(red25_03t, blue47t)))
-		print("0.4: " + str(brightness_contrast(red25_04t, blue47t)))
-		print("0.5: " + str(brightness_contrast(red25_05t, blue47t)))
-		print("0.6: " + str(brightness_contrast(red25_06t, blue47t)))
-		print("0.7: " + str(brightness_contrast(red25_07t, blue47t)))
-		print("0.8: " + str(brightness_contrast(red25_08t, blue47t)))
-		print("0.9: " + str(brightness_contrast(red25_09t, blue47t)))
-		print("1.0: " + str(brightness_contrast(red25_10t, blue47t)))
-		print("1.0 + 0.1: " + str(brightness_contrast(red25_1001t, blue47t)))
-		print("1.0 + 0.2: " + str(brightness_contrast(red25_1002t, blue47t)))
-		print("1.0 + 0.3: " + str(brightness_contrast(red25_1003t, blue47t)))
-		print("1.0 + 0.4: " + str(brightness_contrast(red25_1004t, blue47t)))
-		print("2.0: " + str(brightness_contrast(red25_20t, blue47t)))
-		print("Brightness difference between blue and yellow:")
-		print("0.1: " + str(brightness_contrast(yellow15_01t, blue47t)))
-		print("0.2: " + str(brightness_contrast(yellow15_02t, blue47t)))
-		print("0.3: " + str(brightness_contrast(yellow15_03t, blue47t)))
-		print("0.4: " + str(brightness_contrast(yellow15_04t, blue47t)))
-		print("0.5: " + str(brightness_contrast(yellow15_05t, blue47t)))
-		print("0.6: " + str(brightness_contrast(yellow15_06t, blue47t)))
-		print("0.7: " + str(brightness_contrast(yellow15_07t, blue47t)))
-		print("0.8: " + str(brightness_contrast(yellow15_08t, blue47t)))
-		print("0.9: " + str(brightness_contrast(yellow15_09t, blue47t)))
-		print("1.0: " + str(brightness_contrast(yellow15_10t, blue47t)))
-		print("1.0 + 0.1: " + str(brightness_contrast(yellow15_1001t, blue47t)))
-		print("1.0 + 0.2: " + str(brightness_contrast(yellow15_1002t, blue47t)))
-		print("1.0 + 1.0: " + str(brightness_contrast(yellow15_1010t, blue47t)))
-		print("2.0: " + str(brightness_contrast(yellow15_20t, blue47t)))
-		print("2.0 + 0.1: " + str(brightness_contrast(yellow15_2001t, blue47t)))
-		print("2.0 + 0.2: " + str(brightness_contrast(yellow15_2002t, blue47t)))
-		print("2.0 + 0.3: " + str(brightness_contrast(yellow15_2003t, blue47t)))
-		print("2.0 + 0.4: " + str(brightness_contrast(yellow15_2004t, blue47t)))
-		print("2.0 + 0.5: " + str(brightness_contrast(yellow15_2005t, blue47t)))
-		print("2.0 + 0.6: " + str(brightness_contrast(yellow15_2006t, blue47t)))
-		print("2.0 + 0.7: " + str(brightness_contrast(yellow15_2007t, blue47t)))
-		print("Brightness difference between blue and green:")
-		print("0.1: " + str(brightness_contrast(green58_01t, blue47t)))
-		print("0.2: " + str(brightness_contrast(green58_02t, blue47t)))
-		print("0.3: " + str(brightness_contrast(green58_03t, blue47t)))
-		print("0.4: " + str(brightness_contrast(green58_04t, blue47t)))
-		print("0.5: " + str(brightness_contrast(green58_05t, blue47t)))
-		print("0.6: " + str(brightness_contrast(green58_06t, blue47t)))
-		print("0.7: " + str(brightness_contrast(green58_07t, blue47t)))
-		print("0.8: " + str(brightness_contrast(green58_08t, blue47t)))
-		print("0.9: " + str(brightness_contrast(green58_09t, blue47t)))
-		print("1.0: " + str(brightness_contrast(green58_10t, blue47t)))
-		print("1.0 + 0.1: " + str(brightness_contrast(green58_1001t, blue47t)))
-		print("1.0 + 0.2: " + str(brightness_contrast(green58_1002t, blue47t)))
-		print("1.0 + 0.3: " + str(brightness_contrast(green58_1003t, blue47t)))
-		print("1.0 + 0.4: " + str(brightness_contrast(green58_1004t, blue47t)))
-		print("2.0: " + str(brightness_contrast(green58_20t, blue47t)))
+	# brightness differences between colors
+	# We want to know both the direction and the strength of the difference
+	# to judge whether it could be reliably used as a cue.
 	
-	if (args.kodak):
-		# red 25
-		red25e = np.empty(61)
-		for i in range(0, 61):
-			red25e[i] = red25[i] + nd10[i] + nd01[i]
-		red25e_0 = np.empty(61)
-		for i in range(0, 61):
-			red25e_0[i] = math.exp(-red25e[i])
-		red25e_03 = np.empty(61)
-		for i in range(0, 61):
-			red25e_03[i] = math.exp(-(red25e[i] + nd03[i]))
-		red25e_07 = np.empty(61)
-		for i in range(0, 61):
-			red25e_07[i] = math.exp(-(red25e[i] + nd07[i]))
-		red25e_10 = np.empty(61)
-		for i in range(0, 61):
-			red25e_10[i] = math.exp(-(red25e[i] + nd10[i]))
-		
-		# yellow 15
-		yellow15e = np.empty(61)
-		for i in range(0, 61):
-			yellow15e[i] = yellow15[i] + nd20[i] + nd05[i]
-		yellow15e_0 = np.empty(61)
-		for i in range(0, 61):
-			yellow15e_0[i] = math.exp(-yellow15e[i])
-		yellow15e_03 = np.empty(61)
-		for i in range(0, 61):
-			yellow15e_03[i] = math.exp(-(yellow15e[i] + nd03[i]))
-		yellow15e_07 = np.empty(61)
-		for i in range(0, 61):
-			yellow15e_07[i] = math.exp(-(yellow15e[i] + nd07[i]))
-		yellow15e_10 = np.empty(61)
-		for i in range(0, 61):
-			yellow15e_10[i] = math.exp(-(yellow15e[i] + nd10[i]))
-		
-		# green 58
-		green58e = np.empty(61)
-		for i in range(0, 61):
-			green58e[i] = green58[i] + nd10[i] + nd03[i]
-		green58e_0 = np.empty(61)
-		for i in range(0, 61):
-			green58e_0[i] = math.exp(-green58e[i])
-		green58e_03 = np.empty(61)
-		for i in range(0, 61):
-			green58e_03[i] = math.exp(-(green58e[i] + nd03[i]))
-		green58e_07 = np.empty(61)
-		for i in range(0, 61):
-			green58e_07[i] = math.exp(-(green58e[i] + nd07[i]))
-		green58e_10 = np.empty(61)
-		for i in range(0, 61):
-			green58e_10[i] = math.exp(-(green58e[i] + nd10[i]))
-		
-		# blue 47
-		blue47_0 = np.empty(61)
-		for i in range(0, 61):
-			blue47_0[i] = math.exp(-blue47[i])
-		blue47_03 = np.empty(61)
-		for i in range(0, 61):
-			blue47_03[i] = math.exp(-(blue47[i] + nd03[i]))
-		blue47_07 = np.empty(61)
-		for i in range(0, 61):
-			blue47_07[i] = math.exp(-(blue47[i] + nd07[i]))
-		blue47_10 = np.empty(61)
-		for i in range(0, 61):
-			blue47_10[i] = math.exp(-(blue47[i] + nd10[i]))
-		
-		# brightness levels and color space coordinates
-		red25l = np.empty(4)
-		red25cs = np.empty(4)
-		red25cs1 = np.empty(4)
-		print("Red 25 (+ 1.0 + 0.2)")
-		red25data = spectral_rendering(red25e_0)
-		red25l[0] = red25data[0]
-		red25cs[0] = red25data[1]
-		red25cs1[0] = red25data[2]
-		print("+ 0.3")
-		red25data = spectral_rendering(red25e_03)
-		red25l[1] = red25data[0]
-		red25cs[1] = red25data[1]
-		red25cs1[1] = red25data[2]
-		print("+ 0.7")
-		red25data = spectral_rendering(red25e_07)
-		red25l[2] = red25data[0]
-		red25cs[2] = red25data[1]
-		red25cs1[2] = red25data[2]
-		print("+ 1.0")
-		red25data = spectral_rendering(red25e_10)
-		red25l[3] = red25data[0]
-		red25cs[3] = red25data[1]
-		red25cs1[3] = red25data[2]
-		
-		yellow15l = np.empty(4)
-		yellow15cs = np.empty(4)
-		yellow15cs1 = np.empty(4)
-		print("Yellow 15 (+ 2.0 + 0.6)")
-		yellow15data = spectral_rendering(yellow15e_0)
-		yellow15l[0] = yellow15data[0]
-		yellow15cs[0] = yellow15data[1]
-		yellow15cs1[0] = yellow15data[2]
-		print("+ 0.3")
-		yellow15data = spectral_rendering(yellow15e_03)
-		yellow15l[1] = yellow15data[0]
-		yellow15cs[1] = yellow15data[1]
-		yellow15cs1[1] = yellow15data[2]
-		print("+ 0.7")
-		yellow15data = spectral_rendering(yellow15e_07)
-		yellow15l[2] = yellow15data[0]
-		yellow15cs[2] = yellow15data[1]
-		yellow15cs1[2] = yellow15data[2]
-		print("+ 1.0")
-		yellow15data = spectral_rendering(yellow15e_10)
-		yellow15l[3] = yellow15data[0]
-		yellow15cs[3] = yellow15data[1]
-		yellow15cs1[3] = yellow15data[2]
-		
-		green58l = np.empty(4)
-		green58cs = np.empty(4)
-		green58cs1 = np.empty(4)
-		print("Green 58 (+ 1.0 + 0.3)")
-		green58data = spectral_rendering(green58e_0)
-		green58l[0] = green58data[0]
-		green58cs[0] = green58data[1]
-		green58cs1[0] = green58data[2]
-		print("+ 0.3")
-		green58data = spectral_rendering(green58e_03)
-		green58l[1] = green58data[0]
-		green58cs[1] = green58data[1]
-		green58cs1[1] = green58data[2]
-		print("+ 0.7")
-		green58data = spectral_rendering(green58e_07)
-		green58l[2] = green58data[0]
-		green58cs[2] = green58data[1]
-		green58cs1[2] = green58data[2]
-		print("+ 1.0")
-		green58data = spectral_rendering(green58e_10)
-		green58l[3] = green58data[0]
-		green58cs[3] = green58data[1]
-		green58cs1[3] = green58data[2]
-		
-		blue47l = np.empty(4)
-		blue47cs = np.empty(4)
-		blue47cs1 = np.empty(4)
-		print("Blue 47")
-		blue47data = spectral_rendering(blue47_0)
-		blue47l[0] = blue47data[0]
-		blue47cs[0] = blue47data[1]
-		blue47cs1[0] = blue47data[2]
-		print("+ 0.3")
-		blue47data = spectral_rendering(blue47_03)
-		blue47l[1] = blue47data[0]
-		blue47cs[1] = blue47data[1]
-		blue47cs1[1] = blue47data[2]
-		print("+ 0.7")
-		blue47data = spectral_rendering(blue47_07)
-		blue47l[2] = blue47data[0]
-		blue47cs[2] = blue47data[1]
-		blue47cs1[2] = blue47data[2]
-		print("+ 1.0")
-		blue47data = spectral_rendering(blue47_10)
-		blue47l[3] = blue47data[0]
-		blue47cs[3] = blue47data[1]
-		blue47cs1[3] = blue47data[2]
-		
-		# brightness differences between colors
-		# We want to know both the direction and the strength of the difference
-		# to judge whether it could be reliably used as a cue.
-		
-		# red-yellow
-		ry = 0 # red brighter
-		yr = 0 # yellow brighter
-		equal = 0
-		for i in range(0, 4):
-			if (i == 0):
-				rlevel = red25e
-			elif (i == 1):
-				rlevel = red25e_03
-			elif (i == 2):
-				rlevel = red25e_07
-			elif (i == 3):
-				rlevel = red25e_10
-			for j in range(0, 4):
-				if (j == 0):
-					ylevel = yellow15e
-				elif (j == 1):
-					ylevel = yellow15e_03
-				elif (j == 2):
-					ylevel = yellow15e_07
-				elif (j == 3):
-					ylevel = yellow15e_10
-				diff = red25l[i] - yellow15l[j]
-				contrast = brightness_contrast(rlevel, ylevel)
-				if (contrast >= 1):
-					if (diff > 0):
-						ry += 1
-					elif (diff < 0):
-						yr += 1
-				else:
-					equal += 1
-		print("R-Y brightness differences:")
-		print("Red brighter: " + str(ry))
-		print("Yellow brighter: " + str(yr))
-		print("Equal: " + str(equal))
-		
-		# red-green
-		rg = 0 # red brighter
-		gr = 0 # green brighter
-		equal = 0
-		for i in range(0, 4):
-			if (i == 0):
-				rlevel = red25e
-			elif (i == 1):
-				rlevel = red25e_03
-			elif (i == 2):
-				rlevel = red25e_07
-			elif (i == 3):
-				rlevel = red25e_10
-			for j in range(0, 4):
-				if (j == 0):
-					glevel = green58e
-				elif (j == 1):
-					glevel = green58e_03
-				elif (j == 2):
-					glevel = green58e_07
-				elif (j == 3):
-					glevel = green58e_10
-				diff = red25l[i] - green58l[j]
-				contrast = brightness_contrast(rlevel, glevel)
-				if (contrast >= 1):
-					if (diff > 0):
-						rg += 1
-					elif (diff < 0):
-						gr += 1
-				else:
-					equal += 1
-		print("R-G brightness differences:")
-		print("Red brighter: " + str(rg))
-		print("Green brighter: " + str(gr))
-		print("Equal: " + str(equal))
-		
-		# red-blue
-		rb = 0 # red brighter
-		br = 0 # blue brighter
-		equal = 0
-		for i in range(0, 4):
-			if (i == 0):
-				rlevel = red25e
-			elif (i == 1):
-				rlevel = red25e_03
-			elif (i == 2):
-				rlevel = red25e_07
-			elif (i == 3):
-				rlevel = red25e_10
-			for j in range(0, 4):
-				if (j == 0):
-					blevel = blue47
-				elif (j == 1):
-					blevel = blue47_03
-				elif (j == 2):
-					blevel = blue47_07
-				elif (j == 3):
-					blevel = blue47_10
-				diff = red25l[i] - blue47l[j]
-				contrast = brightness_contrast(rlevel, blevel)
-				if (contrast >= 1):
-					if (diff > 0):
-						rb += 1
-					elif (diff < 0):
-						br += 1
-				else:
-					equal += 1
-		print("R-B brightness differences:")
-		print("Red brighter: " + str(rb))
-		print("Blue brighter: " + str(br))
-		print("Equal: " + str(equal))
-		
-		# yellow-green
-		yg = 0 # yellow brighter
-		gy = 0 # green brighter
-		equal = 0
-		for i in range(0, 4):
-			if (i == 0):
+	# red-yellow
+	ry = 0 # red brighter
+	yr = 0 # yellow brighter
+	ryequal = 0
+	for i in range(0, 4):
+		if (i == 0):
+			rlevel = red25e
+		elif (i == 1):
+			rlevel = red25e_03
+		elif (i == 2):
+			rlevel = red25e_07
+		elif (i == 3):
+			rlevel = red25e_10
+		for j in range(0, 4):
+			if (j == 0):
 				ylevel = yellow15e
-			elif (i == 1):
+			elif (j == 1):
 				ylevel = yellow15e_03
-			elif (i == 2):
+			elif (j == 2):
 				ylevel = yellow15e_07
-			elif (i == 3):
+			elif (j == 3):
 				ylevel = yellow15e_10
-			for j in range(0, 4):
-				if (j == 0):
-					glevel = green58e
-				elif (j == 1):
-					glevel = green58e_03
-				elif (j == 2):
-					glevel = green58e_07
-				elif (j == 3):
-					glevel = green58e_10
-				diff = yellow15l[i] - green58l[j]
-				contrast = brightness_contrast(ylevel, glevel)
-				if (contrast >= 1):
-					if (diff > 0):
-						yg += 1
-					elif (diff < 0):
-						gy += 1
-				else:
-					equal += 1
-		print("Y-G brightness differences:")
-		print("Yellow brighter: " + str(yg))
-		print("Green brighter: " + str(gy))
-		print("Equal: " + str(equal))
-		
-		# yellow-blue
-		yb = 0 # yellow brighter
-		by = 0 # blue brighter
-		equal = 0
-		for i in range(0, 4):
-			if (i == 0):
-				ylevel = yellow15e
-			elif (i == 1):
-				ylevel = yellow15e_03
-			elif (i == 2):
-				ylevel = yellow15e_07
-			elif (i == 3):
-				ylevel = yellow15e_10
-			for j in range(0, 4):
-				if (j == 0):
-					blevel = blue47
-				elif (j == 1):
-					blevel = blue47_03
-				elif (j == 2):
-					blevel = blue47_07
-				elif (j == 3):
-					blevel = blue47_10
-				diff = yellow15l[i] - blue47l[j]
-				contrast = brightness_contrast(ylevel, blevel)
-				if (contrast >= 1):
-					if (diff > 0):
-						yb += 1
-					elif (diff < 0):
-						by += 1
-				else:
-					equal += 1
-		print("Y-B brightness differences:")
-		print("Yellow brighter: " + str(yb))
-		print("Blue brighter: " + str(by))
-		print("Equal: " + str(equal))
-		
-		# green-blue
-		gb = 0 # green brighter
-		bg = 0 # blue brighter
-		equal = 0
-		for i in range(0, 4):
-			if (i == 0):
+			diff = red25l[i] - yellow15l[j]
+			contrast = brightness_contrast(rlevel, ylevel)
+			if (contrast >= 1):
+				if (diff > 0):
+					ry += 1
+				elif (diff < 0):
+					yr += 1
+			else:
+				ryequal += 1
+	print("R-Y brightness differences:")
+	print("Red brighter: " + str(ry))
+	print("Yellow brighter: " + str(yr))
+	print("Equal: " + str(ryequal))
+	print("Expected % correct: " + str(100*max(ry, yr) / 16) + "-" + str(100*(max(ry, yr) + ryequal) / 16) + "%")
+	# what's this do?
+	binomial = binomtest(35, 40, (max(ry, yr) + ryequal/2) / 16, alternative='greater')
+	print("P-value: " + str(binomial.pvalue))
+	print("") # break up for readability
+	
+	# red-green
+	rg = 0 # red brighter
+	gr = 0 # green brighter
+	rgequal = 0
+	for i in range(0, 4):
+		if (i == 0):
+			rlevel = red25e
+		elif (i == 1):
+			rlevel = red25e_03
+		elif (i == 2):
+			rlevel = red25e_07
+		elif (i == 3):
+			rlevel = red25e_10
+		for j in range(0, 4):
+			if (j == 0):
 				glevel = green58e
-			elif (i == 1):
+			elif (j == 1):
 				glevel = green58e_03
-			elif (i == 2):
+			elif (j == 2):
 				glevel = green58e_07
-			elif (i == 3):
+			elif (j == 3):
 				glevel = green58e_10
-			for j in range(0, 4):
-				if (j == 0):
-					blevel = blue47
-				elif (j == 1):
-					blevel = blue47_03
-				elif (j == 2):
-					blevel = blue47_07
-				elif (j == 3):
-					blevel = blue47_10
-				diff = green58l[i] - blue47l[j]
-				contrast = brightness_contrast(glevel, blevel)
-				if (contrast >= 1):
-					if (diff > 0):
-						gb += 1
-					elif (diff < 0):
-						bg += 1
-				else:
-					equal += 1
-		print("G-B brightness differences:")
-		print("Green brighter: " + str(gb))
-		print("Blue brighter: " + str(bg))
-		print("Equal: " + str(equal))
-		
-		# significance level of brightness choices assuming a normal distribution
-		integral = 0
-		for i in range(0, 16):
-			integral += normal(8, 8/3, i)
-		tail = 0
-		for i in range(max(ry, yr), 16):
-			tail += normal(8, 8/3, i)
-		
-		print("R-Y significance: " + str(tail / integral))
-		
-		integral = 0
-		for i in range(0, 16):
-			integral += normal(8, 8/3, i)
-		tail = 0
-		for i in range(max(rg, gr), 16):
-			tail += normal(8, 8/3, i)
-		
-		print("R-G significance: " + str(tail / integral))
-		
-		integral = 0
-		for i in range(0, 16):
-			integral += normal(8, 8/3, i)
-		tail = 0
-		for i in range(max(rb, br), 16):
-			tail += normal(8, 8/3, i)
-		
-		print("R-B significance: " + str(tail / integral))
-		
-		integral = 0
-		for i in range(0, 16):
-			integral += normal(8, 8/3, i)
-		tail = 0
-		for i in range(max(yg, gy), 16):
-			tail += normal(8, 8/3, i)
-		
-		print("Y-G significance: " + str(tail / integral))
-		
-		integral = 0
-		for i in range(0, 16):
-			integral += normal(8, 8/3, i)
-		tail = 0
-		for i in range(max(yb, by), 16):
-			tail += normal(8, 8/3, i)
-		
-		print("Y-B significance: " + str(tail / integral))
-		
-		integral = 0
-		for i in range(0, 16):
-			integral += normal(8, 8/3, i)
-		tail = 0
-		for i in range(max(gb, bg), 16):
-			tail += normal(8, 8/3, i)
-		
-		print("G-B significance: " + str(tail / integral))
-		
-		# plot
-		x = np.array([
-			"B+1.0",
-			"G+1.0",
-			"Y+1.0",
-			"R+1.0",
-			"B+0.7",
-			"G+0.7",
-			"Y+0.7",
-			"R+0.7",
-			"B+0.3",
-			"G+0.3",
-			"Y+0.3",
-			"R+0.3",
-			"B",
-			"G",
-			"Y",
-			"R"
-		])
-		y = np.array([
-			blue47l[3],
-			green58l[3],
-			yellow15l[3],
-			red25l[3],
-			blue47l[2],
-			green58l[2],
-			yellow15l[2],
-			red25l[2],
-			blue47l[1],
-			green58l[1],
-			yellow15l[1],
-			red25l[1],
-			blue47l[0],
-			green58l[0],
-			yellow15l[0],
-			red25l[0]
-		])
-		x = np.array([0.0, 0.3, 0.7, 1.0])
-		#plt.barh(x, y, color="black")
-		#plt.xlabel("Perceived brightness")
-		plt.plot(x, red25l, 'o-r', mec='k', label="red 25")
-		plt.plot(x, yellow15l, 's-y', mec='k', label="yellow 15")
-		plt.plot(x, green58l, '^-g', mec='k', label="green 58")
-		plt.plot(x, blue47l, 'D-b', mec='k', label="blue 47")
-		plt.xlabel("Filter optical density")
-		plt.ylabel("Perceived brightness")
-		plt.yscale("log")
+			diff = red25l[i] - green58l[j]
+			contrast = brightness_contrast(rlevel, glevel)
+			if (contrast >= 1):
+				if (diff > 0):
+					rg += 1
+				elif (diff < 0):
+					gr += 1
+			else:
+				rgequal += 1
+	print("R-G brightness differences:")
+	print("Red brighter: " + str(rg))
+	print("Green brighter: " + str(gr))
+	print("Equal: " + str(rgequal))
+	print("Expected % correct: " + str(100*max(rg, gr) / 16) + "-" + str(100*(max(rg, gr) + rgequal) / 16) + "%")
+	binomial = binomtest(35, 40, (max(rg, gr) + rgequal/2) / 16, alternative='greater')
+	print("P-value: " + str(binomial.pvalue))
+	print("")
+	
+	# red-blue
+	rb = 0 # red brighter
+	br = 0 # blue brighter
+	rbequal = 0
+	for i in range(0, 4):
+		if (i == 0):
+			rlevel = red25e
+		elif (i == 1):
+			rlevel = red25e_03
+		elif (i == 2):
+			rlevel = red25e_07
+		elif (i == 3):
+			rlevel = red25e_10
+		for j in range(0, 4):
+			if (j == 0):
+				blevel = blue47
+			elif (j == 1):
+				blevel = blue47_03
+			elif (j == 2):
+				blevel = blue47_07
+			elif (j == 3):
+				blevel = blue47_10
+			diff = red25l[i] - blue47l[j]
+			contrast = brightness_contrast(rlevel, blevel)
+			if (contrast >= 1):
+				if (diff > 0):
+					rb += 1
+				elif (diff < 0):
+					br += 1
+			else:
+				rbequal += 1
+	print("R-B brightness differences:")
+	print("Red brighter: " + str(rb))
+	print("Blue brighter: " + str(br))
+	print("Equal: " + str(rbequal))
+	print("Expected % correct: " + str(100*max(rb, br) / 16) + "-" + str(100*(max(rb, br) + rbequal) / 16) + "%")
+	binomial = binomtest(35, 40, (max(rb, br) + rbequal/2) / 16, alternative='greater')
+	print("P-value: " + str(binomial.pvalue))
+	print("")
+	
+	# yellow-green
+	yg = 0 # yellow brighter
+	gy = 0 # green brighter
+	ygequal = 0
+	for i in range(0, 4):
+		if (i == 0):
+			ylevel = yellow15e
+		elif (i == 1):
+			ylevel = yellow15e_03
+		elif (i == 2):
+			ylevel = yellow15e_07
+		elif (i == 3):
+			ylevel = yellow15e_10
+		for j in range(0, 4):
+			if (j == 0):
+				glevel = green58e
+			elif (j == 1):
+				glevel = green58e_03
+			elif (j == 2):
+				glevel = green58e_07
+			elif (j == 3):
+				glevel = green58e_10
+			diff = yellow15l[i] - green58l[j]
+			contrast = brightness_contrast(ylevel, glevel)
+			if (contrast >= 1):
+				if (diff > 0):
+					yg += 1
+				elif (diff < 0):
+					gy += 1
+			else:
+				ygequal += 1
+	print("Y-G brightness differences:")
+	print("Yellow brighter: " + str(yg))
+	print("Green brighter: " + str(gy))
+	print("Equal: " + str(ygequal))
+	print("Expected % correct: " + str(100*max(yg, gy) / 16) + "-" + str(100*(max(yg, gy) + ygequal) / 16) + "%")
+	binomial = binomtest(35, 40, (max(yg, gy) + ygequal/2) / 16, alternative='greater')
+	print("P-value: " + str(binomial.pvalue))
+	print("")
+	
+	# yellow-blue
+	yb = 0 # yellow brighter
+	by = 0 # blue brighter
+	ybequal = 0
+	for i in range(0, 4):
+		if (i == 0):
+			ylevel = yellow15e
+		elif (i == 1):
+			ylevel = yellow15e_03
+		elif (i == 2):
+			ylevel = yellow15e_07
+		elif (i == 3):
+			ylevel = yellow15e_10
+		for j in range(0, 4):
+			if (j == 0):
+				blevel = blue47
+			elif (j == 1):
+				blevel = blue47_03
+			elif (j == 2):
+				blevel = blue47_07
+			elif (j == 3):
+				blevel = blue47_10
+			diff = yellow15l[i] - blue47l[j]
+			contrast = brightness_contrast(ylevel, blevel)
+			if (contrast >= 1):
+				if (diff > 0):
+					yb += 1
+				elif (diff < 0):
+					by += 1
+			else:
+				ybequal += 1
+	print("Y-B brightness differences:")
+	print("Yellow brighter: " + str(yb))
+	print("Blue brighter: " + str(by))
+	print("Equal: " + str(ybequal))
+	print("Expected % correct: " + str(100*max(yb, by) / 16) + "-" + str(100*(max(yb, by) + ybequal) / 16) + "%")
+	binomial = binomtest(35, 40, (max(yb, by) + ybequal/2) / 16, alternative='greater')
+	print("P-value: " + str(binomial.pvalue))
+	print("")
+	
+	# green-blue
+	gb = 0 # green brighter
+	bg = 0 # blue brighter
+	gbequal = 0
+	for i in range(0, 4):
+		if (i == 0):
+			glevel = green58e
+		elif (i == 1):
+			glevel = green58e_03
+		elif (i == 2):
+			glevel = green58e_07
+		elif (i == 3):
+			glevel = green58e_10
+		for j in range(0, 4):
+			if (j == 0):
+				blevel = blue47
+			elif (j == 1):
+				blevel = blue47_03
+			elif (j == 2):
+				blevel = blue47_07
+			elif (j == 3):
+				blevel = blue47_10
+			diff = green58l[i] - blue47l[j]
+			contrast = brightness_contrast(glevel, blevel)
+			if (contrast >= 1):
+				if (diff > 0):
+					gb += 1
+				elif (diff < 0):
+					bg += 1
+			else:
+				gbequal += 1
+	print("G-B brightness differences:")
+	print("Green brighter: " + str(gb))
+	print("Blue brighter: " + str(bg))
+	print("Equal: " + str(gbequal))
+	print("Expected % correct: " + str(100*max(gb, bg) / 16) + "-" + str(100*(max(gb, bg) + gbequal) / 16) + "%")
+	binomial = binomtest(35, 40, (max(gb, bg) + gbequal/2) / 16, alternative='greater')
+	print("P-value: " + str(binomial.pvalue))
+	print("")
+	
+	# best expected performance
+	rymax = max(ry, yr) + ryequal / 2
+	rgmax = max(rg, gr) + rgequal / 2
+	rbmax = max(rb, br) + rbequal / 2
+	ygmax = max(yg, gy) + ygequal / 2
+	ybmax = max(yb, by) + ybequal / 2
+	gbmax = max(gb, bg) + gbequal / 2
+	
+	# plot
+	x = np.array([
+		"B+1.0",
+		"G+1.0",
+		"Y+1.0",
+		"R+1.0",
+		"B+0.7",
+		"G+0.7",
+		"Y+0.7",
+		"R+0.7",
+		"B+0.3",
+		"G+0.3",
+		"Y+0.3",
+		"R+0.3",
+		"B",
+		"G",
+		"Y",
+		"R"
+	])
+	y = np.array([
+		blue47l[3],
+		green58l[3],
+		yellow15l[3],
+		red25l[3],
+		blue47l[2],
+		green58l[2],
+		yellow15l[2],
+		red25l[2],
+		blue47l[1],
+		green58l[1],
+		yellow15l[1],
+		red25l[1],
+		blue47l[0],
+		green58l[0],
+		yellow15l[0],
+		red25l[0]
+	])
+	x = np.array([0.0, 0.3, 0.7, 1.0])
+	plt.plot(x, red25l, marker='o', linestyle='-', color='0.3', mec='k', label="red 25")
+	plt.plot(x, yellow15l, marker='s', linestyle='-', color='0.7', mfc='w', mec='k', label="yellow 15")
+	plt.plot(x, green58l, marker='^', linestyle='-', color='0.5', mec='k', label="green 58")
+	plt.plot(x, blue47l, 'D-k', label="blue 47")
+	plt.xlabel("Filter optical density")
+	plt.ylabel("Perceived brightness")
+	plt.yscale("log")
+	plt.legend()
+	plt.show()
+	
+	x = np.array(["R-Y", "R-G", "R-B", "Y-G", "Y-B", "G-B"])
+	
+	# color differences -- this is the hard part...
+	
+	# first we plot them in a two-dimensional color space with (L-S)/(L+S) on
+	# the x-axis and brightness on the y-axis. Not sure how much this tells us
+	# though.
+	if (l1 == m1):
+		plt.plot(red25cs, red25l, marker='o', linestyle='', color='0.3', mec='k', label="red 25")
+		plt.plot(yellow15cs, yellow15l, 'sw', mec='k', label="yellow 15")
+		plt.plot(green58cs, green58l, marker='^', linestyle='', color='0.5', mec='k', label="green 58")
+		plt.plot(blue47cs, blue47l, 'Dk', label="blue 47")
+		plt.xlabel("Chromaticity ((L-S)/(L+S))")
+		plt.ylabel("Brightness (L)")
 		plt.legend()
 		plt.show()
-		
-		x = np.array(["R-Y", "R-G", "R-B", "Y-G", "Y-B", "G-B"])
-		y = np.empty(6)
-		y[0] = (max(ry, yr) / 16) * 100
-		y[1] = (max(rg, gr) / 16) * 100
-		y[2] = (max(rb, br) / 16) * 100
-		y[3] = (max(yg, gy) / 16) * 100
-		y[4] = (max(yb, by) / 16) * 100
-		y[5] = (max(gb, bg) / 16) * 100
-		plt.bar(x, y, color="black")
-		plt.ylabel("% correct")
+	else:
+		plt.plot(red25cs, red25cs1, marker='o', linestyle='', color='0.3', mec='k', label="red 25")
+		plt.plot(yellow15cs, yellow15cs1, 'sw', mec='k', label="yellow 15")
+		plt.plot(green58cs, green58cs1, marker='^', linestyle='', color='0.5', mec='k', label="green 58")
+		plt.plot(blue47cs, blue47cs1, 'Dk', label="blue 47")
+		plt.xlabel("(L-S)/(L+M+S)")
+		plt.ylabel("(M-0.5(L+S))/(L+M+S)")
+		xborder = np.array([-math.sqrt(1/2), 0, math.sqrt(1/2), -math.sqrt(1/2)])
+		yborder = np.array([-math.sqrt(2/3)/2, math.sqrt(2/3), -math.sqrt(2/3)/2, -math.sqrt(2/3)/2])
+		plt.plot(xborder, yborder, '-k')
+		plt.text(-math.sqrt(1/2) - 0.05, -math.sqrt(2/3)/2 - 0.025, 'S')
+		plt.text(0 - 0.025, math.sqrt(2/3) + 0.0125, 'M')
+		plt.text(math.sqrt(1/2) + 0.0125, -math.sqrt(2/3)/2 - 0.025, 'L')
+		plt.legend()
 		plt.show()
-		
-		# color differences -- this is the hard part...
-		
-		# first we plot them in a two-dimensional color space with (L-S)/(L+S) on
-		# the x-axis and brightness on the y-axis. Not sure how much this tells us
-		# though.
-		if (l1 == m1):
-			plt.plot(red25cs, red25l, 'or', mec='k', label="red 25")
-			plt.plot(yellow15cs, yellow15l, 'sy', mec='k', label="yellow 15")
-			plt.plot(green58cs, green58l, '^g', mec='k', label="green 58")
-			plt.plot(blue47cs, blue47l, 'Db', mec='k', label="blue 47")
-			plt.xlabel("Chromaticity ((L-S)/(L+S))")
-			plt.ylabel("Brightness (L)")
-			plt.legend()
-			plt.show()
-		else:
-			plt.plot(red25cs, red25cs1, 'or', mec='k', label="red 25")
-			plt.plot(yellow15cs, yellow15cs1, 'sy', mec='k', label="yellow 15")
-			plt.plot(green58cs, green58cs1, '^g', mec='k', label="green 58")
-			plt.plot(blue47cs, blue47cs1, 'Db', mec='k', label="blue 47")
-			plt.xlabel("(L-S)/(L+M+S)")
-			plt.ylabel("(M-0.5(L+S))/(L+M+S)")
-			xborder = np.array([-math.sqrt(1/2), 0, math.sqrt(1/2), -math.sqrt(1/2)])
-			yborder = np.array([-math.sqrt(2/3)/2, math.sqrt(2/3), -math.sqrt(2/3)/2, -math.sqrt(2/3)/2])
-			plt.plot(xborder, yborder, '-k')
-			plt.text(-math.sqrt(1/2) - 0.05, -math.sqrt(2/3)/2 - 0.025, 'S')
-			plt.text(0 - 0.025, math.sqrt(2/3) + 0.0125, 'M')
-			plt.text(math.sqrt(1/2) + 0.0125, -math.sqrt(2/3)/2 - 0.025, 'L')
-			plt.legend()
-			plt.show()
-		
-		# Next we try to assess whether they're distinguishable. There appears
-		# to be no chromatic overlap, so we won't bother with the direction.
-		
-		y = np.empty(6)
-		
-		# R-Y
-		d = 0 # different
-		n = 0 # near threshold
-		s = 0 # same
-		
-		print("R-Y")
-		for i in range(0, 4):
-			if (i == 0):
-				rlevel = red25e
-			elif (i == 1):
-				rlevel = red25e_03
-			elif (i == 2):
-				rlevel = red25e_07
-			elif (i == 3):
-				rlevel = red25e_10
-			for j in range(0, 4):
-				if (j == 0):
-					ylevel = yellow15e
-				elif (j == 1):
-					ylevel = yellow15e_03
-				elif (j == 2):
-					ylevel = yellow15e_07
-				elif (j == 3):
-					ylevel = yellow15e_10
-				contrast = color_contrast(rlevel, ylevel)
-				print("R" + str(i) + " vs. Y" + str(j) + ": " + str(contrast))
-				if (contrast >= 4):
-					d += 1
-				elif (contrast >= 1):
-					n += 1
-				else:
-					s += 1
-		print("Different: " + str(d))
-		print("Close: " + str(n))
-		print("Same: " + str(s))
-		print("")
-		y[0] = d+n
-		
-		# R-G
-		d = 0
-		n = 0
-		s = 0
-		
-		print("R-G")
-		for i in range(0, 4):
-			if (i == 0):
-				rlevel = red25e
-			elif (i == 1):
-				rlevel = red25e_03
-			elif (i == 2):
-				rlevel = red25e_07
-			elif (i == 3):
-				rlevel = red25e_10
-			for j in range(0, 4):
-				if (j == 0):
-					glevel = green58e
-				elif (j == 1):
-					glevel = green58e_03
-				elif (j == 2):
-					glevel = green58e_07
-				elif (j == 3):
-					glevel = green58e_10
-				contrast = color_contrast(rlevel, glevel)
-				print("R" + str(i) + " vs. G" + str(j) + ": " + str(contrast))
-				if (contrast >= 4):
-					d += 1
-				elif (contrast >= 1):
-					n += 1
-				else:
-					s += 1
-		print("Different: " + str(d))
-		print("Close: " + str(n))
-		print("Same: " + str(s))
-		print("")
-		y[1] = d+n
-		
-		# R-B
-		d = 0
-		n = 0
-		s = 0
-		
-		print("R-B")
-		for i in range(0, 4):
-			if (i == 0):
-				rlevel = red25e
-			elif (i == 1):
-				rlevel = red25e_03
-			elif (i == 2):
-				rlevel = red25e_07
-			elif (i == 3):
-				rlevel = red25e_10
-			for j in range(0, 4):
-				if (j == 0):
-					blevel = blue47
-				elif (j == 1):
-					blevel = blue47_03
-				elif (j == 2):
-					blevel = blue47_07
-				elif (j == 3):
-					blevel = blue47_10
-				contrast = color_contrast(rlevel, blevel)
-				print("R" + str(i) + " vs. B" + str(j) + ": " + str(contrast))
-				if (contrast >= 4):
-					d += 1
-				elif (contrast >= 1):
-					n += 1
-				else:
-					s += 1
-		print("Different: " + str(d))
-		print("Close: " + str(n))
-		print("Same: " + str(s))
-		print("")
-		y[2] = d+n
-		
-		# Y-G
-		d = 0
-		n = 0
-		s = 0
-		
-		print("Y-G")
-		for i in range(0, 4):
-			if (i == 0):
+	
+	# Next we try to assess whether they're distinguishable. As with brightness, we
+	# check both the contrast and the direction.
+	
+	box = np.empty((16, 6))
+	
+	# R-Y
+	xpos = 0 # L>S
+	xneg = 0 # S>L
+	ypos = 0 # M>(L+S) (trichromacy only, values for dichromacy are redundant to the above)
+	yneg = 0 # (L+S)>M (trichromacy only)
+	s = 0 # same
+	counter = 0
+	
+	print("R-Y")
+	for i in range(0, 4):
+		if (i == 0):
+			rlevel = red25e
+		elif (i == 1):
+			rlevel = red25e_03
+		elif (i == 2):
+			rlevel = red25e_07
+		elif (i == 3):
+			rlevel = red25e_10
+		for j in range(0, 4):
+			if (j == 0):
 				ylevel = yellow15e
-			elif (i == 1):
+			elif (j == 1):
 				ylevel = yellow15e_03
-			elif (i == 2):
+			elif (j == 2):
 				ylevel = yellow15e_07
-			elif (i == 3):
+			elif (j == 3):
 				ylevel = yellow15e_10
-			for j in range(0, 4):
-				if (j == 0):
-					glevel = green58e
-				elif (j == 1):
-					glevel = green58e_03
-				elif (j == 2):
-					glevel = green58e_07
-				elif (j == 3):
-					glevel = green58e_10
-				contrast = color_contrast(ylevel, glevel)
-				print("Y" + str(i) + " vs. G" + str(j) + ": " + str(contrast))
-				if (contrast >= 4):
-					d += 1
-				elif (contrast >= 1):
-					n += 1
-				else:
-					s += 1
-		print("Different: " + str(d))
-		print("Close: " + str(n))
-		print("Same: " + str(s))
-		print("")
-		y[3] = d+n
-		
-		# Y-B
-		d = 0
-		n = 0
-		s = 0
-		
-		print("Y-B")
-		for i in range(0, 4):
-			if (i == 0):
-				ylevel = yellow15e
-			elif (i == 1):
-				ylevel = yellow15e_03
-			elif (i == 2):
-				ylevel = yellow15e_07
-			elif (i == 3):
-				ylevel = yellow15e_10
-			for j in range(0, 4):
-				if (j == 0):
-					blevel = blue47
-				elif (j == 1):
-					blevel = blue47_03
-				elif (j == 2):
-					blevel = blue47_07
-				elif (j == 3):
-					blevel = blue47_10
-				contrast = color_contrast(rlevel, blevel)
-				print("Y" + str(i) + " vs. B" + str(j) + ": " + str(contrast))
-				if (contrast >= 4):
-					d += 1
-				elif (contrast >= 1):
-					n += 1
-				else:
-					s += 1
-		print("Different: " + str(d))
-		print("Close: " + str(n))
-		print("Same: " + str(s))
-		print("")
-		y[4] = d+n
-		
-		# G-B
-		d = 0
-		n = 0
-		s = 0
-		
-		print("G-B")
-		for i in range(0, 4):
-			if (i == 0):
+			diffx = red25cs[i] - yellow15cs[j]
+			diffy = red25cs1[i] - yellow15cs1[j]
+			contrast = color_contrast(rlevel, ylevel)
+			box[counter][0] = contrast
+			print("R" + str(i) + " vs. Y" + str(j) + ": " + str(contrast))
+			if (contrast < 1):
+				s += 1
+			else:
+				if (diffx > 0):
+					xpos += 1
+				elif (diffx < 0):
+					xneg += 1
+				if (diffy > 0):
+					ypos += 1
+				elif (diffy < 0):
+					yneg += 1
+			counter += 1
+	print("L>S: " + str(xpos))
+	print("S>L: " + str(xneg))
+	print("M>(L+S): " + str(ypos))
+	print("(L+S)>M: " + str(yneg))
+	print("Same: " + str(s))
+	binomial = binomtest(35, 40, p=(max(xpos, xneg) + s/2)/16, alternative='greater')
+	print("P-value: " + str(binomial.pvalue))
+	print("")
+	
+	# R-G
+	xpos = 0
+	xneg = 0
+	ypos = 0
+	yneg = 0
+	s = 0
+	counter = 0
+	
+	print("R-G")
+	for i in range(0, 4):
+		if (i == 0):
+			rlevel = red25e
+		elif (i == 1):
+			rlevel = red25e_03
+		elif (i == 2):
+			rlevel = red25e_07
+		elif (i == 3):
+			rlevel = red25e_10
+		for j in range(0, 4):
+			if (j == 0):
 				glevel = green58e
-			elif (i == 1):
+			elif (j == 1):
 				glevel = green58e_03
-			elif (i == 2):
+			elif (j == 2):
 				glevel = green58e_07
-			elif (i == 3):
+			elif (j == 3):
 				glevel = green58e_10
-			for j in range(0, 4):
-				if (j == 0):
-					blevel = blue47
-				elif (j == 1):
-					blevel = blue47_03
-				elif (j == 2):
-					blevel = blue47_07
-				elif (j == 3):
-					blevel = blue47_10
-				contrast = color_contrast(glevel, blevel)
-				print("G" + str(i) + " vs. B" + str(j) + ": " + str(contrast))
-				if (contrast >= 4):
-					d += 1
-				elif (contrast >= 1):
-					n += 1
-				else:
-					s += 1
-		print("Different: " + str(d))
-		print("Close: " + str(n))
-		print("Same: " + str(s))
-		print("")
-		y[5] = d+n
-		
-		# percentages
-		for i in range(6):
-			y[i] = y[i]*100 / 16
-		
-		# plot
-		plt.bar(x, y, color="black")
-		plt.ylabel("% correct")
-		plt.show()
+			diffx = red25cs[i] - green58cs[j]
+			diffy = red25cs1[i] - green58cs1[j]
+			contrast = color_contrast(rlevel, glevel)
+			box[counter][1] = contrast
+			print("R" + str(i) + " vs. G" + str(j) + ": " + str(contrast))
+			if (contrast < 1):
+				s += 1
+			else:
+				if (diffx > 0):
+					xpos += 1
+				elif (diffx < 0):
+					xneg += 1
+				if (diffy > 0):
+					ypos += 1
+				elif (diffy < 0):
+					yneg += 1
+			counter += 1
+	print("L>S: " + str(xpos))
+	print("S>L: " + str(xneg))
+	print("M>(L+S): " + str(ypos))
+	print("(L+S)>M: " + str(yneg))
+	print("Same: " + str(s))
+	binomial = binomtest(35, 40, p=(max(xpos, xneg) + s/2)/16, alternative='greater')
+	print("P-value: " + str(binomial.pvalue))
+	print("")
+	
+	# R-B
+	xpos = 0
+	xneg = 0
+	ypos = 0
+	yneg = 0
+	s = 0
+	counter = 0
+	
+	print("R-B")
+	for i in range(0, 4):
+		if (i == 0):
+			rlevel = red25e
+		elif (i == 1):
+			rlevel = red25e_03
+		elif (i == 2):
+			rlevel = red25e_07
+		elif (i == 3):
+			rlevel = red25e_10
+		for j in range(0, 4):
+			if (j == 0):
+				blevel = blue47
+			elif (j == 1):
+				blevel = blue47_03
+			elif (j == 2):
+				blevel = blue47_07
+			elif (j == 3):
+				blevel = blue47_10
+			diffx = red25cs[i] - blue47cs[j]
+			diffy = red25cs1[i] - blue47cs1[j]
+			contrast = color_contrast(rlevel, blevel)
+			box[counter][2] = contrast
+			print("R" + str(i) + " vs. B" + str(j) + ": " + str(contrast))
+			if (contrast < 1):
+				s += 1
+			else:
+				if (diffx > 0):
+					xpos += 1
+				elif (diffx < 0):
+					xneg += 1
+				if (diffy > 0):
+					ypos += 1
+				elif (diffy < 0):
+					yneg += 1
+			counter += 1
+	print("L>S: " + str(xpos))
+	print("S>L: " + str(xneg))
+	print("M>(L+S): " + str(ypos))
+	print("(L+S)>M: " + str(yneg))
+	print("Same: " + str(s))
+	binomial = binomtest(35, 40, p=(16 - s/2)/16, alternative='greater')
+	print("P-value: " + str(binomial.pvalue))
+	print("")
+	
+	# Y-G
+	xpos = 0
+	xneg = 0
+	ypos = 0
+	yneg = 0
+	s = 0
+	counter = 0
+	
+	print("Y-G")
+	for i in range(0, 4):
+		if (i == 0):
+			ylevel = yellow15e
+		elif (i == 1):
+			ylevel = yellow15e_03
+		elif (i == 2):
+			ylevel = yellow15e_07
+		elif (i == 3):
+			ylevel = yellow15e_10
+		for j in range(0, 4):
+			if (j == 0):
+				glevel = green58e
+			elif (j == 1):
+				glevel = green58e_03
+			elif (j == 2):
+				glevel = green58e_07
+			elif (j == 3):
+				glevel = green58e_10
+			diffx = yellow15cs[i] - green58cs[j]
+			diffy = yellow15cs1[i] - green58cs1[j]
+			contrast = color_contrast(ylevel, glevel)
+			box[counter][3] = contrast
+			print("Y" + str(i) + " vs. G" + str(j) + ": " + str(contrast))
+			if (contrast < 1):
+				s += 1
+			else:
+				if (diffx > 0):
+					xpos += 1
+				elif (diffx < 0):
+					xneg += 1
+				if (diffy > 0):
+					ypos += 1
+				elif (diffy < 0):
+					yneg += 1
+			counter += 1
+	print("L>S: " + str(xpos))
+	print("S>L: " + str(xneg))
+	print("M>(L+S): " + str(ypos))
+	print("(L+S)>M: " + str(yneg))
+	print("Same: " + str(s))
+	binomial = binomtest(35, 40, p=(16 - s/2)/16, alternative='greater')
+	print("P-value: " + str(binomial.pvalue))
+	print("")
+	
+	# Y-B
+	xpos = 0
+	xneg = 0
+	ypos = 0
+	yneg = 0
+	s = 0
+	counter = 0
+	
+	print("Y-B")
+	for i in range(0, 4):
+		if (i == 0):
+			ylevel = yellow15e
+		elif (i == 1):
+			ylevel = yellow15e_03
+		elif (i == 2):
+			ylevel = yellow15e_07
+		elif (i == 3):
+			ylevel = yellow15e_10
+		for j in range(0, 4):
+			if (j == 0):
+				blevel = blue47
+			elif (j == 1):
+				blevel = blue47_03
+			elif (j == 2):
+				blevel = blue47_07
+			elif (j == 3):
+				blevel = blue47_10
+			diffx = yellow15cs[i] - blue47cs[j]
+			diffy = yellow15cs1[i] - blue47cs1[j]
+			contrast = color_contrast(ylevel, blevel)
+			box[counter][4] = contrast
+			print("Y" + str(i) + " vs. B" + str(j) + ": " + str(contrast))
+			if (contrast < 1):
+				s += 1
+			else:
+				if (diffx > 0):
+					xpos += 1
+				elif (diffx < 0):
+					xneg += 1
+				if (diffy > 0):
+					ypos += 1
+				elif (diffy < 0):
+					yneg += 1
+			counter += 1
+	print("L>S: " + str(xpos))
+	print("S>L: " + str(xneg))
+	print("M>(L+S): " + str(ypos))
+	print("(L+S)>M: " + str(yneg))
+	print("Same: " + str(s))
+	binomial = binomtest(35, 40, p=(16 - s/2)/16, alternative='greater')
+	print("P-value: " + str(binomial.pvalue))
+	print("")
+	
+	# G-B
+	xpos = 0
+	xneg = 0
+	ypos = 0
+	yneg = 0
+	s = 0
+	counter = 0
+	
+	print("G-B")
+	for i in range(0, 4):
+		if (i == 0):
+			glevel = green58e
+		elif (i == 1):
+			glevel = green58e_03
+		elif (i == 2):
+			glevel = green58e_07
+		elif (i == 3):
+			glevel = green58e_10
+		for j in range(0, 4):
+			if (j == 0):
+				blevel = blue47
+			elif (j == 1):
+				blevel = blue47_03
+			elif (j == 2):
+				blevel = blue47_07
+			elif (j == 3):
+				blevel = blue47_10
+			diffx = green58cs[i] - blue47cs[j]
+			diffy = green58cs1[i] - blue47cs1[j]
+			contrast = color_contrast(glevel, blevel)
+			box[counter][5] = contrast
+			print("G" + str(i) + " vs. B" + str(j) + ": " + str(contrast))
+			if (contrast < 1):
+				s += 1
+			else:
+				if (diffx > 0):
+					xpos += 1
+				elif (diffx < 0):
+					xneg += 1
+				if (diffy > 0):
+					ypos += 1
+				elif (diffy < 0):
+					yneg += 1
+			counter += 1
+	print("L>S: " + str(xpos))
+	print("S>L: " + str(xneg))
+	print("M>(L+S): " + str(ypos))
+	print("(L+S)>M: " + str(yneg))
+	print("Same: " + str(s))
+	binomial = binomtest(35, 40, p=(16 - s/2)/16, alternative='greater')
+	print("P-value: " + str(binomial.pvalue))
+	print("")
+	
+	# medians
+	mry = statistics.median([box[0][0], box[1][0], box[2][0], box[3][0], box[4][0], box[5][0], box[6][0], box[7][0], box[8][0], box[9][0], box[10][0], box[11][0], box[12][0], box[13][0], box[14][0], box[15][0]])
+	mrg = statistics.median([box[0][1], box[1][1], box[2][1], box[3][1], box[4][1], box[5][1], box[6][1], box[7][1], box[8][1], box[9][1], box[10][1], box[11][1], box[12][1], box[13][1], box[14][1], box[15][1]])
+	mrb = statistics.median([box[0][2], box[1][2], box[2][2], box[3][2], box[4][2], box[5][2], box[6][2], box[7][2], box[8][2], box[9][2], box[10][2], box[11][2], box[12][2], box[13][2], box[14][2], box[15][2]])
+	myg = statistics.median([box[0][3], box[1][3], box[2][3], box[3][3], box[4][3], box[5][3], box[6][3], box[7][3], box[8][3], box[9][3], box[10][3], box[11][3], box[12][3], box[13][3], box[14][3], box[15][3]])
+	myb = statistics.median([box[0][4], box[1][4], box[2][4], box[3][4], box[4][4], box[5][4], box[6][4], box[7][4], box[8][4], box[9][4], box[10][4], box[11][4], box[12][4], box[13][4], box[14][4], box[15][4]])
+	mgb = statistics.median([box[0][5], box[1][5], box[2][5], box[3][5], box[4][5], box[5][5], box[6][5], box[7][5], box[8][5], box[9][5], box[10][5], box[11][5], box[12][5], box[13][5], box[14][5], box[15][5]])
+	
+	print(mry)
+	print(mrg)
+	print(mrb)
+	print(myg)
+	print(myb)
+	print(mgb)
+	print("Lowest median contrast: " + str(min(mry, mrg, mrb, myg, myb, mgb)))
+	print("Highest median contrast: " + str(max(mry, mrg, mrb, myg, myb, mgb)))
+	print("")
+	
+	# plot contrast values
+	plt.boxplot(x=box, tick_labels=x)
+	plt.ylabel("ΔS (JND)")
+	plt.show()
+
+if (args.blackbody != 0):
+	print("Surface area of sphere: " + str(sphere_area))
+	print("Energy produced by light bulb (W/cm^2): " + str(watts_cm2))
+	print("Energy produced by light bulb (W/m^2): " + str(watts_m2))
+	print("Energy produced by blackbody model (W/m^2): " + str(sigma * args.blackbody**4))
+	
+	# how much energy is produced between 300-700 nm when paired with blue 47
+	visible_total = 0
+	visible = np.empty(41)
+	for i in range(41):
+		visible[i] = blackbody(i+300, args.blackbody) * watts_m2 / (sigma * args.blackbody**4)
+		visible_total += visible[i]
+	
+	visible_filtered_total = 0
+	visible_filtered = np.empty(41)
+	for i in range(41):
+		visible_filtered[i] = visible[i] * math.exp(-blue47[i])
+		visible_filtered_total += visible_filtered[i]
+	
+	print("Light energy (W/m^2): " + str(visible_total*400))
+	print("Light energy (uW/cm^2): " + str(visible_total*400*1000000/100**2))
+	print("Light energy filtered through blue 47 (W/m^2): " + str(visible_filtered_total*400))
+	print("Light energy filtered through blue 47 (uW/cm^2): " + str(visible_filtered_total*400*1000000/100**2))
+	
+	# plot curve
+	xvalues = np.empty(61)
+	yvalues = np.empty(61)
+	for i in range(61):
+		w = i*10 + 300
+		xvalues[i] = w
+		yvalues[i] = blackbody(w, args.blackbody)
+	plt.plot(xvalues, yvalues)
+	plt.show()
+	print("")
 
 # print execution time
 print("%s seconds" % (time.time() - start_time))
