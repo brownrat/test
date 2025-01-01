@@ -46,6 +46,7 @@ import matplotlib.pyplot as plt
 import scipy
 from scipy.stats import binomtest
 import statistics
+from scipy.integrate import quad
 
 # execution time
 start_time = time.time()
@@ -60,9 +61,9 @@ parser.add_argument("--weber", type=float, default=0.018, help="Weber fraction f
 parser.add_argument("--weberm", type=float, default=0, help="override Weber fraction for M cones")
 parser.add_argument("--webers", type=float, default=0, help="override Weber fraction for S cones")
 parser.add_argument("--weberb", type=float, default=0.14, help="Weber fraction for brightness")
-parser.add_argument("--lp", type=float, default=0.62, help="proportion of L cones")
-parser.add_argument("--mp", type=float, default=0.31, help="proportion of M cones")
-parser.add_argument("--sp", type=float, default=0.07, help="proportion of S cones")
+parser.add_argument("--lp", type=float, default=9, help="number of L cones per receptive field")
+parser.add_argument("--mp", type=float, default=4.5, help="number of M cones per receptive field")
+parser.add_argument("--sp", type=float, default=1, help="number of S cones per receptive field")
 parser.add_argument("--filter", type=str, default="none", help="type of lens filtering")
 parser.add_argument("--qn", help="use quantum noise in color differences", action="store_true")
 parser.add_argument("--lb", type=float, default=0.68990272, help="contribution of L cones to perception of brightness")
@@ -87,16 +88,23 @@ parser.add_argument("--triangle1", help="plot logarithmic noise-scaled color tri
 parser.add_argument("--hexagon", help="plot color hexagon", action="store_true")
 parser.add_argument("--wd", help="plot wavelength discrimination function", action="store_true")
 parser.add_argument("--blackbody", type=int, default=0, help="plot black body curve for a given temperature in Kelvin")
+parser.add_argument("--munsell", help="Munsell color cards", action="store_true")
 parser.add_argument("--convergence", type=float, default=1, help="cone-to-ganglion cell convergence ratio")
 parser.add_argument("--ff", type=float, default=22.4, help="flicker fusion frequency (Hz)")
 parser.add_argument("--osd", type=float, default=1.2, help="outer segment diameter (um)")
-parser.add_argument("--fl", type=float, default=22.3, help="focal length (mm)")
-parser.add_argument("--pupil", type=float, default=11, help="pupil diameter (mm)")
+parser.add_argument("--fl", type=float, default=6.81, help="focal length (mm)")
+parser.add_argument("--pupil", type=float, default=6, help="pupil diameter (mm)")
 parser.add_argument("--od", type=float, default=0.015, help="optical density of pigment (um)")
-parser.add_argument("--osl", type=float, default=13.4, help="outer segment length (um)")
+parser.add_argument("--osl", type=float, default=30, help="outer segment length (um)")
 parser.add_argument("--dist", type=float, default=5, help="distance from light source (cm)")
-parser.add_argument("--width", type=float, default=3.8, help="width of object (cm)")
+parser.add_argument("--width", type=float, default=3.8, help="width of light/object (cm)")
+parser.add_argument("--height", type=float, default=0, help="height of light/object (cm)")
+parser.add_argument("--radius", type=float, default=1, help="radius of light source (cm)")
 parser.add_argument("--watts", type=int, default=12, help="number of watts produced by light source")
+parser.add_argument("--lux", type=int, default=115, help="illuminance in lux")
+#parser.add_argument("--start", type=int, default=300, help="start of wavelength interval")
+#parser.add_argument("--end", type=int, default=900, help="end of wavelength interval")
+parser.add_argument("--ct", type=int, default=2856, help="color temperature of incandescent/blackbody illuminant")
 args = parser.parse_args()
 
 # cone and rod peak sensitivities
@@ -144,7 +152,11 @@ lms_to_xyz = np.array([
 
 # function approximating human lens filtering, for real this time (Lamb 1995)
 def template_filter(w, a, b, c, d, e, f):
-	density = a*math.exp((b - w) / c) + d*math.exp((e - w) / f)
+	try:
+		density = a*math.exp((b - w) / c) + d*math.exp((e - w) / f)
+	except OverflowError:
+		print("Warning (template_filter): math overflow, returning 0")
+		return 0
 	if (density < 0):
 		return 0
 	return math.exp(-density)
@@ -273,18 +285,82 @@ for i in range(0, 101):
 
 opossum_fit = scipy.optimize.curve_fit(filter_fit, xvalues, opossum_filter_data, p0=[1.1, 400, 15, 0.11, 500, 80])
 
-# function
+# mouse (Jacobs & Williams 2007)
+mouse_filter_data = np.array([
+	10.3, # 310
+	33.0, # 320
+	44.9, # 330
+	51.9, # 340
+	58.1, # 350
+	63.8, # 360
+	68.0, # 370
+	71.9, # 380
+	75.2, # 390
+	78.1, # 400
+	80.3, # 410
+	82.0, # 420
+	83.5, # 430
+	85.1, # 440
+	86.4, # 450
+	87.6, # 460
+	88.7, # 470
+	89.6, # 480
+	90.2, # 490
+	91.3, # 500
+	92.1, # 510
+	92.8, # 520
+	93.4, # 530
+	93.9, # 540
+	94.5, # 550
+	95.0, # 560
+	95.5, # 570
+	96.1, # 580
+	96.6, # 590
+	97.1, # 600
+	97.6, # 610
+	97.9, # 620
+	98.1, # 630
+	98.5, # 640
+	98.8, # 650
+	99.2, # 660
+	99.4, # 670
+	99.6, # 680
+	99.8, # 690
+	100.0 # 700
+])
+
+xvalues = np.empty(40)
+for i in range(0, 40):
+	xvalues[i] = i*10 + 310
+
+mouse_fit = scipy.optimize.curve_fit(filter_fit, xvalues, mouse_filter_data/100, p0=[1.1, 400, 15, 0.11, 500, 80])
+
+mousesquared_fit = scipy.optimize.curve_fit(filter_fit, xvalues, (mouse_filter_data/100)**2, p0=[1.1, 400, 15, 0.11, 500, 80])
+
+# functions
 def opossum_filter(w):
 	return template_filter(w, *opossum_fit[0])
+
+def mouse_filter(w):
+	return template_filter(w, *mouse_fit[0])
+
+def mousesquared_filter(w):
+	return template_filter(w, *mousesquared_fit[0])
 
 def lens_filter(w):
 	if (args.filter == "human"):
 		return human_filter(w)
 	elif (args.filter == "opossum"):
 		return opossum_filter(w)
+	elif (args.filter == "mouse"):
+		return mouse_filter(w)
+	elif (args.filter == "mousesquared"):
+		return mousesquared_filter(w)
 	return 1
 
 def sensitivity(w, l=l1, m=m1, s=s1):
+	if (args.filter == "human"):
+		return luminosity[w-300]
 	return (args.lb*vpt(w, l) + args.mb*vpt(w, m) + args.sb*vpt(w, s) + args.rb*vpt(w, rod)) * lens_filter(w)
 
 # black body -- SI units, returns energy in joules/m^2/nm/sec/steradian = watts/m^2/nm/steradian
@@ -297,65 +373,618 @@ c = 2.997925e+8 # speed of light (m/s)
 
 def blackbody(w, t):
 	l = w / 1000000000 # wavelength (m)
-	return 1e-9*2*h*c**2*l**-5 / (math.exp((h*c) / (k*l*t)) - 1)
+	try:
+		value = 1e-9*2*h*c**2*l**-5 / (math.exp((h*c) / (k*l*t)) - 1)
+	except OverflowError:
+		print("Warning (blackbody): math overflow, returning 1")
+		return 1
+	return value
 
 # normal distribution
 def normal(mu, std_dev, x):
 	return (1 / std_dev*math.sqrt(2*math.pi)) * math.exp((-1/2)*((x - mu)/std_dev)**2)
 
 # light sources -- standardize to 300-900
-d65 = np.zeros(61)
-for i in range(4, 54):
-	d65[i] = spectral_constants.REF_ILLUM_TABLE["d65"][i-4]
+#d65 = np.zeros(61)
+#for i in range(4, 54):
+#	d65[i] = spectral_constants.REF_ILLUM_TABLE["d65"][i-4]
 
-e = np.empty(61)
-for i in range(0, 61):
+# D65 300-830 (CIE)
+d65_1nm = np.array([
+	0.0341,
+	0.36014,
+	0.68618,
+	1.01222,
+	1.33826,
+	1.6643,
+	1.99034,
+	2.31638,
+	2.64242,
+	2.96846,
+	3.2945,
+	4.98865,
+	6.6828,
+	8.37695,
+	10.0711,
+	11.7652,
+	13.4594,
+	15.1535,
+	16.8477,
+	18.5418,
+	20.236,
+	21.9177,
+	23.5995,
+	25.2812,
+	26.963,
+	28.6447,
+	30.3265,
+	32.0082,
+	33.69,
+	35.3717,
+	37.0535,
+	37.343,
+	37.6326,
+	37.9221,
+	38.2116,
+	38.5011,
+	38.7907,
+	39.0802,
+	39.3697,
+	39.6593,
+	39.9488,
+	40.4451,
+	40.9414,
+	41.4377,
+	41.934,
+	42.4302,
+	42.9265,
+	43.4228,
+	43.9191,
+	44.4154,
+	44.9117,
+	45.0844,
+	45.257,
+	45.4297,
+	45.6023,
+	45.775,
+	45.9477,
+	46.1203,
+	46.293,
+	46.4656,
+	46.6383,
+	47.1834,
+	47.7285,
+	48.2735,
+	48.8186,
+	49.3637,
+	49.9088,
+	50.4539,
+	50.9989,
+	51.544,
+	52.0891,
+	51.8777,
+	51.6664,
+	51.455,
+	51.2437,
+	51.0323,
+	50.8209,
+	50.6096,
+	50.3982,
+	50.1869,
+	49.9755,
+	50.4428,
+	50.91,
+	51.3773,
+	51.8446,
+	52.3118,
+	52.7791,
+	53.2464,
+	53.7137,
+	54.1809,
+	54.6482,
+	57.4589,
+	60.2695,
+	63.0802,
+	65.8909,
+	68.7015,
+	71.5122,
+	74.3229,
+	77.1336,
+	79.9442,
+	82.7549,
+	83.628,
+	84.5011,
+	85.3742,
+	86.2473,
+	87.1204,
+	87.9936,
+	88.8667,
+	89.7398,
+	90.6129,
+	91.486,
+	91.6806,
+	91.8752,
+	92.0697,
+	92.2643,
+	92.4589,
+	92.6535,
+	92.8481,
+	93.0426,
+	93.2372,
+	93.4318,
+	92.7568,
+	92.0819,
+	91.4069,
+	90.732,
+	90.057,
+	89.3821,
+	88.7071,
+	88.0322,
+	87.3572,
+	86.6823,
+	88.5006,
+	90.3188,
+	92.1371,
+	93.9554,
+	95.7736,
+	97.5919,
+	99.4102,
+	101.228,
+	103.047,
+	104.865,
+	106.079,
+	107.294,
+	108.508,
+	109.722,
+	110.936,
+	112.151,
+	113.365,
+	114.579,
+	115.794,
+	117.008,
+	117.088,
+	117.169,
+	117.249,
+	117.33,
+	117.41,
+	117.49,
+	117.571,
+	117.651,
+	117.732,
+	117.812,
+	117.517,
+	117.222,
+	116.927,
+	116.632,
+	116.336,
+	116.041,
+	115.746,
+	115.451,
+	115.156,
+	114.861,
+	114.967,
+	115.073,
+	115.18,
+	115.286,
+	115.392,
+	115.498,
+	115.604,
+	115.711,
+	115.817,
+	115.923,
+	115.212,
+	114.501,
+	113.789,
+	113.078,
+	112.367,
+	111.656,
+	110.945,
+	110.233,
+	109.522,
+	108.811,
+	108.865,
+	108.92,
+	108.974,
+	109.028,
+	109.082,
+	109.137,
+	109.191,
+	109.245,
+	109.3,
+	109.354,
+	109.199,
+	109.044,
+	108.888,
+	108.733,
+	108.578,
+	108.423,
+	108.268,
+	108.112,
+	107.957,
+	107.802,
+	107.501,
+	107.2,
+	106.898,
+	106.597,
+	106.296,
+	105.995,
+	105.694,
+	105.392,
+	105.091,
+	104.79,
+	105.08,
+	105.37,
+	105.66,
+	105.95,
+	106.239,
+	106.529,
+	106.819,
+	107.109,
+	107.399,
+	107.689,
+	107.361,
+	107.032,
+	106.704,
+	106.375,
+	106.047,
+	105.719,
+	105.39,
+	105.062,
+	104.733,
+	104.405,
+	104.369,
+	104.333,
+	104.297,
+	104.261,
+	104.225,
+	104.19,
+	104.154,
+	104.118,
+	104.082,
+	104.046,
+	103.641,
+	103.237,
+	102.832,
+	102.428,
+	102.023,
+	101.618,
+	101.214,
+	100.809,
+	100.405,
+	100,
+	99.6334,
+	99.2668,
+	98.9003,
+	98.5337,
+	98.1671,
+	97.8005,
+	97.4339,
+	97.0674,
+	96.7008,
+	96.3342,
+	96.2796,
+	96.225,
+	96.1703,
+	96.1157,
+	96.0611,
+	96.0065,
+	95.9519,
+	95.8972,
+	95.8426,
+	95.788,
+	95.0778,
+	94.3675,
+	93.6573,
+	92.947,
+	92.2368,
+	91.5266,
+	90.8163,
+	90.1061,
+	89.3958,
+	88.6856,
+	88.8177,
+	88.9497,
+	89.0818,
+	89.2138,
+	89.3459,
+	89.478,
+	89.61,
+	89.7421,
+	89.8741,
+	90.0062,
+	89.9655,
+	89.9248,
+	89.8841,
+	89.8434,
+	89.8026,
+	89.7619,
+	89.7212,
+	89.6805,
+	89.6398,
+	89.5991,
+	89.4091,
+	89.219,
+	89.029,
+	88.8389,
+	88.6489,
+	88.4589,
+	88.2688,
+	88.0788,
+	87.8887,
+	87.6987,
+	87.2577,
+	86.8167,
+	86.3757,
+	85.9347,
+	85.4936,
+	85.0526,
+	84.6116,
+	84.1706,
+	83.7296,
+	83.2886,
+	83.3297,
+	83.3707,
+	83.4118,
+	83.4528,
+	83.4939,
+	83.535,
+	83.576,
+	83.6171,
+	83.6581,
+	83.6992,
+	83.332,
+	82.9647,
+	82.5975,
+	82.2302,
+	81.863,
+	81.4958,
+	81.1285,
+	80.7613,
+	80.394,
+	80.0268,
+	80.0456,
+	80.0644,
+	80.0831,
+	80.1019,
+	80.1207,
+	80.1395,
+	80.1583,
+	80.177,
+	80.1958,
+	80.2146,
+	80.4209,
+	80.6272,
+	80.8336,
+	81.0399,
+	81.2462,
+	81.4525,
+	81.6588,
+	81.8652,
+	82.0715,
+	82.2778,
+	81.8784,
+	81.4791,
+	81.0797,
+	80.6804,
+	80.281,
+	79.8816,
+	79.4823,
+	79.0829,
+	78.6836,
+	78.2842,
+	77.4279,
+	76.5716,
+	75.7153,
+	74.859,
+	74.0027,
+	73.1465,
+	72.2902,
+	71.4339,
+	70.5776,
+	69.7213,
+	69.9101,
+	70.0989,
+	70.2876,
+	70.4764,
+	70.6652,
+	70.854,
+	71.0428,
+	71.2315,
+	71.4203,
+	71.6091,
+	71.8831,
+	72.1571,
+	72.4311,
+	72.7051,
+	72.979,
+	73.253,
+	73.527,
+	73.801,
+	74.075,
+	74.349,
+	73.0745,
+	71.8,
+	70.5255,
+	69.251,
+	67.9765,
+	66.702,
+	65.4275,
+	64.153,
+	62.8785,
+	61.604,
+	62.4322,
+	63.2603,
+	64.0885,
+	64.9166,
+	65.7448,
+	66.573,
+	67.4011,
+	68.2293,
+	69.0574,
+	69.8856,
+	70.4057,
+	70.9259,
+	71.446,
+	71.9662,
+	72.4863,
+	73.0064,
+	73.5266,
+	74.0467,
+	74.5669,
+	75.087,
+	73.9376,
+	72.7881,
+	71.6387,
+	70.4893,
+	69.3398,
+	68.1904,
+	67.041,
+	65.8916,
+	64.7421,
+	63.5927,
+	61.8752,
+	60.1578,
+	58.4403,
+	56.7229,
+	55.0054,
+	53.288,
+	51.5705,
+	49.8531,
+	48.1356,
+	46.4182,
+	48.4569,
+	50.4956,
+	52.5344,
+	54.5731,
+	56.6118,
+	58.6505,
+	60.6892,
+	62.728,
+	64.7667,
+	66.8054,
+	66.4631,
+	66.1209,
+	65.7786,
+	65.4364,
+	65.0941,
+	64.7518,
+	64.4096,
+	64.0673,
+	63.7251,
+	63.3828,
+	63.4749,
+	63.567,
+	63.6592,
+	63.7513,
+	63.8434,
+	63.9355,
+	64.0276,
+	64.1198,
+	64.2119,
+	64.304,
+	63.8188,
+	63.3336,
+	62.8484,
+	62.3632,
+	61.8779,
+	61.3927,
+	60.9075,
+	60.4223,
+	59.9371,
+	59.4519,
+	58.7026,
+	57.9533,
+	57.204,
+	56.4547,
+	55.7054,
+	54.9562,
+	54.2069,
+	53.4576,
+	52.7083,
+	51.959,
+	52.5072,
+	53.0553,
+	53.6035,
+	54.1516,
+	54.6998,
+	55.248,
+	55.7961,
+	56.3443,
+	56.8924,
+	57.4406,
+	57.7278,
+	58.015,
+	58.3022,
+	58.5894,
+	58.8765,
+	59.1637,
+	59.4509,
+	59.7381,
+	60.0253,
+	60.3125
+])
+
+d65 = np.zeros(51)
+for i in range(0, 51):
+	d65[i] = d65_1nm[i*10]
+	#print(d65[i])
+
+e = np.empty(51)
+for i in range(0, 51):
 	e[i] = 100
 
-a = np.zeros(61)
-for i in range(4, 54):
+a = np.zeros(51)
+for i in range(4, 51):
 	a[i] = spectral_constants.REF_ILLUM_TABLE["a"][i-4]
 
-# incandescent lighting based on CIE A illuminant
-incandescent = np.empty(61)
-for i in range(0, 61):
+# incandescent lighting with specified color temperature
+incandescent = np.empty(51)
+for i in range(0, 51):
 	w = i*10 + 300
 	# normalize to 100% at 560 nm
-	incandescent[i] = 100*blackbody(w, 2856) / blackbody(560, 2856)
+	incandescent[i] = 100*blackbody(w, args.ct) / blackbody(560, args.ct)
+# 1-nm resolution
+incandescent_1nm = np.empty(501)
+for i in range(501):
+	w = i + 300
+	# normalize to 100% at 560 nm
+	incandescent_1nm[i] = 100*blackbody(w, args.ct) / blackbody(560, args.ct)
 
 # absolute number of photons
 # Since the output of blackbody() is joules/m^3/sec/sr, this should be photons/m^3/sec/sr.
 # I think what we really want is square meters. (No, the meters cancel, see the quantum
 # noise calculations)
-ia = np.empty(61)
+# Changing this to 1-nm intervals because 10-nm isn't very useful.
+ia = np.empty(501)
 # scale it down to what amount of energy would be produced by the specified number of
 # watts
 
 # find total energy produced using Stefan-Boltzmann constant
+# We divide by pi steradians to get the radiance and make the units equivalent to blackbody()
+# (not 4pi, this gives the wrong value -- see p. 61 here: https://eodg.atm.ox.ac.uk/user/grainger/research/book/protected/Chapter3.pdf)
 sigma = 5.670374419e-8
-energy = sigma * 2856**4
+energy = sigma * args.ct**4 #/ math.pi
+#power = energy * 4*math.pi*args.dist**2 / 10000
 
-# then find the amount of energy we "should" have in terms of the sphere corresponding to
+# then find the radiance we "should" have in terms of the sphere corresponding to
 # the distance we chose
 sphere_area = 4*math.pi*args.dist**2 # sphere surface area
-watts_cm2 = args.watts / sphere_area
+if (args.height > 0):
+	area = args.width * args.height
+else:
+	area = math.pi*(args.width/2)**2
+# steradians -- not divided by the whole sphere surface area, just the square of the radius
+sr = area / args.dist**2
+watts_cm2 = args.watts / (sphere_area)
 watts_m2 = watts_cm2 * 100**2
 scale = watts_m2 / energy # scaling factor -- units should cancel (W/m^2)
+#scale = args.watts / power
+#print("W/m^2 scaling factor: " + str(scale))
 
-for i in range(0, 61):
-	w = i*10 + 300 # nanometers
-	ia[i] = scale*1e-9*w*blackbody(w, 2856) / (h*c) # meters * joules/m^2/nm/sec/sr / joule*sec * m/s
+for i in range(501):
+	w = i + 300 # nanometers
+	ia[i] = scale*1e-9*w*blackbody(w, args.ct) / (h*c) # meters * joules/m^2/nm/sec/sr / joule*sec * m/s
 	#print(ia[i])
-
-# white point
-if (args.white == "d65"):
-	wp = d65
-elif (args.white == "a"):
-	wp = a
-elif (args.white == "i"):
-	wp = incandescent
-else:
-	wp = e
 
 # find sensitivity of a given photoreceptor type to a wavelength using visual pigment templates
 # from Govardovskii et al. (2000)
@@ -375,38 +1004,612 @@ def vpt(w, lmax):
 		alpha = 1 / (math.exp(A*(a - lmax/w)) + math.exp(B*(b - lmax/w)) + math.exp(C*(c - lmax/w)) + D)
 		beta = Abeta * math.exp(-((w - lmbeta) / b1)**2)
 	except OverflowError:
-		print("Warning: math overflow, clipping to 2.2250738585072014e-308")
+		print("Warning (vpt): math overflow, clipping to 2.2250738585072014e-308")
 		return 2.2250738585072014e-308
 	
 	return alpha + beta
 
+# human photopic luminosity function (2019 CIE standard)
+# No values are provided below 360 nm, so we assume 0.
+luminosity = np.array([
+	0, # 300
+	0,
+	0,
+	0,
+	0,
+	0, # 305
+	0,
+	0,
+	0,
+	0,
+	0, # 310
+	0,
+	0,
+	0,
+	0,
+	0, # 315
+	0,
+	0,
+	0,
+	0,
+	0, # 320
+	0,
+	0,
+	0,
+	0,
+	0, # 325
+	0,
+	0,
+	0,
+	0,
+	0, # 330
+	0,
+	0,
+	0,
+	0,
+	0, # 335
+	0,
+	0,
+	0,
+	0,
+	0, # 340
+	0,
+	0,
+	0,
+	0,
+	0, # 345
+	0,
+	0,
+	0,
+	0,
+	0, # 350
+	0,
+	0,
+	0,
+	0,
+	0, # 355
+	0,
+	0,
+	0,
+	0,
+	0.000003917, # 360
+	0.000004393581,
+	0.000004929604,
+	0.000005532136,
+	0.000006208245,
+	0.000006965, # 365
+	0.000007813219,
+	0.000008767336,
+	0.000009839844,
+	0.00001104323,
+	0.00001239, # 370
+	0.00001388641,
+	0.00001555728,
+	0.00001744296,
+	0.00001958375,
+	0.00002202, # 375
+	0.00002483965,
+	0.00002804126,
+	0.00003153104,
+	0.00003521521,
+	0.000039, # 380
+	0.0000428264,
+	0.0000469146,
+	0.0000515896,
+	0.0000571764,
+	0.000064, # 385
+	0.00007234421,
+	0.00008221224,
+	0.00009350816,
+	0.0001061361,
+	0.00012, # 390
+	0.000134984,
+	0.000151492,
+	0.000170208,
+	0.000191816,
+	0.000217, # 395
+	0.0002469067,
+	0.00028124,
+	0.00031852,
+	0.0003572667,
+	0.000396, # 400
+	0.0004337147,
+	0.000473024,
+	0.000517876,
+	0.0005722187,
+	0.00064, # 405
+	0.00072456,
+	0.0008255,
+	0.00094116,
+	0.00106988,
+	0.00121, # 410
+	0.001362091,
+	0.001530752,
+	0.001720368,
+	0.001935323,
+	0.00218, # 415
+	0.0024548,
+	0.002764,
+	0.0031178,
+	0.0035264,
+	0.004, # 420
+	0.00454624,
+	0.00515932,
+	0.00582928,
+	0.00654616,
+	0.0073, # 425
+	0.008086507,
+	0.00890872,
+	0.00976768,
+	0.01066443,
+	0.0116, # 430
+	0.01257317,
+	0.01358272,
+	0.01462968,
+	0.01571509,
+	0.01684, # 435
+	0.01800736,
+	0.01921448,
+	0.02045392,
+	0.02171824,
+	0.023, # 440
+	0.02429461,
+	0.02561024,
+	0.02695857,
+	0.02835125,
+	0.0298, # 445
+	0.03131083,
+	0.03288368,
+	0.03452112,
+	0.03622571,
+	0.038, # 450
+	0.03984667,
+	0.041768,
+	0.043766,
+	0.04584267,
+	0.048, # 455
+	0.05024368,
+	0.05257304,
+	0.05498056,
+	0.05745872,
+	0.06, # 460
+	0.06260197,
+	0.06527752,
+	0.06804208,
+	0.07091109,
+	0.0739, # 465
+	0.077016,
+	0.0802664,
+	0.0836668,
+	0.0872328,
+	0.09098, # 470
+	0.09491755,
+	0.09904584,
+	0.1033674,
+	0.1078846,
+	0.1126, # 475
+	0.117532,
+	0.1226744,
+	0.1279928,
+	0.1334528,
+	0.13902, # 480
+	0.1446764,
+	0.1504693,
+	0.1564619,
+	0.1627177,
+	0.1693, # 485
+	0.1762431,
+	0.1835581,
+	0.1912735,
+	0.199418,
+	0.20802, # 490
+	0.2171199,
+	0.2267345,
+	0.2368571,
+	0.2474812,
+	0.2586, # 495
+	0.2701849,
+	0.2822939,
+	0.2950505,
+	0.308578,
+	0.323, # 500
+	0.3384021,
+	0.3546858,
+	0.3716986,
+	0.3892875,
+	0.4073, # 505
+	0.4256299,
+	0.4443096,
+	0.4633944,
+	0.4829395,
+	0.503, # 510
+	0.5235693,
+	0.544512,
+	0.56569,
+	0.5869653,
+	0.6082, # 515
+	0.6293456,
+	0.6503068,
+	0.6708752,
+	0.6908424,
+	0.71, # 520
+	0.7281852,
+	0.7454636,
+	0.7619694,
+	0.7778368,
+	0.7932, # 525
+	0.8081104,
+	0.8224962,
+	0.8363068,
+	0.8494916,
+	0.862, # 530
+	0.8738108,
+	0.8849624,
+	0.8954936,
+	0.9054432,
+	0.9148501, # 535
+	0.9237348,
+	0.9320924,
+	0.9399226,
+	0.9472252,
+	0.954, # 540
+	0.9602561,
+	0.9660074,
+	0.9712606,
+	0.9760225,
+	0.9803, # 545
+	0.9840924,
+	0.9874182,
+	0.9903128,
+	0.9928116,
+	0.9949501, # 550
+	0.9967108,
+	0.9980983,
+	0.999112,
+	0.9997482,
+	1, # 555
+	0.9998567,
+	0.9993046,
+	0.9983255,
+	0.9968987,
+	0.995, # 560
+	0.9926005,
+	0.9897426,
+	0.9864444,
+	0.9827241,
+	0.9786, # 565
+	0.9740837,
+	0.9691712,
+	0.9638568,
+	0.9581349,
+	0.952, # 570
+	0.9454504,
+	0.9384992,
+	0.9311628,
+	0.9234576,
+	0.9154, # 575
+	0.9070064,
+	0.8982772,
+	0.8892048,
+	0.8797816,
+	0.87, # 580
+	0.8598613,
+	0.849392,
+	0.838622,
+	0.8275813,
+	0.8163, # 585
+	0.8047947,
+	0.793082,
+	0.781192,
+	0.7691547,
+	0.757, # 590
+	0.7447541,
+	0.7324224,
+	0.7200036,
+	0.7074965,
+	0.6949, # 595
+	0.6822192,
+	0.6694716,
+	0.6566744,
+	0.6438448,
+	0.631, # 600
+	0.6181555,
+	0.6053144,
+	0.5924756,
+	0.5796379,
+	0.5668, # 605
+	0.5539611,
+	0.5411372,
+	0.5283528,
+	0.5156323,
+	0.503, # 610
+	0.4904688,
+	0.4780304,
+	0.4656776,
+	0.4534032,
+	0.4412, # 615
+	0.42908,
+	0.417036,
+	0.405032,
+	0.393032,
+	0.381, # 620
+	0.3689184,
+	0.3568272,
+	0.3447768,
+	0.3328176,
+	0.321, # 625
+	0.3093381,
+	0.2978504,
+	0.2865936,
+	0.2756245,
+	0.265, # 630
+	0.2547632,
+	0.2448896,
+	0.2353344,
+	0.2260528,
+	0.217, # 635
+	0.2081616,
+	0.1995488,
+	0.1911552,
+	0.1829744,
+	0.175, # 640
+	0.1672235,
+	0.1596464,
+	0.1522776,
+	0.1451259,
+	0.1382, # 645
+	0.1315003,
+	0.1250248,
+	0.1187792,
+	0.1127691,
+	0.107, # 650
+	0.1014762,
+	0.09618864,
+	0.09112296,
+	0.08626485,
+	0.0816, # 655
+	0.07712064,
+	0.07282552,
+	0.06871008,
+	0.06476976,
+	0.061, # 660
+	0.05739621,
+	0.05395504,
+	0.05067376,
+	0.04754965,
+	0.04458, # 665
+	0.04175872,
+	0.03908496,
+	0.03656384,
+	0.03420048,
+	0.032, # 670
+	0.02996261,
+	0.02807664,
+	0.02632936,
+	0.02470805,
+	0.0232, # 675
+	0.02180077,
+	0.02050112,
+	0.01928108,
+	0.01812069,
+	0.017, # 680
+	0.01590379,
+	0.01483718,
+	0.01381068,
+	0.01283478,
+	0.01192, # 685
+	0.01106831,
+	0.01027339,
+	0.009533311,
+	0.008846157,
+	0.00821, # 690
+	0.007623781,
+	0.007085424,
+	0.006591476,
+	0.006138485,
+	0.005723, # 695
+	0.005343059,
+	0.004995796,
+	0.004676404,
+	0.004380075,
+	0.004102, # 700
+	0.003838453,
+	0.003589099,
+	0.003354219,
+	0.003134093,
+	0.002929, # 705
+	0.002738139,
+	0.002559876,
+	0.002393244,
+	0.002237275,
+	0.002091, # 710
+	0.001953587,
+	0.00182458,
+	0.00170358,
+	0.001590187,
+	0.001484, # 715
+	0.001384496,
+	0.001291268,
+	0.001204092,
+	0.001122744,
+	0.001047, # 720
+	0.0009765896,
+	0.0009111088,
+	0.0008501332,
+	0.0007932384,
+	0.00074, # 725
+	0.0006900827,
+	0.00064331,
+	0.000599496,
+	0.0005584547,
+	0.00052, # 730
+	0.0004839136,
+	0.0004500528,
+	0.0004183452,
+	0.0003887184,
+	0.0003611, # 735
+	0.0003353835,
+	0.0003114404,
+	0.0002891656,
+	0.0002684539,
+	0.0002492, # 740
+	0.0002313019,
+	0.0002146856,
+	0.0001992884,
+	0.0001850475,
+	0.0001719, # 745
+	0.0001597781,
+	0.0001486044,
+	0.0001383016,
+	0.0001287925,
+	0.00012, # 750
+	0.0001118595,
+	0.0001043224,
+	0.0000973356,
+	0.00009084587,
+	0.0000848, # 755
+	0.00007914667,
+	0.000073858,
+	0.000068916,
+	0.00006430267,
+	0.00006, # 760
+	0.00005598187,
+	0.0000522256,
+	0.0000487184,
+	0.00004544747,
+	0.0000424, # 765
+	0.00003956104,
+	0.00003691512,
+	0.00003444868,
+	0.00003214816,
+	0.00003, # 770
+	0.00002799125,
+	0.00002611356,
+	0.00002436024,
+	0.00002272461,
+	0.0000212, # 775
+	0.00001977855,
+	0.00001845285,
+	0.00001721687,
+	0.00001606459,
+	0.00001499, # 780
+	0.00001398728,
+	0.00001305155,
+	0.00001217818,
+	0.00001136254,
+	0.0000106, # 785
+	0.000009885877,
+	0.000009217304,
+	0.000008592362,
+	0.000008009133,
+	0.0000074657, # 790
+	0.000006959567,
+	0.000006487995,
+	0.000006048699,
+	0.000005639396,
+	0.0000052578, # 795
+	0.000004901771,
+	0.00000456972,
+	0.000004260194,
+	0.000003971739,
+	0.0000037029, # 800
+	0.000003452163,
+	0.000003218302,
+	0.0000030003,
+	0.000002797139,
+	0.0000026078, # 805
+	0.00000243122,
+	0.000002266531,
+	0.000002113013,
+	0.000001969943,
+	0.0000018366, # 810
+	0.00000171223,
+	0.000001596228,
+	0.00000148809,
+	0.000001387314,
+	0.0000012934, # 815
+	0.00000120582,
+	0.000001124143,
+	0.000001048009,
+	0.0000009770578,
+	0.00000091093, # 820
+	0.0000008492513,
+	0.0000007917212,
+	0.0000007380904,
+	0.0000006881098,
+	0.00000064153, # 825
+	0.0000005980895,
+	0.0000005575746,
+	0.000000519808,
+	0.0000004846123,
+	0.00000045181 # 830
+])
+
+# absolute number of photons, part 2: scaling D65 to a specified value in lux
+# For values not included in Python's D65, we approximate this with a black body with
+# temperature 6504 K. (Never mind, I found the real thing)
+
+# integral of D65 x human photopic luminosity function (we hardcode this instead of using
+# sensitivity() because that varies with settings for the specified species)
+# The units we want at the end are W/m^2, so we multiply this by the lux-to-watts scaling
+# factor for 555 nm (683.002 lm/W). This will end up on the bottom.
+integral = 0
+for i in range(531):
+	integral += d65_1nm[i] * luminosity[i] * 683.002
+
+# lux scaling factor (units = lx / lx/nm = nm)
+lxscale = args.lux / integral
+#print(lxscale)
+
+# scaled version (W/m^2 * m / joule*sec * m/s * nm = joule/sec/m^2 * m / joule/sec * m/s * nm * sr)
+# Per nm is implied. The values we just found do not include steradians (probably), so we divide
+# by the sr value we found earlier. (No we don't)
+# Also changing this to 1 nm.
+d65a = np.empty(531)
+for i in range(d65a.shape[0]):
+	w = i + 300
+	d65a[i] = lxscale*1e-9*w*d65_1nm[i] / (h*c*math.pi)
+	#print(d65a[i])
+
+# white point
+if (args.white == "d65"):
+	wp = d65
+	wp_1nm = d65_1nm
+elif (args.white == "a"):
+	wp = a
+elif (args.white == "i"):
+	wp = incandescent
+	wp_1nm = incandescent_1nm
+else:
+	wp = e
+
 # estimate hue, saturation and lightness for a spectral power distribution
-# Lens filtering is now used for colors properly by normalizing each signal according to
-# the light source.
+# Lens filtering is now used for colors properly with a von Kries transform.
 def spectral_rendering(table, light_source=wp):
 	table_l = 0
 	table_m = 0
 	table_s = 0
 	brightness = 0
 	
-	for i in range(0, light_source.shape[0]):
+	for i in range(0, table.shape[0]):
 		w = i*10 + 300 # wavelength
-		table_l += vpt(w, l1) * table[i] * light_source[i] * lens_filter(w)
-		# remove either M or S for dichromacy
-		if (m1 != l1):
-			table_m += vpt(w, m1) * table[i] * light_source[i] * lens_filter(w)
-		if (s1 != m1):
-			table_s += vpt(w, s1) * table[i] * light_source[i] * lens_filter(w)
-		
-		# brightness
-		brightness += sensitivity(w) * table[i] * light_source[i]
+		if (table[i] > 0): # don't add zeroes or nans
+			table_l += vpt(w, l1) * table[i] * light_source[i] * lens_filter(w)
+			# remove either M or S for dichromacy
+			if (m1 != l1):
+				table_m += vpt(w, m1) * table[i] * light_source[i] * lens_filter(w)
+			if (s1 != m1):
+				table_s += vpt(w, s1) * table[i] * light_source[i] * lens_filter(w)
+			
+			# brightness
+			brightness += sensitivity(w) * table[i] * light_source[i]
 	
 	# normalize according to provided light source
 	n = 0
 	wpl = 0
 	wpm = 0
 	wps = 0
-	for i in range(0, light_source.shape[0]):
+	for i in range(0, table.shape[0]):
 		w = i*10 + 300
 		n += sensitivity(w) * light_source[i]
 		wpl += vpt(w, l1) * light_source[i] * lens_filter(w)
@@ -430,22 +1633,33 @@ def spectral_rendering(table, light_source=wp):
 	# doesn't really work, so we just report the estimated brightness and (for dichromacy)
 	# the L:S difference.
 	# Now estimates trichromatic colors based on a color triangle. The wavelengths
-	# reported agree reasonably well with what the hue should be.
+	# reported agree reasonably well with what the hue should be. I've fixed this so
+	# it uses proper Maxwell coordinates, lens filtering and a von Kries transform.
 	if (l1 != m1 != s1):
 		print("Cone response: l=" + str(table_l) + ", m=" + str(table_m) + ", s=" + str(table_s))
 		
 		# This should be the nearest wavelength on a line from the white point.
 		match = 300
-		x0 = (table_l - table_s) / (table_l + table_m + table_s)
-		y0 = (table_m - table_l - table_s) / (table_l + table_m + table_s)
+		x0 = math.sqrt(1/2)*(table_l - table_s) / (table_l + table_m + table_s)
+		y0 = math.sqrt(2/3)*(table_m - 0.5*(table_l + table_s)) / (table_l + table_m + table_s)
 		wx = math.sqrt(1/2)*(wpl - wps) / (wpl + wpm + wps)
 		wy = math.sqrt(2/3)*(wpm - 0.5*(wpl + wps)) / (wpl + wpm + wps)
 		
+		# adjust to chosen visible range
+		while (lens_filter(match) == 0):
+			match += 1
+		
 		for i in range(300, 800):
-			x1 = math.sqrt(1/2)*(vpt(match, l1) - vpt(match, s1)) / (vpt(match, l1) + vpt(match, m1) + vpt(match, s1))
-			y1 = math.sqrt(2/3)*(vpt(match, m1) - 0.5*(vpt(match, l1) + vpt(match, s1))) / (vpt(match, l1) + vpt(match, m1) + vpt(match, s1))
-			x2 = math.sqrt(1/2)*(vpt(i, l1) - vpt(i, s1)) / (vpt(i, l1) + vpt(i, m1) + vpt(i, s1))
-			y2 = math.sqrt(2/3)*(vpt(i, m1) - 0.5*(vpt(i, l1) + vpt(i, s1))) / (vpt(i, l1) + vpt(i, m1) + vpt(i, s1))
+			matchl1 = vpt(match, l1)*lens_filter(match) / wpl
+			matchm1 = vpt(match, m1)*lens_filter(match) / wpm
+			matchs1 = vpt(match, s1)*lens_filter(match) / wps
+			matchl2 = vpt(i, l1)*lens_filter(i) / wpl
+			matchm2 = vpt(i, m1)*lens_filter(i) / wpm
+			matchs2 = vpt(i, s1)*lens_filter(i) / wps
+			x1 = math.sqrt(1/2)*(matchl1 - matchs1) / (matchl1 + matchm1 + matchs1)
+			y1 = math.sqrt(2/3)*(matchm1 - 0.5*(matchl1 + matchs1)) / (matchl1 + matchm1 + matchs1)
+			x2 = math.sqrt(1/2)*(matchl2 - matchs2) / (matchl2 + matchm2 + matchs2)
+			y2 = math.sqrt(2/3)*(matchm2 - 0.5*(matchl2 + matchs2)) / (matchl2 + matchm2 + matchs2)
 			d1 = np.linalg.norm(np.cross(np.asarray((wx, wy)) - np.asarray((x0, y0)), np.asarray((x0, y0)) - np.asarray((x1, y1)))) / np.linalg.norm(np.asarray((wx, wy)) - np.asarray((x0, y0)))
 			d2 = np.linalg.norm(np.cross(np.asarray((wx, wy)) - np.asarray((x0, y0)), np.asarray((x0, y0)) - np.asarray((x2, y2)))) / np.linalg.norm(np.asarray((wx, wy)) - np.asarray((x0, y0)))
 			
@@ -575,8 +1789,22 @@ def spectral_rendering(table, light_source=wp):
 # size of the signals, but this reduces the contrast too much. For reference,
 # human trichromacy should show all the Kodak Wratten colors as "different" and
 # human-like dichromacy should show red, yellow and probably green as "the same".
-# Neither of these models do both of these.
+# Neither of these models do both of these. (This has been fixed.)
+# Absolute quantum catch integrals need values at 1-nm intervals, so we find them
+# with linear interpolation. This is probably better than hacking together a vague
+# estimate of the "true size" of the integral.
 def color_contrast(table1, table2, quantum_noise=args.qn):
+	# interpolate 1-nm intervals
+	x10nm = np.empty(51)
+	for i in range(51):
+		x10nm[i] = i*10 + 300
+	
+	x1nm = np.empty(501)
+	for i in range(501):
+		x1nm[i] = i + 300
+	
+	table1 = np.interp(x1nm, x10nm, table1)
+	table2 = np.interp(x1nm, x10nm, table2)
 	
 	# background light
 	wpl = 0
@@ -589,19 +1817,21 @@ def color_contrast(table1, table2, quantum_noise=args.qn):
 	ql2 = 0
 	qm2 = 0
 	qs2 = 0
-	for i in range(0, wp.shape[0]):
-		w = i*10 + 300
-		ql1 += vpt(w, l1) * table1[i] * wp[i] * lens_filter(w)
-		qm1 += vpt(w, m1) * table1[i] * wp[i] * lens_filter(w)
-		qs1 += vpt(w, s1) * table1[i] * wp[i] * lens_filter(w)
-		wpl += vpt(w, l1) * wp[i] * lens_filter(w)
-		wpm += vpt(w, m1) * wp[i] * lens_filter(w)
-		wps += vpt(w, s1) * wp[i] * lens_filter(w)
-	for i in range(0, wp.shape[0]):
-		w = i*10 + 300
-		ql2 += vpt(w, l1) * table2[i] * wp[i] * lens_filter(w)
-		qm2 += vpt(w, m1) * table2[i] * wp[i] * lens_filter(w)
-		qs2 += vpt(w, s1) * table2[i] * wp[i] * lens_filter(w)
+	for i in range(0, table1.shape[0]):
+		w = i + 300
+		if (table1[i] > 0): # zero/nan check
+			ql1 += vpt(w, l1) * table1[i] * wp_1nm[i] * lens_filter(w)
+			qm1 += vpt(w, m1) * table1[i] * wp_1nm[i] * lens_filter(w)
+			qs1 += vpt(w, s1) * table1[i] * wp_1nm[i] * lens_filter(w)
+		wpl += vpt(w, l1) * wp_1nm[i] * lens_filter(w)
+		wpm += vpt(w, m1) * wp_1nm[i] * lens_filter(w)
+		wps += vpt(w, s1) * wp_1nm[i] * lens_filter(w)
+	for i in range(0, table2.shape[0]):
+		w = i + 300
+		if (table2[i] > 0):
+			ql2 += vpt(w, l1) * table2[i] * wp_1nm[i] * lens_filter(w)
+			qm2 += vpt(w, m1) * table2[i] * wp_1nm[i] * lens_filter(w)
+			qs2 += vpt(w, s1) * table2[i] * wp_1nm[i] * lens_filter(w)
 	
 	# normalize
 	if (args.novk == False):
@@ -658,7 +1888,7 @@ def color_contrast(table1, table2, quantum_noise=args.qn):
 		# 10 nm intervals, which would suggest we should multiply (or divide?) by 10 nm,
 		# but this probably isn't needed because at the end I multiply the sum by 600 nm
 		# (value of dλ, the whole range). Without the 600 nm the numbers look way too
-		# small.
+		# small. (Never mind, I'm pretty sure this was wrong)
 		
 		# Estimates used:
 		# Where necessary, I've converted centimeters, millimeters and micrometers to meters.
@@ -666,6 +1896,9 @@ def color_contrast(table1, table2, quantum_noise=args.qn):
 		# area for cats (Vaney 1985). This number is probably an overestimate because
 		# 3000/mm^2 is the maximum density, not the average density. (Not needed, see
 		# above)
+		# * The retinal area in D. virginiana is 100-180 (Kolb & Wang 1985), so they
+		# have smaller eyes than cats. Not sure how you derive the axial/focal length
+		# from this. (never mind, we have it)
 		# v = 3: cone to ganglion cell convergence in D. virginiana, finally the right
 		# species for once (Kolb & Wang, 1985; cited in Vlahos et al. 2014) now how do
 		# I turn this into radians? (You don't, you already have the angle from the
@@ -676,16 +1909,15 @@ def color_contrast(table1, table2, quantum_noise=args.qn):
 		# from that connection would be more difficult.
 		# dt = 1/22.4: 22.4 Hz = 45 ms, brushtail possum (Signal, Temple & Foster 2011)
 		# d = 1.2 / 1000000: 1.2 um, mice (Nikonov et al. 2006, Fu & Yau 2007)
-		# f = 22.3 / 1000: 22.3 mm, cats (axial length, Thomasy et al. 2016 -- note axial
-		# length and focal length are not necessarily the same and I don't really know what
-		# focal length is)
-		# D = 11 / 1000: 11 mm, maximum size of rabbit pupil (Peiffer et al. 1994)
-		# O: Thylamys elegans (see the lens filter functions)
+		# f = 6.81 / 1000: Didelphis aurita (Oswaldo-Cruz, Hokoc & Sousa 1979)
+		# D = 6 / 1000: Didelphis aurita (")
+		# O: mouse (see the lens filter functions)
 		# k = 0.015: mice (Yin et al. 2013)
-		# l = 13.4: mice
+		# l = 30: Didelphis aurita (Ahnelt et al. 1995)
 		# sphere = 4*math.pi*5**2: the filters were located 5 cm away from the light bulbs
 		# sr = math.pi*3.8**2 / sphere: 3.8 cm diameter circle (oops, this is wrong, it's
-		# diameter not radius -- divide by 2)
+		# diameter not radius -- divide by 2) (this was still wrong, a sphere has 4pi
+		# steradians not 1) (also we don't need this at all)
 		# K = 0.5 (see The Optics of Life)
 		
 		# Some values for other species for comparison:
@@ -713,11 +1945,19 @@ def color_contrast(table1, table2, quantum_noise=args.qn):
 		dt = 1 / args.ff
 		k = args.od
 		l = args.osl
-		sphere = 4*math.pi*args.dist**2
-		sr = math.pi*(args.width/2)**2 / sphere
+		# We've already calculated the steradians elsewhere, so we won't do it again.
+		# Actually forget the steradians. (pi/4)(d/f)^2 is an angle, so we already have
+		# it. The size of the visual stimulus isn't supposed to be in there.
 		
 		# lens filtering scaling factor
-		T = 0.8 / lens_filter(700)
+		#T = 0.8 / lens_filter(700)
+		T = 1 / lens_filter(800) # set to 1 at 800 nm
+		
+		# select illuminant
+		if (args.white == "i"):
+			photons = ia
+		elif (args.white == "d65"):
+			photons = d65a
 	
 		aql1 = 0
 		aqm1 = 0
@@ -725,46 +1965,73 @@ def color_contrast(table1, table2, quantum_noise=args.qn):
 		aql2 = 0
 		aqm2 = 0
 		aqs2 = 0
-		for i in range(wp.shape[0]):
-			w = i*10 + 300
-			aql1 += v*(math.pi/4)**2*(d / f)**2*D**2*K*T*dt*(1 - math.exp(-k*vpt(w, l1)*l)) * vpt(w, l1) * table1[i] * ia[i]*sr * lens_filter(w)
-			aqm1 += v*(math.pi/4)**2*(d / f)**2*D**2*K*T*dt*(1 - math.exp(-k*vpt(w, m1)*l)) * vpt(w, m1) * table1[i] * ia[i]*sr * lens_filter(w) 
-			aqs1 += v*(math.pi/4)**2*(d / f)**2*D**2*K*T*dt*(1 - math.exp(-k*vpt(w, s1)*l)) * vpt(w, s1) * table1[i] * ia[i]*sr * lens_filter(w)
-		for i in range(wp.shape[0]):
-			w = i*10 + 300
-			aql2 += v*(math.pi/4)**2*(d / f)**2*D**2*K*T*dt*(1 - math.exp(-k*vpt(w, l1)*l)) * vpt(w, l1) * table2[i] * ia[i]*sr * lens_filter(w)
-			aqm2 += v*(math.pi/4)**2*(d / f)**2*D**2*K*T*dt*(1 - math.exp(-k*vpt(w, m1)*l)) * vpt(w, m1) * table2[i] * ia[i]*sr * lens_filter(w) 
-			aqs2 += v*(math.pi/4)**2*(d / f)**2*D**2*K*T*dt*(1 - math.exp(-k*vpt(w, s1)*l)) * vpt(w, s1) * table2[i] * ia[i]*sr * lens_filter(w)
+		for i in range(table1.shape[0]):
+			w = i + 300
+			if (table1[i] > 0):
+				aql1 += (math.pi/4)**2*(d / f)**2*D**2*K*T*dt*(1 - math.exp(-k*vpt(w, l1)*l)) * vpt(w, l1) * table1[i] * photons[i] * lens_filter(w)
+				aqm1 += (math.pi/4)**2*(d / f)**2*D**2*K*T*dt*(1 - math.exp(-k*vpt(w, m1)*l)) * vpt(w, m1) * table1[i] * photons[i] * lens_filter(w) 
+				aqs1 += (math.pi/4)**2*(d / f)**2*D**2*K*T*dt*(1 - math.exp(-k*vpt(w, s1)*l)) * vpt(w, s1) * table1[i] * photons[i] * lens_filter(w)
+		for i in range(table2.shape[0]):
+			w = i + 300
+			if (table2[i] > 0):
+				aql2 += (math.pi/4)**2*(d / f)**2*D**2*K*T*dt*(1 - math.exp(-k*vpt(w, l1)*l)) * vpt(w, l1) * table2[i] * photons[i] * lens_filter(w)
+				aqm2 += (math.pi/4)**2*(d / f)**2*D**2*K*T*dt*(1 - math.exp(-k*vpt(w, m1)*l)) * vpt(w, m1) * table2[i] * photons[i] * lens_filter(w)
+				aqs2 += (math.pi/4)**2*(d / f)**2*D**2*K*T*dt*(1 - math.exp(-k*vpt(w, s1)*l)) * vpt(w, s1) * table2[i] * photons[i] * lens_filter(w)
 		
-		# wavelength interval (see The Optics of Life)
-		aql1 = aql1 * 600
-		aqm1 = aqm1 * 600
-		aqs1 = aqs1 * 600
-		aql2 = aql2 * 600
-		aqm2 = aqm2 * 600
-		aqs2 = aqs2 * 600
+		# adjust size of integrals to compensate for sampling every 10 nm
+		# The Optics of Life recommends multiplying by the size of the
+		# wavelength interval, but I don't think that's what's called for
+		# here. The size seems to be underestimated by a factor of about 10,
+		# not a factor the size of the whole interval, which is what you would
+		# intuitively expect. The reason that "looked right" is I was confusing
+		# energy and radiance (per steradian) elsewhere.
+		# We don't need this anymore -- see above
+		#integral_full = 0
+		#integral_10nm = 0
+		#if (args.white == 'd65'): # use D65 table
+		#	for i in range(d65_1nm.shape[0]):
+		#		integral_full += d65_1nm[i]
+		#	for i in range(0, int(d65_1nm.shape[0]/10)):
+		#		integral_10nm += d65_1nm[i*10]
+		#	iscale = integral_full / integral_10nm
+		#else:
+		#	integral_full = quad(blackbody, args.start, args.end, args=args.ct)
+		#	for i in range(int(args.start/10), int((args.end+1)/10)):
+		#		integral_10nm += blackbody(i*10, args.ct)
+		#	iscale = integral_full[0] / integral_10nm
+		#aql1 = aql1 * iscale
+		#aqm1 = aqm1 * iscale
+		#aqs1 = aqs1 * iscale
+		#aql2 = aql2 * iscale
+		#aqm2 = aqm2 * iscale
+		#aqs2 = aqs2 * iscale
+		
+		# This defines "number of cones per receptive field" to mean the convergence
+		# ratio for each type of cone. This can in fact be less than 1 (see Vlahos
+		# et al. 2014). For example, if 90% of cones are L cones, 10% are S cones
+		# and the cone-to-ganglion cell ratio is 3:1, there are 2.7 L cones and
+		# 0.3 S cones for every ganglion cell. I don't know if this is really what
+		# that means, though. Does 1 receptive field = 1 ganglion cell?
+		# Redoing this again so the minimum is 1, which is how it was done for
+		# chickens and honey possums. The default for v is now "1". Setting it to 0
+		# disables this feature.
+		if (v != 0):
+			aql1 = aql1*v*args.lp
+			aql2 = aql2*v*args.lp
+			aqm1 = aqm1*v*args.mp
+			aqm2 = aqm2*v*args.mp
+			aqs1 = aqs1*v*args.sp
+			aqs2 = aqs2*v*args.sp
 		
 		el = math.sqrt((1 / aql1 + 1 / aql2) + 2*wl**2)
 		em = math.sqrt((1 / aqm1 + 1 / aqm2) + 2*wm**2)
 		es = math.sqrt((1 / aqs1 + 1 / aqs2) + 2*ws**2)
 		
 		if (args.qcheck):
-			print("aq1:")
-			print(aql1)
-			print(aqm1)
-			print(aqs1)
-			print("aq2:")
-			print(aql2)
-			print(aqm2)
-			print(aqs2)
-			print("noise:")
-			print(el)
-			print(em)
-			print(es)
-			print("Weber fractions:")
-			print(wl)
-			print(wm)
-			print(ws)
+			print("L1: " + str(aql1) + ", M1: " + str(aqm1) + ", S1: " + str(aqs1))
+			print("L2: " + str(aql2) + ", M2: " + str(aqm2) + ", S2: " + str(aqs2))
+			print("el: " + str(el) + ", em: " + str(em) + ", es: " + str(es))
+			print("wl: " + str(wl) + ", wm: " + str(wm) + ", ws: " + str(ws))
 	else:
 		el = wl
 		em = wm
@@ -780,30 +2047,39 @@ def color_contrast(table1, table2, quantum_noise=args.qn):
 def brightness_contrast(table1, table2):
 	
 	# background light
+	# This doesn't seem to be used for anything? I don't think a von Kries transform is
+	# relevant here. It gets divided out anyway.
 	wpt = 0
 	
-	ql1 = 0 # L cones
-	qm1 = 0 # M cones
-	qr1 = 0 # rods
-	ql2 = 0
-	qm2 = 0
-	qr2 = 0
-	for i in range(wp.shape[0]):
+	#ql1 = 0 # L cones
+	#qm1 = 0 # M cones
+	#qr1 = 0 # rods
+	#ql2 = 0
+	#qm2 = 0
+	#qr2 = 0
+	# We're redoing this to use sensitivity() so we can use the photopic luminosity
+	# function for humans.
+	q1 = 0
+	q2 = 0
+	for i in range(table1.shape[0]):
 		w = i*10 + 300
 		wpt += sensitivity(w, l1) * wp[i]
-		ql1 += vpt(w, l1) * table1[i] * wp[i] * lens_filter(w)
-		qm1 += vpt(w, m1) * table1[i] * wp[i] * lens_filter(w)
-		qr1 += vpt(w, rod) * table1[i] * wp[i] * lens_filter(w)
-	for i in range(wp.shape[0]):
+		#ql1 += vpt(w, l1) * table1[i] * wp[i] * lens_filter(w)
+		#qm1 += vpt(w, m1) * table1[i] * wp[i] * lens_filter(w)
+		#qr1 += vpt(w, rod) * table1[i] * wp[i] * lens_filter(w)
+		q1 += sensitivity(w) * table1[i] * wp[i]
+	for i in range(table2.shape[0]):
 		w = i*10 + 300
-		ql2 += vpt(w, l1) * table2[i] * wp[i] * lens_filter(w)
-		qm2 += vpt(w, m1) * table2[i] * wp[i] * lens_filter(w)
-		qr2 += vpt(w, rod) * table2[i] * wp[i] * lens_filter(w)
+		#ql2 += vpt(w, l1) * table2[i] * wp[i] * lens_filter(w)
+		#qm2 += vpt(w, m1) * table2[i] * wp[i] * lens_filter(w)
+		#qr2 += vpt(w, rod) * table2[i] * wp[i] * lens_filter(w)
+		q2 += sensitivity(w) * table2[i] * wp[i]
 	
-	if (l1 != m1):
-		df = math.log((args.lb*ql1 + args.mb*qm1 + args.rb*qr1) / (args.lb*ql2 + args.mb*qm2 + args.rb*qr2))
-	else:
-		df = math.log((args.lb*ql1 + args.rb*qr1) / (args.lb*ql2 + args.rb*qr2))
+	#if (l1 != m1):
+	#	df = math.log((args.lb*ql1 + args.mb*qm1 + args.rb*qr1) / (args.lb*ql2 + args.mb*qm2 + args.rb*qr2))
+	#else:
+	#	df = math.log((args.lb*ql1 + args.rb*qr1) / (args.lb*ql2 + args.rb*qr2))
+	df = math.log(q1 / q2)
 	delta_s = abs(df / args.weberb)
 	return delta_s
 
@@ -1205,52 +2481,76 @@ if (args.hexagon):
 	plt.text(math.sqrt(3)/2 + 0.0125, -0.5 - 0.025, 'L')
 	plt.show()
 	
-# wavelength discrimination take three
+# wavelength discrimination take three (http://www.eeza.csic.es/Pollination_ecology/Publicaciones/Telles%20et%20al%202016%20JEB.pdf)
 # This is mostly right but for honeybees and butterflies gives an extra minimum
 # where a maximum should be (really an extra peak in the first trough) and way too
 # high values on either side of it. I cut the values off at 500 because otherwise
 # the graph is unreadable.
 # It looks much better if I include chromatic adaptation and use the "i" light. Also
 # better if the white values are divided by 100?
+# No matter what I do to this thing, the graph it produces doesn't make sense. I think we
+# have to give up for now.
 if (args.wd):
 	# background light
 	wpl = 0
 	wpm = 0
 	wps = 0
-	if (args.white == 'i'):
-		start = 300
-	else:
-		start = 340
 	
-	for i in range(wp.shape[0]):
-		w = i*10 + start
-		wpl += vpt(w, l1) * wp[i]
-		wpm += vpt(w, m1) * wp[i]
-		wps += vpt(w, s1) * wp[i]
+	for i in range(wp_1nm.shape[0]):
+		w = i + 300
+		wpl += vpt(w, l1)*lens_filter(w) * wp_1nm[i]
+		wpm += vpt(w, m1)*lens_filter(w) * wp_1nm[i]
+		wps += vpt(w, s1)*lens_filter(w) * wp_1nm[i]
 	kl = 1
-	km = kl / wpm
-	ks = kl / wps
+	km = wpl / wpm
+	ks = wpl / wps
 	
 	xvalues = np.empty(350)
 	yvalues = np.empty(350)
 	for i in range(350, 700):
 		xvalues[i-350] = i
 		
-		# derivatives
-		dl1 = vpt(i+0.01, l1) / (vpt(i+0.01, l1) + vpt(i+0.01, m1) + vpt(i+0.01, s1))
-		dm1 = vpt(i+0.01, l1) / (vpt(i+0.01, l1) + vpt(i+0.01, m1) + vpt(i+0.01, s1))
-		ds1 = vpt(i+0.01, s1) / (vpt(i+0.01, l1) + vpt(i+0.01, m1) + vpt(i+0.01, s1))
-		dl2 = vpt(i-0.01, l1) / (vpt(i-0.01, l1) + vpt(i-0.01, m1) + vpt(i-0.01, s1))
-		dm2 = vpt(i-0.01, l1) / (vpt(i-0.01, l1) + vpt(i-0.01, m1) + vpt(i-0.01, s1))
-		ds2 = vpt(i-0.01, s1) / (vpt(i-0.01, l1) + vpt(i-0.01, m1) + vpt(i-0.01, s1))
-		dll = (dl1 - dl2) / 0.02
-		dlm = (dm1 - dm2) / 0.02
-		dls = (ds1 - ds2) / 0.02
+		# derivatives -- pretty sure the lens filtering cancels
+		#scale1 = (vpt(i+1, l1) + vpt(i+1, m1) + vpt(i+1, s1))
+		scale1 = 1
+		dl1 = math.log(1 + kl*vpt(i+1, l1)) / scale1
+		dm1 = math.log(1 + km*vpt(i+1, m1)) / scale1
+		ds1 = math.log(1 + ks*vpt(i+1, s1)) / scale1
+		#scale2 = (vpt(i-1, l1) + vpt(i-1, m1) + vpt(i-1, s1))
+		scale2 = 1
+		dl2 = math.log(1 + kl*vpt(i-1, l1)) / scale2
+		dm2 = math.log(1 + km*vpt(i-1, m1)) / scale2
+		ds2 = math.log(1 + ks*vpt(i-1, s1)) / scale2
+		# Not totally sure if this is supposed to be logarithmic or linear. The
+		# contrast functions are logarithmic.
+		dll = (dl1 - dl2) / 2
+		dlm = (dm1 - dm2) / 2
+		dls = (ds1 - ds2) / 2
 		dfl = (kl / (1 + kl*vpt(i, l1))) * dll
 		dfm = (km / (1 + km*vpt(i, m1))) * dlm
 		dfs = (ks / (1 + ks*vpt(i, s1))) * dls
 		
 		v = math.sqrt(((wl*wm)**2 + (wl*ws)**2 + (wm*ws)**2) / (wl**2*(dfm - dfs)**2 + wm**2*(dfl - dfs)**2 + ws**2*(dfm - dfl)**2))
+		# intensity?
+		# No.
+		#intensity = 1
+		#v = 0
+		#while (intensity < 100):
+		#	dl1i = intensity*dl1
+		#	dm1i = intensity*dm1
+		#	ds1i = intensity*ds1
+		#	dll = (dl1 - dl2) / 2
+		#	dlm = (dm1 - dm2) / 2
+		#	dls = (ds1 - ds2) / 2
+		#	dfl = (kl / (1 + kl*vpt(i, l1))) * dll
+		#	dfm = (km / (1 + km*vpt(i, m1))) * dlm
+		#	dfs = (ks / (1 + ks*vpt(i, s1))) * dls
+		#	v2 = math.sqrt(((wl*wm)**2 + (wl*ws)**2 + (wm*ws)**2) / (wl**2*(dfm - dfs)**2 + wm**2*(dfl - dfs)**2 + ws**2*(dfm - dfl)**2))
+		#	print(v)
+		#	v = max(v, v2)
+		#	print(intensity)
+		#	intensity += 1
+		
 		if (v > 100):
 			yvalues[i-350] = float('inf')
 		else:
@@ -1437,7 +2737,6 @@ if (args.leaves):
 		0.65,
 		0.65,
 		0.0, # 800
-		0.0,
 		0.0,
 		0.0,
 		0.0,
@@ -1968,1465 +3267,1503 @@ if (args.sky):
 	spectral_rendering(sky1_table, light_source=e)
 
 # Kodak Wratten camera filters
-# Note these are 300-900 nm rather than 340-830 nm.
+# Note these are 300-900 nm rather than 340-830 nm. I removed 800-900 nm because it's probably
+# not relevant here.
 
-# optical density (-log transmission)
-red25 = np.array([
-	2.423441558, # 300
-	2.300623377,
-	2.095532468,
-	1.826415584,
-	1.785675325,
-	1.919655844,
-	2.181538961,
-	2.589188312,
-	3.0,
-	3.0,
-	3.0, # 400
-	3.0,
-	3.0,
-	3.0,
-	3.0,
-	3.0,
-	3.0,
-	3.0,
-	3.0,
-	3.0,
-	3.0, # 500
-	3.0,
-	3.0,
-	3.0,
-	3.0,
-	3.0,
-	3.0,
-	3.0,
-	1.813064935,
-	0.525675325,
-	0.12974026, # 600
-	0.061480519,
-	0.048883117,
-	0.048883117,
-	0.0385,
-	0.0385,
-	0.0385,
-	0.0385,
-	0.0385,
-	0.0385,
-	0.0385, # 700
-	0.0385,
-	0.0385,
-	0.0385,
-	0.0385,
-	0.0385,
-	0.0385,
-	0.0385,
-	0.0385,
-	0.0385,
-	0.0385, # 800
-	0.0385,
-	0.0385,
-	0.0385,
-	0.0385,
-	0.0385,
-	0.0385,
-	0.0385,
-	0.0385,
-	0.0385,
-	0.0385 # 900
+# optical density (-log10 transmission, not -ln(transmission))
+# The names of these end in "d" for density so I don't confuse them with the transmission
+# arrays (ending in "t").
+# yellow 15
+yellow15d = np.array([
+	np.nan, # 300
+	2.07925,
+	1.87288,
+	2.39146,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan, # 400
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan, # 500
+	1.61358,
+	0.58700,
+	0.21129,
+	0.08958,
+	0.05254,
+	0.04196,
+	0.04196,
+	0.04196,
+	0.04196,
+	0.03667, # 600
+	0.03667,
+	0.03667,
+	0.03667,
+	0.04196,
+	0.03667,
+	0.03667,
+	0.03667,
+	0.04196,
+	0.03667,
+	0.03667, # 700
+	0.04196,
+	0.03137,
+	0.04196,
+	0.03667,
+	0.03667,
+	0.03667,
+	0.03667,
+	0.03667,
+	0.03137,
+	0.03667 # 800
 ])
 
-yellow15 = np.array([
-	3.0, # 300
-	2.012928025,
-	1.90243502,
-	2.381175769,
-	3.0,
-	3.0,
-	3.0,
-	3.0,
-	3.0,
-	3.0,
-	3.0, # 400
-	3.0,
-	3.0,
-	3.0,
-	3.0,
-	3.0,
-	3.0,
-	3.0,
-	3.0,
-	3.0,
-	3.0, # 500
-	1.442115433,
-	0.538040586,
-	0.197090581,
-	0.087322195,
-	0.051651715,
-	0.044886722,
-	0.039887986,
-	0.039887986,
-	0.039887986,
-	0.039887986, # 600
-	0.039887986,
-	0.039887986,
-	0.039887986,
-	0.039887986,
-	0.039887986,
-	0.039887986,
-	0.039887986,
-	0.039887986,
-	0.039887986,
-	0.039887986, # 700
-	0.039887986,
-	0.039887986,
-	0.039887986,
-	0.039887986,
-	0.039887986,
-	0.039887986,
-	0.039887986,
-	0.039887986,
-	0.039887986,
-	0.039887986, # 800
-	0.039887986,
-	0.039887986,
-	0.039887986,
-	0.039887986,
-	0.039887986,
-	0.039887986,
-	0.039887986,
-	0.039887986,
-	0.039887986,
-	0.039887986 # 900
+# red 25
+red25d = np.array([
+	2.41792, # 300
+	2.29092,
+	2.08983,
+	1.81996,
+	1.77763,
+	1.93108,
+	2.19037,
+	2.62429,
+	np.nan,
+	np.nan,
+	np.nan, # 400
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan, # 500
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	1.94167,
+	0.51292,
+	0.13721, # 600
+	0.06313,
+	0.04725,
+	0.04725,
+	0.04196,
+	0.04196,
+	0.04196,
+	0.03667,
+	0.04196,
+	0.03667,
+	0.03667, # 700
+	0.03667,
+	0.03667,
+	0.03667,
+	0.03667,
+	0.03667,
+	0.03138,
+	0.04196,
+	0.03138,
+	0.03667,
+	0.03667 # 800
 ])
 
-green58 = np.array([
-	3.0, # 300
-	3.0,
-	3.0,
-	3.0,
-	3.0,
-	3.0,
-	3.0,
-	3.0,
-	3.0,
-	3.0,
-	3.0, # 400
-	3.0,
-	3.0,
-	3.0,
-	3.0,
-	3.0,
-	3.0,
-	2.099148329,
-	1.44207606,
-	0.903494563,
-	0.505296555, # 500
-	0.304288077,
-	0.265710889,
-	0.284540692,
-	0.353630693,
-	0.450726311,
-	0.603871935,
-	0.824304706,
-	1.116218359,
-	1.557238985,
-	2.058303034, # 600
-	2.586623128,
-	3.0,
-	3.0,
-	3.0,
-	3.0,
-	3.0,
-	3.0,
-	3.0,
-	3.0,
-	3.0, # 700
-	2.194344166,
-	1.485783951,
-	0.889530526,
-	0.575549687,
-	0.367349181,
-	0.239760136,
-	0.16994641,
-	0.121469681,
-	0.10261403,
-	0.085315682, # 800
-	0.07716084,
-	0.071661813,
-	0.069529406,
-	0.067338842,
-	0.065083659,
-	0.062027209,
-	0.062027209,
-	0.062027209,
-	0.062027209,
-	0.062027209 # 900
+# blue 47
+blue47d = np.array([
+	2.80421, # 300
+	2.94708,
+	2.75658,
+	2.53962,
+	2.60312,
+	2.51317,
+	2.20625,
+	1.84642,
+	1.54479,
+	1.24317,
+	0.90979, # 400
+	0.57112,
+	0.37533,
+	0.31183,
+	0.30654,
+	0.33829,
+	0.39650,
+	0.49175,
+	0.61875,
+	0.81983,
+	1.10029, # 500
+	1.51304,
+	2.11100,
+	2.92062,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan, # 600
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	2.96296,
+	2.42850, # 700
+	2.01575,
+	1.64004,
+	1.28021,
+	0.91508,
+	0.61875,
+	0.39121,
+	0.24833,
+	0.15308,
+	0.11075,
+	0.08429 # 800
 ])
 
-blue47 = np.array([
-	2.806412992, #300
-	2.941547894,
-	2.72582778,
-	2.540505092,
-	2.601416432,
-	2.502024554,
-	2.174584034,
-	1.826738344,
-	1.532238615,
-	1.211871628,
-	0.899497151, # 400
-	0.577505776,
-	0.382462642,
-	0.312497438,
-	0.310284128,
-	0.33718038,
-	0.402880755,
-	0.493788277,
-	0.61670467,
-	0.81348221,
-	1.084716293, # 500
-	1.532238615,
-	2.067976245,
-	2.782500178,
-	3.0,
-	3.0,
-	3.0,
-	3.0,
-	3.0,
-	3.0,
-	3.0, # 600
-	3.0,
-	3.0,
-	3.0,
-	3.0,
-	3.0,
-	3.0,
-	3.0,
-	3.0,
-	2.939224565,
-	2.454930225, # 700
-	2.015037999,
-	1.644936243,
-	1.272291122,
-	0.941084091,
-	0.625933268,
-	0.393477421,
-	0.256006247,
-	0.15697031,
-	0.118942788,
-	0.088875418, # 800
-	0.065046736,
-	0.065046736,
-	0.050944971,
-	0.050944971,
-	0.050944971,
-	0.043864966,
-	0.043864966,
-	0.043864966,
-	0.043864966,
-	0.043864966 # 900
+# green 58
+green58d = np.array([
+	np.nan, # 300
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan, # 400
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	2.15333,
+	1.47600,
+	0.94154,
+	0.50763, # 500
+	0.30654,
+	0.25892,
+	0.28008,
+	0.34358,
+	0.44942,
+	0.59758,
+	0.81454,
+	1.13733,
+	1.57125,
+	2.07925, # 600
+	2.60842,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	3.00000, # 700
+	2.24858,
+	1.48129,
+	0.93625,
+	0.58171,
+	0.36475,
+	0.23246,
+	0.16367,
+	0.12133,
+	0.09488,
+	0.07900 # 800
 ])
 
 # neutral density filters
-nd01 = np.array([
-	0.338821199, # 300
-	0.296074593,
-	0.250350004,
-	0.229619894,
-	0.214813592,
-	0.194578741,
-	0.171481681,
-	0.159318902,
-	0.149683871,
-	0.144904947,
-	0.139180529, # 400
-	0.126323102,
-	0.12428418,
-	0.120341407,
-	0.120341407,
-	0.113311308,
-	0.113311308,
-	0.113311308,
-	0.113311308,
-	0.110474826,
-	0.110474826, # 500
-	0.107882759,
-	0.107882759,
-	0.107882759,
-	0.107882759,
-	0.107882759,
-	0.107882759,
-	0.107882759,
-	0.107882759,
-	0.107882759,
-	0.107882759, # 600
-	0.107882759,
-	0.107882759,
-	0.107882759,
-	0.107882759,
-	0.107882759,
-	0.107882759,
-	0.107882759,
-	0.107882759,
-	0.103804915,
-	0.103804915, # 700
-	0.099592001,
-	0.096472515,
-	0.086831052,
-	0.084386919,
-	0.082309406,
-	0.081621189,
-	0.081621189,
-	0.077298933,
-	0.075253579,
-	0.075253579, # 800
-	0.075253579,
-	0.075253579,
-	0.075253579,
-	0.075253579,
-	0.073652028,
-	0.073652028,
-	0.073652028,
-	0.073652028,
-	0.073652028,
-	0.073652028 # 900
+# 0.1
+nd01d = np.array([
+	0.33728, # 300
+	0.30024,
+	0.25790,
+	0.22615,
+	0.21028,
+	0.18911,
+	0.17324,
+	0.15736,
+	0.15207,
+	0.14678,
+	0.13620, # 400
+	0.13090,
+	0.12561,
+	0.12032,
+	0.12032,
+	0.11503,
+	0.11503,
+	0.11503,
+	0.10974,
+	0.10974,
+	0.10974, # 500
+	0.10974,
+	0.10974,
+	0.10974,
+	0.10445,
+	0.10445,
+	0.10445,
+	0.10445,
+	0.10445,
+	0.10445,
+	0.10445, # 600
+	0.10445,
+	0.10445,
+	0.10445,
+	0.10445,
+	0.10445,
+	0.10445,
+	0.10445,
+	0.10445,
+	0.10445,
+	0.10445, # 700
+	0.09915,
+	0.09386,
+	0.08857,
+	0.08328,
+	0.08328,
+	0.08328,
+	0.07799,
+	0.07799,
+	0.07799,
+	0.07799 # 800
 ])
 
-nd02 = np.array([
-	0.512531049, # 300
-	0.468346895,
-	0.39609636,
-	0.360025696,
-	0.33735546,
-	0.30890364,
-	0.288263383,
-	0.265792291,
-	0.262085653,
-	0.254447537,
-	0.247426124, # 400
-	0.235850107,
-	0.231963597,
-	0.22562955,
-	0.218222698,
-	0.212762313,
-	0.209428266,
-	0.200126338,
-	0.200126338,
-	0.200126338,
-	0.200126338, # 500
-	0.197325482,
-	0.197325482,
-	0.197325482,
-	0.197325482,
-	0.197325482,
-	0.197325482,
-	0.197325482,
-	0.197325482,
-	0.197325482,
-	0.197325482, # 600
-	0.197325482,
-	0.197325482,
-	0.202066381,
-	0.202066381,
-	0.202066381,
-	0.202066381,
-	0.202066381,
-	0.202066381,
-	0.202066381,
-	0.196194861, # 700
-	0.186533191,
-	0.172336188,
-	0.163124197,
-	0.150077088,
-	0.14179015,
-	0.13417773,
-	0.13417773,
-	0.13417773,
-	0.130040685,
-	0.130040685, # 800
-	0.126777302,
-	0.125852248,
-	0.125852248,
-	0.125852248,
-	0.121316916,
-	0.121316916,
-	0.121316916,
-	0.121316916,
-	0.121316916,
-	0.121316916 # 900
+# 0.2
+nd02d = np.array([
+	0.52360, # 300
+	0.47068,
+	0.39660,
+	0.35426,
+	0.33839,
+	0.30664,
+	0.28547,
+	0.26960,
+	0.26431,
+	0.25372,
+	0.24843, # 400
+	0.23785,
+	0.22726,
+	0.22197,
+	0.21668,
+	0.21139,
+	0.21139,
+	0.20610,
+	0.20610,
+	0.20610,
+	0.20081, # 500
+	0.20081,
+	0.20081,
+	0.20081,
+	0.20081,
+	0.20081,
+	0.20081,
+	0.20081,
+	0.20081,
+	0.19551,
+	0.19551, # 600
+	0.19551,
+	0.20081,
+	0.20081,
+	0.20610,
+	0.20610,
+	0.20610,
+	0.20610,
+	0.20610,
+	0.20081,
+	0.19551, # 700
+	0.19022,
+	0.16906,
+	0.16376,
+	0.14789,
+	0.14260,
+	0.13731,
+	0.13731,
+	0.13201,
+	0.12672,
+	0.12672 # 800
 ])
 
-nd03 = np.array([
-	0.854971744, # 300
-	0.760632686,
-	0.631502736,
-	0.57084613,
-	0.540373666,
-	0.49574778,
-	0.457375285,
-	0.425115222,
-	0.41742022,
-	0.396359877,
-	0.392637316, # 400
-	0.377010247,
-	0.363689757,
-	0.355629546,
-	0.346345568,
-	0.337343505,
-	0.332083225,
-	0.32595157,
-	0.32595157,
-	0.317667109,
-	0.317667109, # 500
-	0.317667109,
-	0.317667109,
-	0.317667109,
-	0.317667109,
-	0.317667109,
-	0.319204828,
-	0.320345303,
-	0.312272279,
-	0.307524571,
-	0.306268768, # 600
-	0.309100733,
-	0.312797666,
-	0.323478406,
-	0.32595157,
-	0.32595157,
-	0.32595157,
-	0.32595157,
-	0.32595157,
-	0.32595157,
-	0.315347717, # 700
-	0.301418546,
-	0.277737674,
-	0.252845848,
-	0.235014715,
-	0.218529086,
-	0.210834084,
-	0.20336974,
-	0.197148386,
-	0.197148386,
-	0.193701332, # 800
-	0.192157206,
-	0.192157206,
-	0.184346875,
-	0.184346875,
-	0.184346875,
-	0.179906712,
-	0.179906712,
-	0.178779051,
-	0.178779051,
-	0.178779051 # 900
+# 0.3
+nd03d = np.array([
+	0.84947, # 300
+	0.76480,
+	0.63780,
+	0.56901,
+	0.54255,
+	0.48964,
+	0.44730,
+	0.42614,
+	0.41555,
+	0.39968,
+	0.38909, # 400
+	0.37322,
+	0.36264,
+	0.34676,
+	0.34147,
+	0.33089,
+	0.32559,
+	0.32030,
+	0.32030,
+	0.31501,
+	0.31501, # 500
+	0.31501,
+	0.31501,
+	0.31501,
+	0.31501,
+	0.31501,
+	0.31501,
+	0.32030,
+	0.31501,
+	0.30443,
+	0.30443, # 600
+	0.30972,
+	0.31501,
+	0.32030,
+	0.32559,
+	0.32559,
+	0.32030,
+	0.32559,
+	0.32559,
+	0.32559,
+	0.31501, # 700
+	0.29914,
+	0.27797,
+	0.25151,
+	0.23034,
+	0.21447,
+	0.20918,
+	0.19859,
+	0.19859,
+	0.19330,
+	0.18801 # 800
 ])
 
-nd04 = np.array([
-	1.029570513, # 300
-	0.926320513,
-	0.800365385,
-	0.727153846,
-	0.692576923,
-	0.633108974,
-	0.584423077,
-	0.550814103,
-	0.535929487,
-	0.518224359,
-	0.502814103, # 400
-	0.481301282,
-	0.467788462,
-	0.453423077,
-	0.442448718,
-	0.433044872,
-	0.423653846,
-	0.414519231,
-	0.414519231,
-	0.414519231,
-	0.40699359, # 500
-	0.40699359,
-	0.40699359,
-	0.40699359,
-	0.40699359,
-	0.40699359,
-	0.40699359,
-	0.40699359,
-	0.403378205,
-	0.394410256,
-	0.39400641, # 600
-	0.397480769,
-	0.403339744,
-	0.40699359,
-	0.414371795,
-	0.414371795,
-	0.414371795,
-	0.414371795,
-	0.414371795,
-	0.414371795,
-	0.40699359, # 700
-	0.384628205,
-	0.360371795,
-	0.328782051,
-	0.304942308,
-	0.304942308,
-	0.269974359,
-	0.2575,
-	0.252064103,
-	0.247923077,
-	0.241929487, # 800
-	0.239083333,
-	0.239083333,
-	0.235544872,
-	0.230679487,
-	0.230679487,
-	0.226410256,
-	0.223673077,
-	0.223673077,
-	0.221519231,
-	0.221519231 # 900
+# 0.4
+nd04d = np.array([
+	1.03346, # 300
+	0.94350,
+	0.80592,
+	0.73184,
+	0.69480,
+	0.63659,
+	0.58367,
+	0.55721,
+	0.53605,
+	0.52017,
+	0.50430, # 400
+	0.48313,
+	0.46725,
+	0.45138,
+	0.44080,
+	0.43021,
+	0.42492,
+	0.41963,
+	0.41434,
+	0.41434,
+	0.40905, # 500
+	0.40905,
+	0.40905,
+	0.40905,
+	0.40375,
+	0.40375,
+	0.40905,
+	0.40905,
+	0.40375,
+	0.39317,
+	0.39317, # 600
+	0.39317,
+	0.40375,
+	0.40905,
+	0.41963,
+	0.41963,
+	0.41434,
+	0.41434,
+	0.41963,
+	0.41434,
+	0.40375, # 700
+	0.38259,
+	0.35613,
+	0.32438,
+	0.29792,
+	0.28205,
+	0.26617,
+	0.26088,
+	0.25030,
+	0.24500,
+	0.23971 # 800
 ])
 
-nd05 = np.array([
-	1.135265525, # 300
-	1.045072805,
-	0.963321199,
-	0.900211991,
-	0.855880086,
-	0.791775161,
-	0.724541756,
-	0.688085653,
-	0.658124197,
-	0.645398287,
-	0.621770878, # 400
-	0.601650964,
-	0.578762313,
-	0.563171306,
-	0.543481799,
-	0.532817987,
-	0.524762313,
-	0.520985011,
-	0.50933833,
-	0.506126338,
-	0.501995717, # 500
-	0.501211991,
-	0.499618844,
-	0.497640257,
-	0.493773019,
-	0.493773019,
-	0.493773019,
-	0.493773019,
-	0.488987152,
-	0.477520343,
-	0.475252677, # 600
-	0.48,
-	0.488139186,
-	0.497640257,
-	0.499618844,
-	0.499618844,
-	0.499618844,
-	0.499618844,
-	0.499618844,
-	0.495436831,
-	0.485678801, # 700
-	0.461762313,
-	0.429359743,
-	0.399199143,
-	0.371948608,
-	0.352310493,
-	0.334856531,
-	0.324880086,
-	0.317897216,
-	0.310837259,
-	0.305248394, # 800
-	0.303745182,
-	0.29832334,
-	0.29832334,
-	0.293087794,
-	0.288250535,
-	0.284479657,
-	0.283188437,
-	0.277477516,
-	0.277477516,
-	0.277477516 # 900
+# 0.5
+nd05d = np.array([
+	1.13191, # 300
+	1.05782,
+	0.96257,
+	0.90436,
+	0.86203,
+	0.79324,
+	0.72445,
+	0.68741,
+	0.66624,
+	0.64507,
+	0.62391, # 400
+	0.59745,
+	0.58157,
+	0.56041,
+	0.54982,
+	0.53395,
+	0.52336,
+	0.51807,
+	0.51278,
+	0.50749,
+	0.50220, # 500
+	0.50220,
+	0.49691,
+	0.49691,
+	0.49691,
+	0.49161,
+	0.49161,
+	0.49161,
+	0.48632,
+	0.48103,
+	0.47574, # 600
+	0.48103,
+	0.49161,
+	0.49691,
+	0.50220,
+	0.50220,
+	0.49691,
+	0.49691,
+	0.50220,
+	0.49691,
+	0.48632, # 700
+	0.45986,
+	0.42811,
+	0.39636,
+	0.36991,
+	0.34874,
+	0.33816,
+	0.32757,
+	0.31699,
+	0.31170,
+	0.30641 # 800
 ])
 
-nd06 = np.array([
-	1.323256959, # 300
-	1.24437045,
-	1.112158458,
-	1.052364026,
-	1.01943469,
-	0.930738758,
-	0.849501071,
-	0.811066381,
-	0.785858672,
-	0.760342612,
-	0.735012848, # 400
-	0.707254818,
-	0.680884368,
-	0.663353319,
-	0.643246253,
-	0.624706638,
-	0.620100642,
-	0.607291221,
-	0.60003212,
-	0.60003212,
-	0.60003212, # 500
-	0.60003212,
-	0.60003212,
-	0.60003212,
-	0.596119914,
-	0.596036403,
-	0.597674518,
-	0.60003212,
-	0.592265525,
-	0.577554604,
-	0.570970021, # 600
-	0.576796574,
-	0.591115632,
-	0.60003212,
-	0.609366167,
-	0.609366167,
-	0.609366167,
-	0.609366167,
-	0.609366167,
-	0.609366167,
-	0.60003212, # 700
-	0.573738758,
-	0.532130621,
-	0.486558887,
-	0.444276231,
-	0.412862955,
-	0.392421842,
-	0.375372591,
-	0.363835118,
-	0.352856531,
-	0.352856531, # 800
-	0.347852248,
-	0.340734475,
-	0.340734475,
-	0.330089936,
-	0.330089936,
-	0.325117773,
-	0.325117773,
-	0.31866167,
-	0.31866167,
-	0.31866167 # 900
+# 0.6
+nd06d = np.array([
+	1.33333, # 300
+	1.25396,
+	1.13225,
+	1.05816,
+	1.02112,
+	0.93116,
+	0.85179,
+	0.80945,
+	0.78300,
+	0.75654,
+	0.73537, # 400
+	0.70362,
+	0.68245,
+	0.66129,
+	0.64541,
+	0.62954,
+	0.61895,
+	0.60837,
+	0.60308,
+	0.60308,
+	0.59779, # 500
+	0.59779,
+	0.59779,
+	0.59779,
+	0.59250,
+	0.59250,
+	0.59779,
+	0.60308,
+	0.59250,
+	0.57662,
+	0.57133, # 600
+	0.57662,
+	0.59250,
+	0.60308,
+	0.61366,
+	0.61366,
+	0.61366,
+	0.60837,
+	0.61366,
+	0.60837,
+	0.60308, # 700
+	0.57133,
+	0.52900,
+	0.48137,
+	0.43904,
+	0.41258,
+	0.38612,
+	0.37554,
+	0.35966,
+	0.35437,
+	0.34908 # 800
 ])
 
-nd07 = np.array([
-	1.543503212, #300
-	1.451524625,
-	1.323366167,
-	1.241633833,
-	1.193717345,
-	1.090805139,
-	1.010550321,
-	0.957025696,
-	0.925586724,
-	0.899152034,
-	0.87072591, # 400
-	0.839049251,
-	0.805477516,
-	0.780366167,
-	0.759982869,
-	0.747122056,
-	0.730226981,
-	0.719203426,
-	0.705571734,
-	0.701961456,
-	0.695447537, # 500
-	0.695447537,
-	0.695447537,
-	0.695447537,
-	0.687057816,
-	0.688278373,
-	0.689184154,
-	0.695447537,
-	0.683293362,
-	0.666122056,
-	0.660648822, # 600
-	0.669186296,
-	0.679316916,
-	0.690070664,
-	0.695447537,
-	0.695447537,
-	0.695447537,
-	0.695447537,
-	0.695447537,
-	0.695447537,
-	0.688593148, # 700
-	0.655336188,
-	0.614961456,
-	0.556265525,
-	0.517053533,
-	0.473152034,
-	0.454246253,
-	0.438289079,
-	0.423411135,
-	0.417147752,
-	0.409561028, # 800
-	0.404595289,
-	0.401164882,
-	0.39382227,
-	0.391252677,
-	0.388271949,
-	0.3808394,
-	0.37882227,
-	0.376593148,
-	0.371094218,
-	0.367901499 # 900
+# 0.7
+nd07d = np.array([
+	1.54847, # 300
+	1.45852,
+	1.32622,
+	1.24156,
+	1.19922,
+	1.09868,
+	1.00872,
+	0.96110,
+	0.92935,
+	0.89760,
+	0.86585, # 400
+	0.83410,
+	0.80235,
+	0.78118,
+	0.76002,
+	0.74414,
+	0.72827,
+	0.71768,
+	0.70710,
+	0.70181,
+	0.69652, # 500
+	0.69652,
+	0.69652,
+	0.69122,
+	0.68593,
+	0.68593,
+	0.69122,
+	0.69122,
+	0.68064,
+	0.66477,
+	0.65947, # 600
+	0.66477,
+	0.68064,
+	0.69122,
+	0.70181,
+	0.70181,
+	0.70181,
+	0.69652,
+	0.70181,
+	0.69652,
+	0.68593, # 700
+	0.64889,
+	0.60656,
+	0.54835,
+	0.51131,
+	0.47427,
+	0.45310,
+	0.43722,
+	0.42135,
+	0.41606,
+	0.40547 # 800
 ])
 
-nd08 = np.array([
-	1.733531049, # 300
-	1.63137045,
-	1.490531049,
-	1.411541756,
-	1.355505353,
-	1.235119914,
-	1.145216274,
-	1.091762313,
-	1.048374732,
-	1.02243469,
-	0.98766167, # 400
-	0.953184154,
-	0.918231263,
-	0.890357602,
-	0.864443255,
-	0.845788009,
-	0.832438972,
-	0.819957173,
-	0.8071606,
-	0.802959315,
-	0.794511777, # 500
-	0.793284797,
-	0.788980728,
-	0.788980728,
-	0.777841542,
-	0.774044968,
-	0.777841542,
-	0.783680942,
-	0.774237687,
-	0.754149893,
-	0.748156317, # 600
-	0.756526767,
-	0.767029979,
-	0.780327623,
-	0.791922912,
-	0.791922912,
-	0.791922912,
-	0.785498929,
-	0.791922912,
-	0.787149893,
-	0.777025696, # 700
-	0.739586724,
-	0.690353319,
-	0.631766595,
-	0.583124197,
-	0.543809422,
-	0.515890792,
-	0.4934197,
-	0.478111349,
-	0.468025696,
-	0.462610278, # 800
-	0.454940043,
-	0.449062099,
-	0.443620985,
-	0.438077088,
-	0.435648822,
-	0.429147752,
-	0.42369379,
-	0.418432548,
-	0.418432548,
-	0.418432548 # 900
+# 0.8
+nd08d = np.array([
+	1.73990, # 300
+	1.63406,
+	1.49648,
+	1.40976,
+	1.36214,
+	1.25101,
+	1.14518,
+	1.09226,
+	1.05522,
+	1.01881,
+	0.98706, # 400
+	0.95002,
+	0.91827,
+	0.88652,
+	0.86535,
+	0.84419,
+	0.82831,
+	0.81773,
+	0.80715,
+	0.79656,
+	0.79127, # 500
+	0.79127,
+	0.79127,
+	0.78598,
+	0.78069,
+	0.77540,
+	0.78069,
+	0.78069,
+	0.77010,
+	0.75148,
+	0.74618, # 600
+	0.75677,
+	0.76735,
+	0.78323,
+	0.78852,
+	0.78852,
+	0.78852,
+	0.78323,
+	0.79381,
+	0.78852,
+	0.77264, # 700
+	0.73560,
+	0.68798,
+	0.62977,
+	0.57685,
+	0.53981,
+	0.50806,
+	0.49218,
+	0.47631,
+	0.46573,
+	0.46043 # 800
 ])
 
-nd09 = np.array([
-	1.876477516, # 300
-	1.76406424,
-	1.621329764,
-	1.535800857,
-	1.460492505,
-	1.34320985,
-	1.242269807,
-	1.171824411,
-	1.129361884,
-	1.094267666,
-	1.060477516, # 400
-	1.019139186,
-	0.988773019,
-	0.959029979,
-	0.932331906,
-	0.914678801,
-	0.896865096,
-	0.887453961,
-	0.876655246,
-	0.864635974,
-	0.857293362, # 500
-	0.852321199,
-	0.852321199,
-	0.850079229,
-	0.845023555,
-	0.839473233,
-	0.838670236,
-	0.838021413,
-	0.834199143,
-	0.815942184,
-	0.814085653, # 600
-	0.819404711,
-	0.829824411,
-	0.844143469,
-	0.852321199,
-	0.852321199,
-	0.852321199,
-	0.848511777,
-	0.852321199,
-	0.852321199,
-	0.835059957, # 700
-	0.801295503,
-	0.752672377,
-	0.687449679,
-	0.632319058,
-	0.593569593,
-	0.568162741,
-	0.545788009,
-	0.529477516,
-	0.519655246,
-	0.51079015, # 800
-	0.504089936,
-	0.496740899,
-	0.492256959,
-	0.489873662,
-	0.484888651,
-	0.479794433,
-	0.472554604,
-	0.47008137,
-	0.465494647,
-	0.465494647 # 900
+# 0.9
+nd09d = np.array([
+	1.88770, # 300
+	1.76868,
+	1.62620,
+	1.53316,
+	1.46437,
+	1.34735,
+	1.23623,
+	1.17273,
+	1.13189,
+	1.09335,
+	1.06160, # 400
+	1.01927,
+	0.98752,
+	0.96009,
+	0.93363,
+	0.91247,
+	0.89659,
+	0.88601,
+	0.87543,
+	0.86484,
+	0.85955, # 500
+	0.85426,
+	0.85426,
+	0.85128,
+	0.84368,
+	0.83967,
+	0.83838,
+	0.84368,
+	0.83309,
+	0.81873,
+	0.81193, # 600
+	0.81921,
+	0.83174,
+	0.84762,
+	0.85820,
+	0.85820,
+	0.85291,
+	0.85052,
+	0.85291,
+	0.85291,
+	0.83785, # 700
+	0.80193,
+	0.74707,
+	0.68887,
+	0.63595,
+	0.59566,
+	0.56671,
+	0.54804,
+	0.53216,
+	0.52525,
+	0.51629 # 800
 ])
 
-nd10 = np.array([
-	2.158094421, # 300
-	2.02001073,
-	1.860347639,
-	1.766027897,
-	1.68323176,
-	1.554251073,
-	1.424053648,
-	1.355980687,
-	1.311186695,
-	1.269270386,
-	1.232182403, # 400
-	1.186332618,
-	1.150751073,
-	1.118201717,
-	1.092251073,
-	1.069648069,
-	1.048821888,
-	1.035334764,
-	1.024345494,
-	1.013658798,
-	1.00543133, # 500
-	1.00543133,
-	1.00543133,
-	1.00543133,
-	0.999199571,
-	0.999199571,
-	0.999199571,
-	0.999199571,
-	0.985667382,
-	0.969347639,
-	0.961075107, # 600
-	0.969412017,
-	0.98622103,
-	0.999199571,
-	1.008012876,
-	1.016349785,
-	1.008012876,
-	1.008012876,
-	1.008012876,
-	1.008012876,
-	0.986774678, # 700
-	0.948154506,
-	0.884697425,
-	0.816296137,
-	0.757435622,
-	0.712487124,
-	0.6777103,
-	0.655281116,
-	0.640944206,
-	0.629040773,
-	0.620652361, # 800
-	0.611948498,
-	0.603263948,
-	0.600251073,
-	0.595545064,
-	0.584961373,
-	0.579225322,
-	0.574680258,
-	0.567914163,
-	0.564830472,
-	0.560774678 # 900
+# 1.0
+nd10d = np.array([
+	2.16924, # 300
+	2.03191,
+	1.87489,
+	1.76947,
+	1.69268,
+	1.55559,
+	1.43246,
+	1.35751,
+	1.31309,
+	1.27284,
+	1.23051, # 400
+	1.18817,
+	1.14892,
+	1.11741,
+	1.08966,
+	1.06646,
+	1.04862,
+	1.03686,
+	1.02574,
+	1.01687,
+	1.01158, # 500
+	1.00628,
+	1.00628,
+	1.00628,
+	0.99998,
+	0.99570,
+	0.99570,
+	1.00099,
+	0.98982,
+	0.96924,
+	0.96395, # 600
+	0.96924,
+	0.98512,
+	1.00628,
+	1.01687,
+	1.01687,
+	1.01158,
+	1.01158,
+	1.01158,
+	1.01158,
+	0.99570, # 700
+	0.94808,
+	0.88458,
+	0.81578,
+	0.75758,
+	0.71289,
+	0.68007,
+	0.65886,
+	0.64116,
+	0.63058,
+	0.62143 # 800
 ])
 
-nd20 = np.array([
-	3.0, # 300
-	3.0,
-	2.862978678,
-	2.791944563,
-	2.647950959,
-	2.418345416,
-	2.243904051,
-	2.156552239,
-	2.064997868,
-	2.000859275,
-	1.938486141, # 400
-	1.858381663,
-	1.784085288,
-	1.739296375,
-	1.687420043,
-	1.654081023,
-	1.623345416,
-	1.593639659,
-	1.57201919,
-	1.554255864,
-	1.541648188, # 500
-	1.529712154,
-	1.529712154,
-	1.526603412,
-	1.526603412,
-	1.500850746,
-	1.510228145,
-	1.510228145,
-	1.488102345,
-	1.448168443,
-	1.42961194, # 600
-	1.436123667,
-	1.455249467,
-	1.481014925,
-	1.504816631,
-	1.504816631,
-	1.493034115,
-	1.490008529,
-	1.490008529,
-	1.490008529,
-	1.473486141, # 700
-	1.414791045,
-	1.323473348,
-	1.210765458,
-	1.12065032,
-	1.04263113,
-	0.980597015,
-	0.941353945,
-	0.91608742,
-	0.895823028,
-	0.880324094, # 800
-	0.865970149,
-	0.855428571,
-	0.84817484,
-	0.837108742,
-	0.82473774,
-	0.816882729,
-	0.808157783,
-	0.799995736,
-	0.789978678,
-	0.783383795 # 900
+# 2.0
+nd20d = np.array([
+	np.nan, # 300
+	4.00000,
+	3.81479,
+	3.73012,
+	3.55021,
+	3.24858,
+	2.98400,
+	2.87287,
+	2.75117,
+	2.66650,
+	2.58183, # 400
+	2.47071,
+	2.39133,
+	2.31196,
+	2.24846,
+	2.20083,
+	2.15850,
+	2.11617,
+	2.08971,
+	2.07383,
+	2.05267, # 500
+	2.03679,
+	2.04208,
+	2.03679,
+	2.01033,
+	1.99975,
+	2.00504,
+	2.01562,
+	1.98387,
+	1.92037,
+	1.90450, # 600
+	1.91508,
+	1.94154,
+	1.97858,
+	2.00504,
+	2.00504,
+	1.99446,
+	1.98917,
+	1.98387,
+	1.98917,
+	1.96271, # 700
+	1.89392,
+	1.76162,
+	1.61875,
+	1.48117,
+	1.38062,
+	1.30654,
+	1.25362,
+	1.21658,
+	1.19012,
+	1.17425 # 800
 ])
+
+# 3.0
+nd30d = np.array([
+	np.nan, # 300
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	3.96296,
+	3.86242, # 400
+	3.68779,
+	3.56608,
+	3.47083,
+	3.37029,
+	3.30150,
+	3.23271,
+	3.17979,
+	3.14804,
+	3.10042,
+	3.08454, # 500
+	3.06337,
+	3.05279,
+	3.03692,
+	3.01575,
+	2.98929,
+	2.98929,
+	2.98929,
+	2.96283,
+	2.91521,
+	2.88346, # 600
+	2.88875,
+	2.93108,
+	2.98400,
+	3.02633,
+	3.03162,
+	3.01046,
+	2.99987,
+	2.99987,
+	3.01575,
+	2.97871, # 700
+	2.87287,
+	2.67708,
+	2.46012,
+	2.24846,
+	2.08971,
+	1.97858,
+	1.89921,
+	1.84100,
+	1.80396,
+	1.76692 # 800
+])
+
+# 4.0
+nd40d = np.array([
+	np.nan, # 300
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan,
+	np.nan, # 400
+	4.91108,
+	4.76816,
+	4.62525,
+	4.49186,
+	4.40612,
+	4.34895,
+	4.24415,
+	4.20604,
+	4.16475,
+	4.13617, # 500
+	4.11711,
+	4.10758,
+	4.10123,
+	4.06312,
+	4.03454,
+	4.03454,
+	4.05360,
+	3.99325,
+	3.90115,
+	3.86940, # 600
+	3.87575,
+	3.93291,
+	4.00913,
+	4.05677,
+	4.06630,
+	4.04089,
+	4.02184,
+	4.03136,
+	4.03772,
+	3.98055, # 700
+	3.83446,
+	3.58039,
+	3.27234,
+	3.01827,
+	2.80866,
+	2.65940,
+	2.56412,
+	2.48155,
+	2.43391,
+	2.39262 # 800
+])
+
+# transmission
+yellow15t = np.empty(51)
+for i in range(51):
+	if (np.isnan(yellow15d[i])): # nan check
+		yellow15t[i] = 0
+	else:
+		yellow15t[i] = 10**(-yellow15d[i])
+red25t = np.empty(51)
+for i in range(51):
+	if (np.isnan(red25d[i])):
+		red25t[i] = 0
+	else:
+		red25t[i] = 10**(-red25d[i])
+blue47t = np.empty(51)
+for i in range(51):
+	if (np.isnan(blue47d[i])):
+		blue47t[i] = 0
+	else:
+		blue47t[i] = 10**(-blue47d[i])
+green58t = np.empty(51)
+for i in range(51):
+	if (np.isnan(green58d[i])):
+		green58t[i] = 0
+	else:
+		green58t[i] = 10**(-green58d[i])
+# neutral density filters -- these do not contain nans except 2.0, 3.0 and 4.0
+nd01t = np.empty(51)
+for i in range(51):
+	nd01t[i] = 10**(-nd01d[i])
+nd02t = np.empty(51)
+for i in range(51):
+	nd02t[i] = 10**(-nd02d[i])
+nd03t = np.empty(51)
+for i in range(51):
+	nd03t[i] = 10**(-nd03d[i])
+nd04t = np.empty(51)
+for i in range(51):
+	nd04t[i] = 10**(-nd04d[i])
+nd05t = np.empty(51)
+for i in range(51):
+	nd05t[i] = 10**(-nd05d[i])
+nd06t = np.empty(51)
+for i in range(51):
+	nd06t[i] = 10**(-nd06d[i])
+nd07t = np.empty(51)
+for i in range(51):
+	nd07t[i] = 10**(-nd07d[i])
+nd08t = np.empty(51)
+for i in range(51):
+	nd08t[i] = 10**(-nd08d[i])
+nd09t = np.empty(51)
+for i in range(51):
+	nd09t[i] = 10**(-nd09d[i])
+nd10t = np.empty(51)
+for i in range(51):
+	nd10t[i] = 10**(-nd10d[i])
+nd20t = np.empty(51)
+for i in range(51):
+	if (np.isnan(nd20d[i])):
+		nd20t[i] = 0
+	else:
+		nd20t[i] = 10**(-nd20d[i])
+nd30t = np.empty(51)
+for i in range(51):
+	if (np.isnan(nd30d[i])):
+		nd30t[i] = 0
+	else:
+		nd30t[i] = 10**(-nd30d[i])
+nd40t = np.empty(51)
+for i in range(51):
+	if (np.isnan(nd40d[i])):
+		nd40t[i] = 0
+	else:
+		nd40t[i] = 10**(-nd40d[i])
 
 if (args.kcheck):
 	# plot test
-	xvalues = np.empty(61)
-	for i in range(0, 61):
-		xvalues[i] = i*10 + 300
-	plt.plot(xvalues, red25, marker='o', linestyle='-', color='0.3', mec='k', label="red 25")
-	plt.plot(xvalues, yellow15, marker='s', linestyle='-', color='0.7', mfc='w', mec='k', label="yellow 15")
-	plt.plot(xvalues, green58, marker='^', linestyle='-', color='0.5', mec='k', label="green 58")
-	plt.plot(xvalues, blue47, 'D-k', label="blue 47")
-	plt.xlabel("Wavelength (nm)")
-	plt.ylabel("Optical density")
-	plt.legend()
-	plt.show()
+	#xvalues = np.empty(51)
+	#for i in range(51):
+#		xvalues[i] = i*10 + 300
+#	plt.plot(xvalues, red25, 's-r', mec='k', label="red 25")
+#	plt.plot(xvalues, yellow15, 'D-y', mec='k', label="yellow 15")
+#	plt.plot(xvalues, green58, '^-g', mec='k', label="green 58")
+#	plt.plot(xvalues, blue47, 'o-b', mec='k', label="blue 47")
+#	plt.xlabel("Wavelength (nm)")
+#	plt.ylabel("Optical density")
+#	plt.legend()
+#	plt.show()
+	
+	# plot test 2
+#	plt.subplot(2, 2, 1)
+#	plt.plot(xvalues, red25, 'r')
+#	plt.title("Red 25")
+#	plt.subplot(2, 2, 2)
+#	plt.plot(xvalues, yellow15, 'y')
+#	plt.title("Yellow 15")
+#	plt.subplot(2, 2, 3)
+#	plt.plot(xvalues, green58, 'g')
+#	plt.title("Green 58")
+#	plt.subplot(2, 2, 4)
+#	plt.plot(xvalues, blue47, 'b')
+#	plt.title("Blue 47")
+	#plt.show()
+	
+#	plt.subplot(2, 2, 1)
+#	plt.plot(xvalues, nd01, color='0.5')
+#	plt.plot(xvalues, nd02, color='0.25')
+#	plt.plot(xvalues, nd03, 'k')
+#	plt.title("0.1-0.3")
+#	plt.subplot(2, 2, 2)
+#	plt.plot(xvalues, nd04, color='0.5')
+#	plt.plot(xvalues, nd05, color='0.25')
+#	plt.plot(xvalues, nd06, 'k')
+#	plt.title("0.4-0.6")
+#	plt.subplot(2, 2, 3)
+#	plt.plot(xvalues, nd07, color='0.5')
+#	plt.plot(xvalues, nd08, color='0.25')
+#	plt.plot(xvalues, nd09, 'k')
+#	plt.title("0.7-0.9")
+#	plt.subplot(2, 2, 4)
+#	plt.plot(xvalues, nd10, color='0.6')
+#	plt.plot(xvalues, nd20, color='0.4')
+#	plt.plot(xvalues, nd30, color='0.2')
+#	plt.plot(xvalues, nd40, 'k')
+#	plt.title("1.0-4.0")
+#	#plt.show()
 	
 	# transmission
-	red25t = np.empty(61)
-	for i in range(0, 61):
-		red25t[i] = math.exp(-red25[i]) * 100
-	yellow15t = np.empty(61)
-	for i in range(0, 61):
-		yellow15t[i] = math.exp(-yellow15[i]) * 100
-	green58t = np.empty(61)
-	for i in range(0, 61):
-		green58t[i] = math.exp(-green58[i]) * 100
-	blue47t = np.empty(61)
-	for i in range(0, 61):
-		blue47t[i] = math.exp(-blue47[i]) * 100
-	plt.plot(xvalues, red25t, marker='o', linestyle='-', color='0.3', mec='k', label="red 25")
-	plt.plot(xvalues, yellow15t, marker='s', linestyle='-', color='0.7', mfc='w', mec='k', label="yellow 15")
-	plt.plot(xvalues, green58t, marker='^', linestyle='-', color='0.5', mec='k', label="green 58")
-	plt.plot(xvalues, blue47t, 'D-k', mec='k', label="blue 47")
-	plt.xlabel("Wavelength (nm)")
-	plt.ylabel("Transmission (%)")
-	plt.legend()
-	plt.show()
+#	red25t = np.empty(51)
+#	for i in range(51):
+#		red25t[i] = math.exp(-red25[i])
+#	yellow15t = np.empty(51)
+#	for i in range(51):
+#		yellow15t[i] = math.exp(-yellow15[i])
+#	green58t = np.empty(51)
+#	for i in range(51):
+#		green58t[i] = math.exp(-green58[i])
+#	blue47t = np.empty(51)
+#	for i in range(51):
+#		blue47t[i] = math.exp(-blue47[i])
+#	plt.plot(xvalues, red25t*100, 's-r', mec='k', label="red 25")
+#	plt.plot(xvalues, yellow15t*100, 'D-y', mec='k', label="yellow 15")
+#	plt.plot(xvalues, green58t*100, '^-g', mec='k', label="green 58")
+#	plt.plot(xvalues, blue47t*100, 'o-b', mec='k', label="blue 47")
+#	plt.xlabel("Wavelength (nm)")
+#	plt.ylabel("Transmission (%)")
+#	plt.legend()
+#	#plt.show()
 	
-	# red brightness tests
-	red25_01 = np.empty(61)
-	for i in range(0, 61):
-		red25_01[i] = red25[i] + nd01[i]
-	red25_01t = np.empty(61)
-	for i in range(0, 61):
-		red25_01t[i] = math.exp(-red25_01[i])
-	red25_02 = np.empty(61)
-	for i in range(0, 61):
-		red25_02[i] = red25[i] + nd02[i]
-	red25_02t = np.empty(61)
-	for i in range(0, 61):
-		red25_02t[i] = math.exp(-red25_02[i])
-	red25_03 = np.empty(61)
-	for i in range(0, 61):
-		red25_03[i] = red25[i] + nd03[i]
-	red25_03t = np.empty(61)
-	for i in range(0, 61):
-		red25_03t[i] = math.exp(-red25_03[i])
-	red25_04 = np.empty(61)
-	for i in range(0, 61):
-		red25_04[i] = red25[i] + nd04[i]
-	red25_04t = np.empty(61)
-	for i in range(0, 61):
-		red25_04t[i] = math.exp(-red25_04[i])
-	red25_05 = np.empty(61)
-	for i in range(0, 61):
-		red25_05[i] = red25[i] + nd05[i]
-	red25_05t = np.empty(61)
-	for i in range(0, 61):
-		red25_05t[i] = math.exp(-red25_05[i])
-	red25_06 = np.empty(61)
-	for i in range(0, 61):
-		red25_06[i] = red25[i] + nd06[i]
-	red25_06t = np.empty(61)
-	for i in range(0, 61):
-		red25_06t[i] = math.exp(-red25_06[i])
-	red25_07 = np.empty(61)
-	for i in range(0, 61):
-		red25_07[i] = red25[i] + nd07[i]
-	red25_07t = np.empty(61)
-	for i in range(0, 61):
-		red25_07t[i] = math.exp(-red25_07[i])
-	red25_08 = np.empty(61)
-	for i in range(0, 61):
-		red25_08[i] = red25[i] + nd08[i]
-	red25_08t = np.empty(61)
-	for i in range(0, 61):
-		red25_08t[i] = math.exp(-red25_08[i])
-	red25_09 = np.empty(61)
-	for i in range(0, 61):
-		red25_09[i] = red25[i] + nd09[i]
-	red25_09t = np.empty(61)
-	for i in range(0, 61):
-		red25_09t[i] = math.exp(-red25_09[i])
-	red25_10 = np.empty(61)
-	for i in range(0, 61):
-		red25_10[i] = red25[i] + nd10[i]
-	red25_10t = np.empty(61)
-	for i in range(0, 61):
-		red25_10t[i] = math.exp(-red25_10[i])
-	red25_1001 = np.empty(61)
-	for i in range(0, 61):
-		red25_1001[i] = red25[i] + nd10[i] + nd01[i]
-	red25_1001t = np.empty(61)
-	for i in range(0, 61):
-		red25_1001t[i] = math.exp(-red25_1001[i])
-	red25_1002 = np.empty(61)
-	for i in range(0, 61):
-		red25_1002[i] = red25[i] + nd10[i] + nd02[i]
-	red25_1002t = np.empty(61)
-	for i in range(0, 61):
-		red25_1002t[i] = math.exp(-red25_1002[i])
-	red25_1003 = np.empty(61)
-	for i in range(0, 61):
-		red25_1003[i] = red25[i] + nd10[i] + nd03[i]
-	red25_1003t = np.empty(61)
-	for i in range(0, 61):
-		red25_1003t[i] = math.exp(-red25_1003[i])
-	red25_1004 = np.empty(61)
-	for i in range(0, 61):
-		red25_1004[i] = red25[i] + nd10[i] + nd04[i]
-	red25_1004t = np.empty(61)
-	for i in range(0, 61):
-		red25_1004t[i] = math.exp(-red25_1004[i])
-	red25_20 = np.empty(61)
-	for i in range(0, 61):
-		red25_20[i] = red25[i] + nd20[i]
-	red25_20t = np.empty(61)
-	for i in range(0, 61):
-		red25_20t[i] = math.exp(-red25_20[i])
+	# "dummy" array for gray as we assume no color filter
+	placeholder = np.empty(51)
+	for i in range(51):
+		placeholder[i] = 1
 	
-	# yellow brightness tests
-	yellow15_01 = np.empty(61)
-	for i in range(0, 61):
-		yellow15_01[i] = yellow15[i] + nd01[i]
-	yellow15_01t = np.empty(61)
-	for i in range(0, 61):
-		yellow15_01t[i] = math.exp(-yellow15_01[i])
-	yellow15_02 = np.empty(61)
-	for i in range(0, 61):
-		yellow15_02[i] = yellow15[i] + nd02[i]
-	yellow15_02t = np.empty(61)
-	for i in range(0, 61):
-		yellow15_02t[i] = math.exp(-yellow15_02[i])
-	yellow15_03 = np.empty(61)
-	for i in range(0, 61):
-		yellow15_03[i] = yellow15[i] + nd03[i]
-	yellow15_03t = np.empty(61)
-	for i in range(0, 61):
-		yellow15_03t[i] = math.exp(-yellow15_03[i])
-	yellow15_04 = np.empty(61)
-	for i in range(0, 61):
-		yellow15_04[i] = yellow15[i] + nd04[i]
-	yellow15_04t = np.empty(61)
-	for i in range(0, 61):
-		yellow15_04t[i] = math.exp(-yellow15_04[i])
-	yellow15_05 = np.empty(61)
-	for i in range(0, 61):
-		yellow15_05[i] = yellow15[i] + nd05[i]
-	yellow15_05t = np.empty(61)
-	for i in range(0, 61):
-		yellow15_05t[i] = math.exp(-yellow15_05[i])
-	yellow15_06 = np.empty(61)
-	for i in range(0, 61):
-		yellow15_06[i] = yellow15[i] + nd06[i]
-	yellow15_06t = np.empty(61)
-	for i in range(0, 61):
-		yellow15_06t[i] = math.exp(-yellow15_06[i])
-	yellow15_07 = np.empty(61)
-	for i in range(0, 61):
-		yellow15_07[i] = yellow15[i] + nd07[i]
-	yellow15_07t = np.empty(61)
-	for i in range(0, 61):
-		yellow15_07t[i] = math.exp(-yellow15_07[i])
-	yellow15_08 = np.empty(61)
-	for i in range(0, 61):
-		yellow15_08[i] = yellow15[i] + nd08[i]
-	yellow15_08t = np.empty(61)
-	for i in range(0, 61):
-		yellow15_08t[i] = math.exp(-yellow15_08[i])
-	yellow15_09 = np.empty(61)
-	for i in range(0, 61):
-		yellow15_09[i] = yellow15[i] + nd09[i]
-	yellow15_09t = np.empty(61)
-	for i in range(0, 61):
-		yellow15_09t[i] = math.exp(-yellow15_09[i])
-	yellow15_10 = np.empty(61)
-	for i in range(0, 61):
-		yellow15_10[i] = yellow15[i] + nd10[i]
-	yellow15_10t = np.empty(61)
-	for i in range(0, 61):
-		yellow15_10t[i] = math.exp(-yellow15_10[i])
-	yellow15_1001 = np.empty(61)
-	for i in range(0, 61):
-		yellow15_1001[i] = yellow15[i] + nd10[i] + nd01[i]
-	yellow15_1001t = np.empty(61)
-	for i in range(0, 61):
-		yellow15_1001t[i] = math.exp(-yellow15_1001[i])
-	yellow15_1002 = np.empty(61)
-	for i in range(0, 61):
-		yellow15_1002[i] = yellow15[i] + nd10[i] + nd02[i]
-	yellow15_1002t = np.empty(61)
-	for i in range(0, 61):
-		yellow15_1002t[i] = math.exp(-yellow15_1002[i])
-	yellow15_1010 = np.empty(61)
-	for i in range(0, 61):
-		yellow15_1010[i] = yellow15[i] + nd10[i] + nd10[i]
-	yellow15_1010t = np.empty(61)
-	for i in range(0, 61):
-		yellow15_1010t[i] = math.exp(-yellow15_1010[i])
-	yellow15_20 = np.empty(61)
-	for i in range(0, 61):
-		yellow15_20[i] = yellow15[i] + nd20[i]
-	yellow15_20t = np.empty(61)
-	for i in range(0, 61):
-		yellow15_20t[i] = math.exp(-yellow15_20[i])
-	yellow15_2001 = np.empty(61)
-	for i in range(0, 61):
-		yellow15_2001[i] = yellow15[i] + nd20[i] + nd01[i]
-	yellow15_2001t = np.empty(61)
-	for i in range(0, 61):
-		yellow15_2001t[i] = math.exp(-yellow15_2001[i])
-	yellow15_2002 = np.empty(61)
-	for i in range(0, 61):
-		yellow15_2002[i] = yellow15[i] + nd20[i] + nd02[i]
-	yellow15_2002t = np.empty(61)
-	for i in range(0, 61):
-		yellow15_2002t[i] = math.exp(-yellow15_2002[i])
-	yellow15_2003 = np.empty(61)
-	for i in range(0, 61):
-		yellow15_2003[i] = yellow15[i] + nd20[i] + nd03[i]
-	yellow15_2003t = np.empty(61)
-	for i in range(0, 61):
-		yellow15_2003t[i] = math.exp(-yellow15_2003[i])
-	yellow15_2004 = np.empty(61)
-	for i in range(0, 61):
-		yellow15_2004[i] = yellow15[i] + nd20[i] + nd04[i]
-	yellow15_2004t = np.empty(61)
-	for i in range(0, 61):
-		yellow15_2004t[i] = math.exp(-yellow15_2004[i])
-	yellow15_2005 = np.empty(61)
-	for i in range(0, 61):
-		yellow15_2005[i] = yellow15[i] + nd20[i] + nd05[i]
-	yellow15_2005t = np.empty(61)
-	for i in range(0, 61):
-		yellow15_2005t[i] = math.exp(-yellow15_2005[i])
-	yellow15_2006 = np.empty(61)
-	for i in range(0, 61):
-		yellow15_2006[i] = yellow15[i] + nd20[i] + nd06[i]
-	yellow15_2006t = np.empty(61)
-	for i in range(0, 61):
-		yellow15_2006t[i] = math.exp(-yellow15_2006[i])
-	yellow15_2007 = np.empty(61)
-	for i in range(0, 61):
-		yellow15_2007[i] = yellow15[i] + nd20[i] + nd07[i]
-	yellow15_2007t = np.empty(61)
-	for i in range(0, 61):
-		yellow15_2007t[i] = math.exp(-yellow15_2007[i])
+	# brightness tests -- wrap this up in a function so we don't have to copy it a million
+	# times
+	def brightness_tests(f):
+		f_01 = np.empty(51)
+		for i in range(51):
+			f_01[i] = f[i] * nd01t[i]
+		f_02 = np.empty(51)
+		for i in range(51):
+			f_02[i] = f[i] * nd02t[i]
+		f_03 = np.empty(51)
+		for i in range(51):
+			f_03[i] = f[i] * nd03t[i]
+		f_04 = np.empty(51)
+		for i in range(51):
+			f_04[i] = f[i] * nd04t[i]
+		f_05 = np.empty(51)
+		for i in range(51):
+			f_05[i] = f[i] * nd05t[i]
+		f_06 = np.empty(51)
+		for i in range(51):
+			f_06[i] = f[i] * nd06t[i]
+		f_07 = np.empty(51)
+		for i in range(51):
+			f_07[i] = f[i] * nd07t[i]
+		f_08 = np.empty(51)
+		for i in range(51):
+			f_08[i] = f[i] * nd08t[i]
+		f_09 = np.empty(51)
+		for i in range(51):
+			f_09[i] = f[i] * nd09t[i]
+		# 1.0 + others
+		f_10 = np.empty(51)
+		for i in range(51):
+			f_10[i] = f[i] * nd10t[i]
+		f_1001 = np.empty(51)
+		for i in range(51):
+			f_1001[i] = f[i] * nd10t[i] * nd01t[i]
+		f_1002 = np.empty(51)
+		for i in range(51):
+			f_1002[i] = f[i] * nd10t[i] * nd02t[i]
+		f_1003 = np.empty(51)
+		for i in range(51):
+			f_1003[i] = f[i] * nd10t[i] * nd03t[i]
+		f_1004 = np.empty(51)
+		for i in range(51):
+			f_1004[i] = f[i] * nd10t[i] * nd04t[i]
+		f_1005 = np.empty(51)
+		for i in range(51):
+			f_1005[i] = f[i] * nd10t[i] * nd05t[i]
+		f_1006 = np.empty(51)
+		for i in range(51):
+			f_1006[i] = f[i] * nd10t[i] * nd06t[i]
+		f_1007 = np.empty(51)
+		for i in range(51):
+			f_1007[i] = f[i] * nd10t[i] * nd07t[i]
+		f_1008 = np.empty(51)
+		for i in range(51):
+			f_1008[i] = f[i] * nd10t[i] * nd08t[i]
+		f_1009 = np.empty(51)
+		for i in range(51):
+			f_1009[i] = f[i] * nd10t[i] * nd09t[i]
+		# 2.0
+		f_20 = np.empty(51)
+		for i in range(51):
+			f_20[i] = f[i] * nd20t[i]
+		f_2001 = np.empty(51)
+		for i in range(51):
+			f_2001[i] = f[i] * nd20t[i] * nd01t[i]
+		f_2002 = np.empty(51)
+		for i in range(51):
+			f_2002[i] = f[i] * nd20t[i] * nd02t[i]
+		f_2003 = np.empty(51)
+		for i in range(51):
+			f_2003[i] = f[i] * nd20t[i] * nd03t[i]
+		f_2004 = np.empty(51)
+		for i in range(51):
+			f_2004[i] = f[i] * nd20t[i] * nd04t[i]
+		f_2005 = np.empty(51)
+		for i in range(51):
+			f_2005[i] = f[i] * nd20t[i] * nd05t[i]
+		f_2006 = np.empty(51)
+		for i in range(51):
+			f_2006[i] = f[i] * nd20t[i] * nd06t[i]
+		f_2007 = np.empty(51)
+		for i in range(51):
+			f_2007[i] = f[i] * nd20t[i] * nd07t[i]
+		f_2008 = np.empty(51)
+		for i in range(51):
+			f_2008[i] = f[i] * nd20t[i] * nd08t[i]
+		f_2009 = np.empty(51)
+		for i in range(51):
+			f_2009[i] = f[i] * nd20t[i] * nd09t[i]
+		# 3.0
+		f_30 = np.empty(51)
+		for i in range(51):
+			f_30[i] = f[i] * nd30t[i]
+		f_3001 = np.empty(51)
+		for i in range(51):
+			f_3001[i] = f[i] * nd30t[i] * nd01t[i]
+		f_3002 = np.empty(51)
+		for i in range(51):
+			f_3002[i] = f[i] * nd30t[i] * nd02t[i]
+		f_3003 = np.empty(51)
+		for i in range(51):
+			f_3003[i] = f[i] * nd30t[i] * nd03t[i]
+		f_3004 = np.empty(51)
+		for i in range(51):
+			f_3004[i] = f[i] * nd30t[i] * nd04t[i]
+		f_3005 = np.empty(51)
+		for i in range(51):
+			f_3005[i] = f[i] * nd30t[i] * nd05t[i]
+		f_3006 = np.empty(51)
+		for i in range(51):
+			f_3006[i] = f[i] * nd30t[i] * nd06t[i]
+		f_3007 = np.empty(51)
+		for i in range(51):
+			f_3007[i] = f[i] * nd30t[i] * nd07t[i]
+		f_3008 = np.empty(51)
+		for i in range(51):
+			f_3008[i] = f[i] * nd30t[i] * nd08t[i]
+		f_3009 = np.empty(51)
+		for i in range(51):
+			f_3009[i] = f[i] * nd30t[i] * nd09t[i]
+		# 4.0
+		f_40 = np.empty(51)
+		for i in range(51):
+			f_40[i] = f[i] * nd40t[i]
+		f_4001 = np.empty(51)
+		for i in range(51):
+			f_4001[i] = f[i] * nd40t[i] * nd01t[i]
+		f_4002 = np.empty(51)
+		for i in range(51):
+			f_4002[i] = f[i] * nd40t[i] * nd02t[i]
+		f_4003 = np.empty(51)
+		for i in range(51):
+			f_4003[i] = f[i] * nd40t[i] * nd03t[i]
+		f_4004 = np.empty(51)
+		for i in range(51):
+			f_4004[i] = f[i] * nd40t[i] * nd04t[i]
+		f_4005 = np.empty(51)
+		for i in range(51):
+			f_4005[i] = f[i] * nd40t[i] * nd05t[i]
+		f_4006 = np.empty(51)
+		for i in range(51):
+			f_4006[i] = f[i] * nd40t[i] * nd06t[i]
+		f_4007 = np.empty(51)
+		for i in range(51):
+			f_4007[i] = f[i] * nd40t[i] * nd07t[i]
+		f_4008 = np.empty(51)
+		for i in range(51):
+			f_4008[i] = f[i] * nd40t[i] * nd08t[i]
+		f_4009 = np.empty(51)
+		for i in range(51):
+			f_4009[i] = f[i] * nd40t[i] * nd09t[i]
+		
+		print("Brightness contrast with blue:")
+		print("0.1: " + str(brightness_contrast(f_01, blue47t)))
+		print("0.2: " + str(brightness_contrast(f_02, blue47t)))
+		print("0.3: " + str(brightness_contrast(f_03, blue47t)))
+		print("0.4: " + str(brightness_contrast(f_04, blue47t)))
+		print("0.5: " + str(brightness_contrast(f_05, blue47t)))
+		print("0.6: " + str(brightness_contrast(f_06, blue47t)))
+		print("0.7: " + str(brightness_contrast(f_07, blue47t)))
+		print("0.8: " + str(brightness_contrast(f_08, blue47t)))
+		print("0.9: " + str(brightness_contrast(f_09, blue47t)))
+		print("1.0: " + str(brightness_contrast(f_10, blue47t)))
+		print("1.0 + 0.1: " + str(brightness_contrast(f_1001, blue47t)))
+		print("1.0 + 0.2: " + str(brightness_contrast(f_1002, blue47t)))
+		print("1.0 + 0.3: " + str(brightness_contrast(f_1003, blue47t)))
+		print("1.0 + 0.4: " + str(brightness_contrast(f_1004, blue47t)))
+		print("1.0 + 0.5: " + str(brightness_contrast(f_1005, blue47t)))
+		print("1.0 + 0.6: " + str(brightness_contrast(f_1006, blue47t)))
+		print("1.0 + 0.7: " + str(brightness_contrast(f_1007, blue47t)))
+		print("1.0 + 0.8: " + str(brightness_contrast(f_1008, blue47t)))
+		print("1.0 + 0.9: " + str(brightness_contrast(f_1009, blue47t)))
+		print("2.0: " + str(brightness_contrast(f_20, blue47t)))
+		print("2.0 + 0.1: " + str(brightness_contrast(f_2001, blue47t)))
+		print("2.0 + 0.2: " + str(brightness_contrast(f_2002, blue47t)))
+		print("2.0 + 0.3: " + str(brightness_contrast(f_2003, blue47t)))
+		print("2.0 + 0.4: " + str(brightness_contrast(f_2004, blue47t)))
+		print("2.0 + 0.5: " + str(brightness_contrast(f_2005, blue47t)))
+		print("2.0 + 0.6: " + str(brightness_contrast(f_2006, blue47t)))
+		print("2.0 + 0.7: " + str(brightness_contrast(f_2007, blue47t)))
+		print("2.0 + 0.8: " + str(brightness_contrast(f_2008, blue47t)))
+		print("2.0 + 0.9: " + str(brightness_contrast(f_2009, blue47t)))
+		print("3.0: " + str(brightness_contrast(f_30, blue47t)))
+		print("3.0 + 0.1: " + str(brightness_contrast(f_3001, blue47t)))
+		print("3.0 + 0.2: " + str(brightness_contrast(f_3002, blue47t)))
+		print("3.0 + 0.3: " + str(brightness_contrast(f_3003, blue47t)))
+		print("3.0 + 0.4: " + str(brightness_contrast(f_3004, blue47t)))
+		print("3.0 + 0.5: " + str(brightness_contrast(f_3005, blue47t)))
+		print("3.0 + 0.6: " + str(brightness_contrast(f_3006, blue47t)))
+		print("3.0 + 0.7: " + str(brightness_contrast(f_3007, blue47t)))
+		print("3.0 + 0.8: " + str(brightness_contrast(f_3008, blue47t)))
+		print("3.0 + 0.9: " + str(brightness_contrast(f_3009, blue47t)))
+		print("4.0: " + str(brightness_contrast(f_40, blue47t)))
+		print("4.0 + 0.1: " + str(brightness_contrast(f_4001, blue47t)))
+		print("4.0 + 0.2: " + str(brightness_contrast(f_4002, blue47t)))
+		print("4.0 + 0.3: " + str(brightness_contrast(f_4003, blue47t)))
+		print("4.0 + 0.4: " + str(brightness_contrast(f_4004, blue47t)))
+		print("4.0 + 0.5: " + str(brightness_contrast(f_4005, blue47t)))
+		print("4.0 + 0.6: " + str(brightness_contrast(f_4006, blue47t)))
+		print("4.0 + 0.7: " + str(brightness_contrast(f_4007, blue47t)))
+		print("4.0 + 0.8: " + str(brightness_contrast(f_4008, blue47t)))
+		print("4.0 + 0.9: " + str(brightness_contrast(f_4009, blue47t)))
 	
-	# green brightness tests
-	green58_01 = np.empty(61)
-	for i in range(0, 61):
-		green58_01[i] = green58[i] + nd01[i]
-	green58_01t = np.empty(61)
-	for i in range(0, 61):
-		green58_01t[i] = math.exp(-green58_01[i])
-	green58_02 = np.empty(61)
-	for i in range(0, 61):
-		green58_02[i] = green58[i] + nd02[i]
-	green58_02t = np.empty(61)
-	for i in range(0, 61):
-		green58_02t[i] = math.exp(-green58_02[i])
-	green58_03 = np.empty(61)
-	for i in range(0, 61):
-		green58_03[i] = green58[i] + nd03[i]
-	green58_03t = np.empty(61)
-	for i in range(0, 61):
-		green58_03t[i] = math.exp(-green58_03[i])
-	green58_04 = np.empty(61)
-	for i in range(0, 61):
-		green58_04[i] = green58[i] + nd04[i]
-	green58_04t = np.empty(61)
-	for i in range(0, 61):
-		green58_04t[i] = math.exp(-green58_04[i])
-	green58_05 = np.empty(61)
-	for i in range(0, 61):
-		green58_05[i] = green58[i] + nd05[i]
-	green58_05t = np.empty(61)
-	for i in range(0, 61):
-		green58_05t[i] = math.exp(-green58_05[i])
-	green58_06 = np.empty(61)
-	for i in range(0, 61):
-		green58_06[i] = green58[i] + nd06[i]
-	green58_06t = np.empty(61)
-	for i in range(0, 61):
-		green58_06t[i] = math.exp(-green58_06[i])
-	green58_07 = np.empty(61)
-	for i in range(0, 61):
-		green58_07[i] = green58[i] + nd07[i]
-	green58_07t = np.empty(61)
-	for i in range(0, 61):
-		green58_07t[i] = math.exp(-green58_07[i])
-	green58_08 = np.empty(61)
-	for i in range(0, 61):
-		green58_08[i] = green58[i] + nd08[i]
-	green58_08t = np.empty(61)
-	for i in range(0, 61):
-		green58_08t[i] = math.exp(-green58_08[i])
-	green58_09 = np.empty(61)
-	for i in range(0, 61):
-		green58_09[i] = green58[i] + nd09[i]
-	green58_09t = np.empty(61)
-	for i in range(0, 61):
-		green58_09t[i] = math.exp(-green58_09[i])
-	green58_10 = np.empty(61)
-	for i in range(0, 61):
-		green58_10[i] = green58[i] + nd10[i]
-	green58_10t = np.empty(61)
-	for i in range(0, 61):
-		green58_10t[i] = math.exp(-green58_10[i])
-	green58_1001 = np.empty(61)
-	for i in range(0, 61):
-		green58_1001[i] = green58[i] + nd10[i] + nd01[i]
-	green58_1001t = np.empty(61)
-	for i in range(0, 61):
-		green58_1001t[i] = math.exp(-green58_1001[i])
-	green58_1002 = np.empty(61)
-	for i in range(0, 61):
-		green58_1002[i] = green58[i] + nd10[i] + nd02[i]
-	green58_1002t = np.empty(61)
-	for i in range(0, 61):
-		green58_1002t[i] = math.exp(-green58_1002[i])
-	green58_1003 = np.empty(61)
-	for i in range(0, 61):
-		green58_1003[i] = green58[i] + nd10[i] + nd03[i]
-	green58_1003t = np.empty(61)
-	for i in range(0, 61):
-		green58_1003t[i] = math.exp(-green58_1003[i])
-	green58_1004 = np.empty(61)
-	for i in range(0, 61):
-		green58_1004[i] = green58[i] + nd10[i] + nd04[i]
-	green58_1004t = np.empty(61)
-	for i in range(0, 61):
-		green58_1004t[i] = math.exp(-green58_1004[i])
-	green58_20 = np.empty(61)
-	for i in range(0, 61):
-		green58_20[i] = green58[i] + nd20[i]
-	green58_20t = np.empty(61)
-	for i in range(0, 61):
-		green58_20t[i] = math.exp(-green58_20[i])
+	# red
+	print("Red 25")
+	brightness_tests(red25t)
 	
-	# blue
-	blue47t = np.empty(61)
-	for i in range(0, 61):
-		blue47t[i] = math.exp(-blue47[i])
+	# yellow
+	print("")
+	print("Yellow 15")
+	brightness_tests(yellow15t)
 	
-	print("Brightness difference between blue and red:")
-	print("0.1: " + str(brightness_contrast(red25_01t, blue47t)))
-	print("0.2: " + str(brightness_contrast(red25_02t, blue47t)))
-	print("0.3: " + str(brightness_contrast(red25_03t, blue47t)))
-	print("0.4: " + str(brightness_contrast(red25_04t, blue47t)))
-	print("0.5: " + str(brightness_contrast(red25_05t, blue47t)))
-	print("0.6: " + str(brightness_contrast(red25_06t, blue47t)))
-	print("0.7: " + str(brightness_contrast(red25_07t, blue47t)))
-	print("0.8: " + str(brightness_contrast(red25_08t, blue47t)))
-	print("0.9: " + str(brightness_contrast(red25_09t, blue47t)))
-	print("1.0: " + str(brightness_contrast(red25_10t, blue47t)))
-	print("1.0 + 0.1: " + str(brightness_contrast(red25_1001t, blue47t)))
-	print("1.0 + 0.2: " + str(brightness_contrast(red25_1002t, blue47t)))
-	print("1.0 + 0.3: " + str(brightness_contrast(red25_1003t, blue47t)))
-	print("1.0 + 0.4: " + str(brightness_contrast(red25_1004t, blue47t)))
-	print("2.0: " + str(brightness_contrast(red25_20t, blue47t)))
-	print("Brightness difference between blue and yellow:")
-	print("0.1: " + str(brightness_contrast(yellow15_01t, blue47t)))
-	print("0.2: " + str(brightness_contrast(yellow15_02t, blue47t)))
-	print("0.3: " + str(brightness_contrast(yellow15_03t, blue47t)))
-	print("0.4: " + str(brightness_contrast(yellow15_04t, blue47t)))
-	print("0.5: " + str(brightness_contrast(yellow15_05t, blue47t)))
-	print("0.6: " + str(brightness_contrast(yellow15_06t, blue47t)))
-	print("0.7: " + str(brightness_contrast(yellow15_07t, blue47t)))
-	print("0.8: " + str(brightness_contrast(yellow15_08t, blue47t)))
-	print("0.9: " + str(brightness_contrast(yellow15_09t, blue47t)))
-	print("1.0: " + str(brightness_contrast(yellow15_10t, blue47t)))
-	print("1.0 + 0.1: " + str(brightness_contrast(yellow15_1001t, blue47t)))
-	print("1.0 + 0.2: " + str(brightness_contrast(yellow15_1002t, blue47t)))
-	print("1.0 + 1.0: " + str(brightness_contrast(yellow15_1010t, blue47t)))
-	print("2.0: " + str(brightness_contrast(yellow15_20t, blue47t)))
-	print("2.0 + 0.1: " + str(brightness_contrast(yellow15_2001t, blue47t)))
-	print("2.0 + 0.2: " + str(brightness_contrast(yellow15_2002t, blue47t)))
-	print("2.0 + 0.3: " + str(brightness_contrast(yellow15_2003t, blue47t)))
-	print("2.0 + 0.4: " + str(brightness_contrast(yellow15_2004t, blue47t)))
-	print("2.0 + 0.5: " + str(brightness_contrast(yellow15_2005t, blue47t)))
-	print("2.0 + 0.6: " + str(brightness_contrast(yellow15_2006t, blue47t)))
-	print("2.0 + 0.7: " + str(brightness_contrast(yellow15_2007t, blue47t)))
-	print("Brightness difference between blue and green:")
-	print("0.1: " + str(brightness_contrast(green58_01t, blue47t)))
-	print("0.2: " + str(brightness_contrast(green58_02t, blue47t)))
-	print("0.3: " + str(brightness_contrast(green58_03t, blue47t)))
-	print("0.4: " + str(brightness_contrast(green58_04t, blue47t)))
-	print("0.5: " + str(brightness_contrast(green58_05t, blue47t)))
-	print("0.6: " + str(brightness_contrast(green58_06t, blue47t)))
-	print("0.7: " + str(brightness_contrast(green58_07t, blue47t)))
-	print("0.8: " + str(brightness_contrast(green58_08t, blue47t)))
-	print("0.9: " + str(brightness_contrast(green58_09t, blue47t)))
-	print("1.0: " + str(brightness_contrast(green58_10t, blue47t)))
-	print("1.0 + 0.1: " + str(brightness_contrast(green58_1001t, blue47t)))
-	print("1.0 + 0.2: " + str(brightness_contrast(green58_1002t, blue47t)))
-	print("1.0 + 0.3: " + str(brightness_contrast(green58_1003t, blue47t)))
-	print("1.0 + 0.4: " + str(brightness_contrast(green58_1004t, blue47t)))
-	print("2.0: " + str(brightness_contrast(green58_20t, blue47t)))
+	# green
+	print("")
+	print("Green 58")
+	brightness_tests(green58t)
+	
+	# gray
+	print("")
+	print("Gray")
+	brightness_tests(placeholder)
+
+# These are used by both --blackbody and --kodak, so we keep them out here.
+# red 25
+red25_0 = np.empty(51)
+for i in range(51):
+	red25_0[i] = red25t[i] * nd10t[i] * nd05t[i]
+red25_03 = np.empty(51)
+for i in range(51):
+	red25_03[i] = red25_0[i] * nd03t[i]
+red25_07 = np.empty(51)
+for i in range(51):
+	red25_07[i] = red25_0[i] * nd07t[i]
+red25_10 = np.empty(51)
+for i in range(51):
+	red25_10[i] = red25_0[i] * nd10t[i]
+
+# yellow 15
+yellow15_0 = np.empty(51)
+for i in range(51):
+	yellow15_0[i] = yellow15t[i] * nd20t[i]
+yellow15_03 = np.empty(51)
+for i in range(51):
+	yellow15_03[i] = yellow15_0[i] * nd03t[i]
+yellow15_07 = np.empty(51)
+for i in range(51):
+	yellow15_07[i] = yellow15_0[i] * nd07t[i]
+yellow15_10 = np.empty(51)
+for i in range(51):
+	yellow15_10[i] = yellow15_0[i] * nd10t[i]
+
+# green 58
+green58_0 = np.empty(51)
+for i in range(51):
+	green58_0[i] = green58t[i] * nd10t[i] * nd03t[i]
+green58_03 = np.empty(51)
+for i in range(51):
+	green58_03[i] = green58_0[i] * nd03t[i]
+green58_07 = np.empty(51)
+for i in range(51):
+	green58_07[i] = green58_0[i] * nd07t[i]
+green58_10 = np.empty(51)
+for i in range(51):
+	green58_10[i] = green58_0[i] * nd10t[i]
+
+# blue 47
+blue47_0 = blue47t # keep this name for convenience
+blue47_03 = np.empty(51)
+for i in range(51):
+	blue47_03[i] = blue47_0[i] * nd03t[i]
+blue47_07 = np.empty(51)
+for i in range(51):
+	blue47_07[i] = blue47_0[i] * nd07t[i]
+blue47_10 = np.empty(51)
+for i in range(51):
+	blue47_10[i] = blue47_0[i] * nd10t[i]
+
+# gray
+gray_0 = np.empty(51)
+for i in range(51):
+	gray_0[i] = nd20t[i] * nd01t[i]
+gray_03 = np.empty(51)
+for i in range(51):
+	gray_03[i] = gray_0[i] * nd03t[i]
+gray_07 = np.empty(51)
+for i in range(51):
+	gray_07[i] = gray_0[i] * nd07t[i]
+gray_10 = np.empty(51)
+for i in range(51):
+	gray_10[i] = gray_0[i] * nd10t[i]
+
+# used by both --kodak and --munsell
+def color_disc(f0, f1, f2, f3, s0, s1, s2, s3, correct=35, trials=40, order=0, alternative='greater'):
+	d = 0 # different
+	s = 0 # same
+	counter = 0
+	
+	for i in range(0, 4):
+		if (i == 0):
+			flevel = f0
+		elif (i == 1):
+			flevel = f1
+		elif (i == 2):
+			flevel = f2
+		elif (i == 3):
+			flevel = f3
+		for j in range(0, 4):
+			if (j == 0):
+				slevel = s0
+			elif (j == 1):
+				slevel = s1
+			elif (j == 2):
+				slevel = s2
+			elif (j == 3):
+				slevel = s3
+			contrast = color_contrast(flevel, slevel)
+			box[counter][order] = contrast
+			#print(box[counter][order])
+			print(str(i) + " vs. " + str(j) + ": " + str(contrast))
+			if (contrast < 1):
+				s += 1
+			else:
+				d += 1
+			counter += 1
+	print("Different: " + str(d))
+	print("Same: " + str(s))
+	if (l1 == m1):
+		binomial = binomtest(correct, trials, p=(d + s/2)/16, alternative=alternative)
+	else:
+		binomial = binomtest(correct, trials, p=(d + s/2)/16, alternative=alternative)
+	print("P-value: " + str(binomial.pvalue))
+	
+	# median contrast
+	#print(box)
+	#print([box[0][order], box[1][order], box[2][order], box[3][order], box[4][order], box[5][order], box[6][order], box[7][order], box[8][order], box[9][order], box[10][order], box[11][order], box[12][order], box[13][order], box[14][order], box[15][order]])
+	mc = statistics.median([box[0][order], box[1][order], box[2][order], box[3][order], box[4][order], box[5][order], box[6][order], box[7][order], box[8][order], box[9][order], box[10][order], box[11][order], box[12][order], box[13][order], box[14][order], box[15][order]])
+	print("Median contrast: " + str(mc))
+	print("")
 
 if (args.kodak):
-	# red 25
-	red25e = np.empty(61)
-	for i in range(0, 61):
-		red25e[i] = red25[i] + nd10[i] + nd01[i]
-	red25e_0 = np.empty(61)
-	for i in range(0, 61):
-		red25e_0[i] = math.exp(-red25e[i])
-	red25e_03 = np.empty(61)
-	for i in range(0, 61):
-		red25e_03[i] = math.exp(-(red25e[i] + nd03[i]))
-	red25e_07 = np.empty(61)
-	for i in range(0, 61):
-		red25e_07[i] = math.exp(-(red25e[i] + nd07[i]))
-	red25e_10 = np.empty(61)
-	for i in range(0, 61):
-		red25e_10[i] = math.exp(-(red25e[i] + nd10[i]))
 	
-	# yellow 15
-	yellow15e = np.empty(61)
-	for i in range(0, 61):
-		yellow15e[i] = yellow15[i] + nd20[i] + nd05[i]
-	yellow15e_0 = np.empty(61)
-	for i in range(0, 61):
-		yellow15e_0[i] = math.exp(-yellow15e[i])
-	yellow15e_03 = np.empty(61)
-	for i in range(0, 61):
-		yellow15e_03[i] = math.exp(-(yellow15e[i] + nd03[i]))
-	yellow15e_07 = np.empty(61)
-	for i in range(0, 61):
-		yellow15e_07[i] = math.exp(-(yellow15e[i] + nd07[i]))
-	yellow15e_10 = np.empty(61)
-	for i in range(0, 61):
-		yellow15e_10[i] = math.exp(-(yellow15e[i] + nd10[i]))
-	
-	# green 58
-	green58e = np.empty(61)
-	for i in range(0, 61):
-		green58e[i] = green58[i] + nd10[i] + nd03[i]
-	green58e_0 = np.empty(61)
-	for i in range(0, 61):
-		green58e_0[i] = math.exp(-green58e[i])
-	green58e_03 = np.empty(61)
-	for i in range(0, 61):
-		green58e_03[i] = math.exp(-(green58e[i] + nd03[i]))
-	green58e_07 = np.empty(61)
-	for i in range(0, 61):
-		green58e_07[i] = math.exp(-(green58e[i] + nd07[i]))
-	green58e_10 = np.empty(61)
-	for i in range(0, 61):
-		green58e_10[i] = math.exp(-(green58e[i] + nd10[i]))
-	
-	# blue 47
-	blue47_0 = np.empty(61)
-	for i in range(0, 61):
-		blue47_0[i] = math.exp(-blue47[i])
-	blue47_03 = np.empty(61)
-	for i in range(0, 61):
-		blue47_03[i] = math.exp(-(blue47[i] + nd03[i]))
-	blue47_07 = np.empty(61)
-	for i in range(0, 61):
-		blue47_07[i] = math.exp(-(blue47[i] + nd07[i]))
-	blue47_10 = np.empty(61)
-	for i in range(0, 61):
-		blue47_10[i] = math.exp(-(blue47[i] + nd10[i]))
+	# plot
+	xvalues = np.empty(51)
+	for i in range(51):
+		xvalues[i] = i*10 + 300
+	plt.subplot(3, 2, 1)
+	plt.plot(xvalues, red25_0*100, 'r')
+	plt.plot(xvalues, red25_03*100, 'r')
+	plt.plot(xvalues, red25_07*100, 'r')
+	plt.plot(xvalues, red25_10*100, 'r')
+	plt.title("Red 25")
+	plt.subplot(3, 2, 2)
+	plt.plot(xvalues, yellow15_0*100, 'y')
+	plt.plot(xvalues, yellow15_03*100, 'y')
+	plt.plot(xvalues, yellow15_07*100, 'y')
+	plt.plot(xvalues, yellow15_10*100, 'y')
+	plt.title("Yellow 15")
+	plt.subplot(3, 2, 3)
+	plt.plot(xvalues, green58_0*100, 'g')
+	plt.plot(xvalues, green58_03*100, 'g')
+	plt.plot(xvalues, green58_07*100, 'g')
+	plt.plot(xvalues, green58_10*100, 'g')
+	plt.title("Green 58")
+	plt.subplot(3, 2, 4)
+	plt.plot(xvalues, blue47_0*100, 'b')
+	plt.plot(xvalues, blue47_03*100, 'b')
+	plt.plot(xvalues, blue47_07*100, 'b')
+	plt.plot(xvalues, blue47_10*100, 'b')
+	plt.title("Blue 47")
+	plt.subplot(3, 2, 5)
+	plt.plot(xvalues, gray_0*100, color='gray')
+	plt.plot(xvalues, gray_03*100, color='gray')
+	plt.plot(xvalues, gray_07*100, color='gray')
+	plt.plot(xvalues, gray_10*100, color='gray')
+	plt.title("Gray")
+	plt.show()
 	
 	# brightness levels and color space coordinates
 	red25l = np.empty(4)
 	red25cs = np.empty(4)
 	red25cs1 = np.empty(4)
 	print("Red 25 (+ 1.0 + 0.1)")
-	red25data = spectral_rendering(red25e_0)
+	red25data = spectral_rendering(red25_0)
 	red25l[0] = red25data[0]
 	red25cs[0] = red25data[1]
 	red25cs1[0] = red25data[2]
 	print("+ 0.3")
-	red25data = spectral_rendering(red25e_03)
+	red25data = spectral_rendering(red25_03)
 	red25l[1] = red25data[0]
 	red25cs[1] = red25data[1]
 	red25cs1[1] = red25data[2]
 	print("+ 0.7")
-	red25data = spectral_rendering(red25e_07)
+	red25data = spectral_rendering(red25_07)
 	red25l[2] = red25data[0]
 	red25cs[2] = red25data[1]
 	red25cs1[2] = red25data[2]
 	print("+ 1.0")
-	red25data = spectral_rendering(red25e_10)
+	red25data = spectral_rendering(red25_10)
 	red25l[3] = red25data[0]
 	red25cs[3] = red25data[1]
 	red25cs1[3] = red25data[2]
@@ -3435,22 +4772,22 @@ if (args.kodak):
 	yellow15cs = np.empty(4)
 	yellow15cs1 = np.empty(4)
 	print("Yellow 15 (+ 2.0 + 0.5)")
-	yellow15data = spectral_rendering(yellow15e_0)
+	yellow15data = spectral_rendering(yellow15_0)
 	yellow15l[0] = yellow15data[0]
 	yellow15cs[0] = yellow15data[1]
 	yellow15cs1[0] = yellow15data[2]
 	print("+ 0.3")
-	yellow15data = spectral_rendering(yellow15e_03)
+	yellow15data = spectral_rendering(yellow15_03)
 	yellow15l[1] = yellow15data[0]
 	yellow15cs[1] = yellow15data[1]
 	yellow15cs1[1] = yellow15data[2]
 	print("+ 0.7")
-	yellow15data = spectral_rendering(yellow15e_07)
+	yellow15data = spectral_rendering(yellow15_07)
 	yellow15l[2] = yellow15data[0]
 	yellow15cs[2] = yellow15data[1]
 	yellow15cs1[2] = yellow15data[2]
 	print("+ 1.0")
-	yellow15data = spectral_rendering(yellow15e_10)
+	yellow15data = spectral_rendering(yellow15_10)
 	yellow15l[3] = yellow15data[0]
 	yellow15cs[3] = yellow15data[1]
 	yellow15cs1[3] = yellow15data[2]
@@ -3459,22 +4796,22 @@ if (args.kodak):
 	green58cs = np.empty(4)
 	green58cs1 = np.empty(4)
 	print("Green 58 (+ 1.0 + 0.3)")
-	green58data = spectral_rendering(green58e_0)
+	green58data = spectral_rendering(green58_0)
 	green58l[0] = green58data[0]
 	green58cs[0] = green58data[1]
 	green58cs1[0] = green58data[2]
 	print("+ 0.3")
-	green58data = spectral_rendering(green58e_03)
+	green58data = spectral_rendering(green58_03)
 	green58l[1] = green58data[0]
 	green58cs[1] = green58data[1]
 	green58cs1[1] = green58data[2]
 	print("+ 0.7")
-	green58data = spectral_rendering(green58e_07)
+	green58data = spectral_rendering(green58_07)
 	green58l[2] = green58data[0]
 	green58cs[2] = green58data[1]
 	green58cs1[2] = green58data[2]
 	print("+ 1.0")
-	green58data = spectral_rendering(green58e_10)
+	green58data = spectral_rendering(green58_10)
 	green58l[3] = green58data[0]
 	green58cs[3] = green58data[1]
 	green58cs1[3] = green58data[2]
@@ -3503,304 +4840,127 @@ if (args.kodak):
 	blue47cs[3] = blue47data[1]
 	blue47cs1[3] = blue47data[2]
 	
+	grayl = np.empty(4)
+	graycs = np.empty(4)
+	graycs1 = np.empty(4)
+	print("Gray")
+	graydata = spectral_rendering(gray_0)
+	grayl[0] = graydata[0]
+	graycs[0] = graydata[1]
+	graycs1[0] = graydata[2]
+	print("+ 0.3")
+	graydata = spectral_rendering(gray_03)
+	grayl[1] = graydata[0]
+	graycs[1] = graydata[1]
+	graycs1[1] = graydata[2]
+	print("+ 0.7")
+	graydata = spectral_rendering(gray_07)
+	grayl[2] = graydata[0]
+	graycs[2] = graydata[1]
+	graycs1[2] = graydata[2]
+	print("+ 1.0")
+	graydata = spectral_rendering(gray_10)
+	grayl[3] = graydata[0]
+	graycs[3] = graydata[1]
+	graycs1[3] = graydata[2]
+	
 	# brightness differences between colors
 	# We want to know both the direction and the strength of the difference
 	# to judge whether it could be reliably used as a cue.
 	
+	# function
+	def brightness_disc(f0, f1, f2, f3, fl, s0, s1, s2, s3, sl, correct=35, trials=40): 
+		fb = 0 # first brighter
+		sb = 0 # second brighter
+		equal = 0
+		# first set
+		for i in range(0, 4):
+			if (i == 0):
+				flevel = f0
+			elif (i == 1):
+				flevel = f1
+			elif (i == 2):
+				flevel = f2
+			elif (i == 3):
+				flevel = f3
+			# second set
+			for j in range(0, 4):
+				if (j == 0):
+					slevel = s0
+				elif (j == 1):
+					slevel = s1
+				elif (j == 2):
+					slevel = s2
+				elif (j == 3):
+					slevel = s3
+				diff = fl[i] - sl[j]
+				contrast = brightness_contrast(flevel, slevel)
+				if (contrast >= 1):
+					if (diff > 0):
+						fb += 1
+					elif (diff < 0):
+						sb += 1
+				else:
+					equal += 1
+		print("First brighter: " + str(fb))
+		print("Second brighter: " + str(sb))
+		print("Equal: " + str(equal))
+		print("Expected % correct: " + str(100*(max(fb, sb) + equal/2) / 16) + "% (" + str(100*max(fb, sb) / 16) + "-" + str(100*(max(fb, sb) + equal) / 16) + "%)")
+		binomial = binomtest(correct, trials, (max(fb, sb) + equal/2) / 16, alternative='greater')
+		print("P-value: " + str(binomial.pvalue))
+		print("")
+	
 	# red-yellow
-	ry = 0 # red brighter
-	yr = 0 # yellow brighter
-	ryequal = 0
-	for i in range(0, 4):
-		if (i == 0):
-			rlevel = red25e
-		elif (i == 1):
-			rlevel = red25e_03
-		elif (i == 2):
-			rlevel = red25e_07
-		elif (i == 3):
-			rlevel = red25e_10
-		for j in range(0, 4):
-			if (j == 0):
-				ylevel = yellow15e
-			elif (j == 1):
-				ylevel = yellow15e_03
-			elif (j == 2):
-				ylevel = yellow15e_07
-			elif (j == 3):
-				ylevel = yellow15e_10
-			diff = red25l[i] - yellow15l[j]
-			contrast = brightness_contrast(rlevel, ylevel)
-			if (contrast >= 1):
-				if (diff > 0):
-					ry += 1
-				elif (diff < 0):
-					yr += 1
-			else:
-				ryequal += 1
-	print("R-Y brightness differences:")
-	print("Red brighter: " + str(ry))
-	print("Yellow brighter: " + str(yr))
-	print("Equal: " + str(ryequal))
-	print("Expected % correct: " + str(100*max(ry, yr) / 16) + "-" + str(100*(max(ry, yr) + ryequal) / 16) + "%")
-	# what's this do?
-	binomial = binomtest(35, 40, (max(ry, yr) + ryequal/2) / 16, alternative='greater')
-	print("P-value: " + str(binomial.pvalue))
-	print("") # break up for readability
+	print("R-Y")
+	brightness_disc(red25_0, red25_03, red25_07, red25_10, red25l, yellow15_0, yellow15_03, yellow15_07, yellow15_10, yellow15l)
 	
 	# red-green
-	rg = 0 # red brighter
-	gr = 0 # green brighter
-	rgequal = 0
-	for i in range(0, 4):
-		if (i == 0):
-			rlevel = red25e
-		elif (i == 1):
-			rlevel = red25e_03
-		elif (i == 2):
-			rlevel = red25e_07
-		elif (i == 3):
-			rlevel = red25e_10
-		for j in range(0, 4):
-			if (j == 0):
-				glevel = green58e
-			elif (j == 1):
-				glevel = green58e_03
-			elif (j == 2):
-				glevel = green58e_07
-			elif (j == 3):
-				glevel = green58e_10
-			diff = red25l[i] - green58l[j]
-			contrast = brightness_contrast(rlevel, glevel)
-			if (contrast >= 1):
-				if (diff > 0):
-					rg += 1
-				elif (diff < 0):
-					gr += 1
-			else:
-				rgequal += 1
-	print("R-G brightness differences:")
-	print("Red brighter: " + str(rg))
-	print("Green brighter: " + str(gr))
-	print("Equal: " + str(rgequal))
-	print("Expected % correct: " + str(100*max(rg, gr) / 16) + "-" + str(100*(max(rg, gr) + rgequal) / 16) + "%")
-	binomial = binomtest(35, 40, (max(rg, gr) + rgequal/2) / 16, alternative='greater')
-	print("P-value: " + str(binomial.pvalue))
-	print("")
+	print("R-G")
+	brightness_disc(red25_0, red25_03, red25_07, red25_10, red25l, green58_0, green58_03, green58_07, green58_10, green58l)
 	
 	# red-blue
-	rb = 0 # red brighter
-	br = 0 # blue brighter
-	rbequal = 0
-	for i in range(0, 4):
-		if (i == 0):
-			rlevel = red25e
-		elif (i == 1):
-			rlevel = red25e_03
-		elif (i == 2):
-			rlevel = red25e_07
-		elif (i == 3):
-			rlevel = red25e_10
-		for j in range(0, 4):
-			if (j == 0):
-				blevel = blue47
-			elif (j == 1):
-				blevel = blue47_03
-			elif (j == 2):
-				blevel = blue47_07
-			elif (j == 3):
-				blevel = blue47_10
-			diff = red25l[i] - blue47l[j]
-			contrast = brightness_contrast(rlevel, blevel)
-			if (contrast >= 1):
-				if (diff > 0):
-					rb += 1
-				elif (diff < 0):
-					br += 1
-			else:
-				rbequal += 1
-	print("R-B brightness differences:")
-	print("Red brighter: " + str(rb))
-	print("Blue brighter: " + str(br))
-	print("Equal: " + str(rbequal))
-	print("Expected % correct: " + str(100*max(rb, br) / 16) + "-" + str(100*(max(rb, br) + rbequal) / 16) + "%")
-	binomial = binomtest(35, 40, (max(rb, br) + rbequal/2) / 16, alternative='greater')
-	print("P-value: " + str(binomial.pvalue))
-	print("")
+	print("R-B")
+	brightness_disc(red25_0, red25_03, red25_07, red25_10, red25l, blue47_0, blue47_03, blue47_07, blue47_10, blue47l)
 	
 	# yellow-green
-	yg = 0 # yellow brighter
-	gy = 0 # green brighter
-	ygequal = 0
-	for i in range(0, 4):
-		if (i == 0):
-			ylevel = yellow15e
-		elif (i == 1):
-			ylevel = yellow15e_03
-		elif (i == 2):
-			ylevel = yellow15e_07
-		elif (i == 3):
-			ylevel = yellow15e_10
-		for j in range(0, 4):
-			if (j == 0):
-				glevel = green58e
-			elif (j == 1):
-				glevel = green58e_03
-			elif (j == 2):
-				glevel = green58e_07
-			elif (j == 3):
-				glevel = green58e_10
-			diff = yellow15l[i] - green58l[j]
-			contrast = brightness_contrast(ylevel, glevel)
-			if (contrast >= 1):
-				if (diff > 0):
-					yg += 1
-				elif (diff < 0):
-					gy += 1
-			else:
-				ygequal += 1
-	print("Y-G brightness differences:")
-	print("Yellow brighter: " + str(yg))
-	print("Green brighter: " + str(gy))
-	print("Equal: " + str(ygequal))
-	print("Expected % correct: " + str(100*max(yg, gy) / 16) + "-" + str(100*(max(yg, gy) + ygequal) / 16) + "%")
-	binomial = binomtest(35, 40, (max(yg, gy) + ygequal/2) / 16, alternative='greater')
-	print("P-value: " + str(binomial.pvalue))
-	print("")
+	print("Y-G")
+	brightness_disc(yellow15_0, yellow15_03, yellow15_07, yellow15_10, yellow15l, green58_0, green58_03, green58_07, green58_10, green58l)
 	
 	# yellow-blue
-	yb = 0 # yellow brighter
-	by = 0 # blue brighter
-	ybequal = 0
-	for i in range(0, 4):
-		if (i == 0):
-			ylevel = yellow15e
-		elif (i == 1):
-			ylevel = yellow15e_03
-		elif (i == 2):
-			ylevel = yellow15e_07
-		elif (i == 3):
-			ylevel = yellow15e_10
-		for j in range(0, 4):
-			if (j == 0):
-				blevel = blue47
-			elif (j == 1):
-				blevel = blue47_03
-			elif (j == 2):
-				blevel = blue47_07
-			elif (j == 3):
-				blevel = blue47_10
-			diff = yellow15l[i] - blue47l[j]
-			contrast = brightness_contrast(ylevel, blevel)
-			if (contrast >= 1):
-				if (diff > 0):
-					yb += 1
-				elif (diff < 0):
-					by += 1
-			else:
-				ybequal += 1
-	print("Y-B brightness differences:")
-	print("Yellow brighter: " + str(yb))
-	print("Blue brighter: " + str(by))
-	print("Equal: " + str(ybequal))
-	print("Expected % correct: " + str(100*max(yb, by) / 16) + "-" + str(100*(max(yb, by) + ybequal) / 16) + "%")
-	binomial = binomtest(35, 40, (max(yb, by) + ybequal/2) / 16, alternative='greater')
-	print("P-value: " + str(binomial.pvalue))
-	print("")
+	print("Y-B")
+	brightness_disc(yellow15_0, yellow15_03, yellow15_07, yellow15_10, yellow15l, blue47_0, blue47_03, blue47_07, blue47_10, blue47l)
 	
 	# green-blue
-	gb = 0 # green brighter
-	bg = 0 # blue brighter
-	gbequal = 0
-	for i in range(0, 4):
-		if (i == 0):
-			glevel = green58e
-		elif (i == 1):
-			glevel = green58e_03
-		elif (i == 2):
-			glevel = green58e_07
-		elif (i == 3):
-			glevel = green58e_10
-		for j in range(0, 4):
-			if (j == 0):
-				blevel = blue47
-			elif (j == 1):
-				blevel = blue47_03
-			elif (j == 2):
-				blevel = blue47_07
-			elif (j == 3):
-				blevel = blue47_10
-			diff = green58l[i] - blue47l[j]
-			contrast = brightness_contrast(glevel, blevel)
-			if (contrast >= 1):
-				if (diff > 0):
-					gb += 1
-				elif (diff < 0):
-					bg += 1
-			else:
-				gbequal += 1
-	print("G-B brightness differences:")
-	print("Green brighter: " + str(gb))
-	print("Blue brighter: " + str(bg))
-	print("Equal: " + str(gbequal))
-	print("Expected % correct: " + str(100*max(gb, bg) / 16) + "-" + str(100*(max(gb, bg) + gbequal) / 16) + "%")
-	binomial = binomtest(35, 40, (max(gb, bg) + gbequal/2) / 16, alternative='greater')
-	print("P-value: " + str(binomial.pvalue))
-	print("")
+	print("G-B")
+	brightness_disc(green58_0, green58_03, green58_07, green58_10, green58l, blue47_0, blue47_03, blue47_07, blue47_10, blue47l)
 	
-	# best expected performance
-	rymax = max(ry, yr) + ryequal / 2
-	rgmax = max(rg, gr) + rgequal / 2
-	rbmax = max(rb, br) + rbequal / 2
-	ygmax = max(yg, gy) + ygequal / 2
-	ybmax = max(yb, by) + ybequal / 2
-	gbmax = max(gb, bg) + gbequal / 2
+	# colors vs. gray
+	
+	# red
+	print("Red vs. gray")
+	brightness_disc(red25_0, red25_03, red25_07, red25_10, red25l, gray_0, gray_03, gray_07, gray_10, grayl, correct=68, trials=80)
+	
+	# yellow
+	print("Yellow vs. gray")
+	brightness_disc(yellow15_0, yellow15_03, yellow15_07, yellow15_10, yellow15l, gray_0, gray_03, gray_07, gray_10, grayl, correct=68, trials=80)
+	
+	# green
+	print("Green vs. gray")
+	brightness_disc(green58_0, green58_03, green58_07, green58_10, green58l, gray_0, gray_03, gray_07, gray_10, grayl, correct=68, trials=80)
+	
+	# blue
+	print("Blue vs. gray")
+	brightness_disc(blue47_0, blue47_03, blue47_07, blue47_10, blue47l, gray_0, gray_03, gray_07, gray_10, grayl, correct=68, trials=80)
 	
 	# plot
-	x = np.array([
-		"B+1.0",
-		"G+1.0",
-		"Y+1.0",
-		"R+1.0",
-		"B+0.7",
-		"G+0.7",
-		"Y+0.7",
-		"R+0.7",
-		"B+0.3",
-		"G+0.3",
-		"Y+0.3",
-		"R+0.3",
-		"B",
-		"G",
-		"Y",
-		"R"
-	])
-	y = np.array([
-		blue47l[3],
-		green58l[3],
-		yellow15l[3],
-		red25l[3],
-		blue47l[2],
-		green58l[2],
-		yellow15l[2],
-		red25l[2],
-		blue47l[1],
-		green58l[1],
-		yellow15l[1],
-		red25l[1],
-		blue47l[0],
-		green58l[0],
-		yellow15l[0],
-		red25l[0]
-	])
 	x = np.array([0.0, 0.3, 0.7, 1.0])
-	plt.plot(x, red25l, marker='o', linestyle='-', color='0.3', mec='k', label="red 25")
-	plt.plot(x, yellow15l, marker='s', linestyle='-', color='0.7', mfc='w', mec='k', label="yellow 15")
-	plt.plot(x, green58l, marker='^', linestyle='-', color='0.5', mec='k', label="green 58")
-	plt.plot(x, blue47l, 'D-k', label="blue 47")
+	plt.plot(x, red25l, 'sr', mec='k', label="red 25")
+	plt.plot(x, yellow15l, 'Dy', mec='k', label="yellow 15")
+	plt.plot(x, green58l, '^g', mec='k', label="green 58")
+	plt.plot(x, blue47l, 'ob', mec='k', label="blue 47")
+	plt.plot(x, grayl, marker='v', linestyle='', color='gray', mec='k', label="gray")
 	plt.xlabel("Filter optical density")
 	plt.ylabel("Perceived brightness")
-	plt.yscale("log")
 	plt.legend()
 	plt.show()
 	
@@ -3812,19 +4972,21 @@ if (args.kodak):
 	# the x-axis and brightness on the y-axis. Not sure how much this tells us
 	# though.
 	if (l1 == m1):
-		plt.plot(red25cs, red25l, marker='o', linestyle='', color='0.3', mec='k', label="red 25")
-		plt.plot(yellow15cs, yellow15l, 'sw', mec='k', label="yellow 15")
-		plt.plot(green58cs, green58l, marker='^', linestyle='', color='0.5', mec='k', label="green 58")
-		plt.plot(blue47cs, blue47l, 'Dk', label="blue 47")
+		plt.plot(red25cs, red25l, 'sr', mec='k', label="red 25")
+		plt.plot(yellow15cs, yellow15l, 'Dy', mec='k', label="yellow 15")
+		plt.plot(green58cs, green58l, '^g', mec='k', label="green 58")
+		plt.plot(blue47cs, blue47l, 'ob', mec='k', label="blue 47")
+		plt.plot(graycs, grayl, marker='v', linestyle='', color='gray', mec='k', label="gray")
 		plt.xlabel("Chromaticity ((L-S)/(L+S))")
 		plt.ylabel("Brightness (L)")
 		plt.legend()
 		plt.show()
 	else:
-		plt.plot(red25cs, red25cs1, marker='o', linestyle='', color='0.3', mec='k', label="red 25")
-		plt.plot(yellow15cs, yellow15cs1, 'sw', mec='k', label="yellow 15")
-		plt.plot(green58cs, green58cs1, marker='^', linestyle='', color='0.5', mec='k', label="green 58")
-		plt.plot(blue47cs, blue47cs1, 'Dk', label="blue 47")
+		plt.plot(red25cs, red25cs1, 'sr', mec='k', label="red 25")
+		plt.plot(yellow15cs, yellow15cs1, 'Dy', mec='k', label="yellow 15")
+		plt.plot(green58cs, green58cs1, '^g', mec='k', label="green 58")
+		plt.plot(blue47cs, blue47cs1, 'ob', mec='k', label="blue 47")
+		plt.plot(graycs, graycs1, marker='v', linestyle='', color='gray', mec='k', label="gray")
 		plt.xlabel("(L-S)/(L+M+S)")
 		plt.ylabel("(M-0.5(L+S))/(L+M+S)")
 		xborder = np.array([-math.sqrt(1/2), 0, math.sqrt(1/2), -math.sqrt(1/2)])
@@ -3842,322 +5004,28 @@ if (args.kodak):
 	box = np.empty((16, 6))
 	
 	# R-Y
-	xpos = 0 # L>S
-	xneg = 0 # S>L
-	ypos = 0 # M>(L+S) (trichromacy only, values for dichromacy are redundant to the above)
-	yneg = 0 # (L+S)>M (trichromacy only)
-	s = 0 # same
-	counter = 0
-	
 	print("R-Y")
-	for i in range(0, 4):
-		if (i == 0):
-			rlevel = red25e
-		elif (i == 1):
-			rlevel = red25e_03
-		elif (i == 2):
-			rlevel = red25e_07
-		elif (i == 3):
-			rlevel = red25e_10
-		for j in range(0, 4):
-			if (j == 0):
-				ylevel = yellow15e
-			elif (j == 1):
-				ylevel = yellow15e_03
-			elif (j == 2):
-				ylevel = yellow15e_07
-			elif (j == 3):
-				ylevel = yellow15e_10
-			diffx = red25cs[i] - yellow15cs[j]
-			diffy = red25cs1[i] - yellow15cs1[j]
-			contrast = color_contrast(rlevel, ylevel)
-			box[counter][0] = contrast
-			print("R" + str(i) + " vs. Y" + str(j) + ": " + str(contrast))
-			if (contrast < 1):
-				s += 1
-			else:
-				if (diffx > 0):
-					xpos += 1
-				elif (diffx < 0):
-					xneg += 1
-				if (diffy > 0):
-					ypos += 1
-				elif (diffy < 0):
-					yneg += 1
-			counter += 1
-	print("L>S: " + str(xpos))
-	print("S>L: " + str(xneg))
-	print("M>(L+S): " + str(ypos))
-	print("(L+S)>M: " + str(yneg))
-	print("Same: " + str(s))
-	binomial = binomtest(35, 40, p=(max(xpos, xneg) + s/2)/16, alternative='greater')
-	print("P-value: " + str(binomial.pvalue))
-	print("")
+	color_disc(red25_0, red25_03, red25_07, red25_10, yellow15_0, yellow15_03, yellow15_07, yellow15_10, order=0)
 	
 	# R-G
-	xpos = 0
-	xneg = 0
-	ypos = 0
-	yneg = 0
-	s = 0
-	counter = 0
-	
 	print("R-G")
-	for i in range(0, 4):
-		if (i == 0):
-			rlevel = red25e
-		elif (i == 1):
-			rlevel = red25e_03
-		elif (i == 2):
-			rlevel = red25e_07
-		elif (i == 3):
-			rlevel = red25e_10
-		for j in range(0, 4):
-			if (j == 0):
-				glevel = green58e
-			elif (j == 1):
-				glevel = green58e_03
-			elif (j == 2):
-				glevel = green58e_07
-			elif (j == 3):
-				glevel = green58e_10
-			diffx = red25cs[i] - green58cs[j]
-			diffy = red25cs1[i] - green58cs1[j]
-			contrast = color_contrast(rlevel, glevel)
-			box[counter][1] = contrast
-			print("R" + str(i) + " vs. G" + str(j) + ": " + str(contrast))
-			if (contrast < 1):
-				s += 1
-			else:
-				if (diffx > 0):
-					xpos += 1
-				elif (diffx < 0):
-					xneg += 1
-				if (diffy > 0):
-					ypos += 1
-				elif (diffy < 0):
-					yneg += 1
-			counter += 1
-	print("L>S: " + str(xpos))
-	print("S>L: " + str(xneg))
-	print("M>(L+S): " + str(ypos))
-	print("(L+S)>M: " + str(yneg))
-	print("Same: " + str(s))
-	binomial = binomtest(35, 40, p=(max(xpos, xneg) + s/2)/16, alternative='greater')
-	print("P-value: " + str(binomial.pvalue))
-	print("")
+	color_disc(red25_0, red25_03, red25_07, red25_10, green58_0, green58_03, green58_07, green58_10, order=1)
 	
 	# R-B
-	xpos = 0
-	xneg = 0
-	ypos = 0
-	yneg = 0
-	s = 0
-	counter = 0
-	
 	print("R-B")
-	for i in range(0, 4):
-		if (i == 0):
-			rlevel = red25e
-		elif (i == 1):
-			rlevel = red25e_03
-		elif (i == 2):
-			rlevel = red25e_07
-		elif (i == 3):
-			rlevel = red25e_10
-		for j in range(0, 4):
-			if (j == 0):
-				blevel = blue47
-			elif (j == 1):
-				blevel = blue47_03
-			elif (j == 2):
-				blevel = blue47_07
-			elif (j == 3):
-				blevel = blue47_10
-			diffx = red25cs[i] - blue47cs[j]
-			diffy = red25cs1[i] - blue47cs1[j]
-			contrast = color_contrast(rlevel, blevel)
-			box[counter][2] = contrast
-			print("R" + str(i) + " vs. B" + str(j) + ": " + str(contrast))
-			if (contrast < 1):
-				s += 1
-			else:
-				if (diffx > 0):
-					xpos += 1
-				elif (diffx < 0):
-					xneg += 1
-				if (diffy > 0):
-					ypos += 1
-				elif (diffy < 0):
-					yneg += 1
-			counter += 1
-	print("L>S: " + str(xpos))
-	print("S>L: " + str(xneg))
-	print("M>(L+S): " + str(ypos))
-	print("(L+S)>M: " + str(yneg))
-	print("Same: " + str(s))
-	binomial = binomtest(35, 40, p=(16 - s/2)/16, alternative='greater')
-	print("P-value: " + str(binomial.pvalue))
-	print("")
+	color_disc(red25_0, red25_03, red25_07, red25_10, blue47_0, blue47_03, blue47_07, blue47_10, order=2)
 	
 	# Y-G
-	xpos = 0
-	xneg = 0
-	ypos = 0
-	yneg = 0
-	s = 0
-	counter = 0
-	
 	print("Y-G")
-	for i in range(0, 4):
-		if (i == 0):
-			ylevel = yellow15e
-		elif (i == 1):
-			ylevel = yellow15e_03
-		elif (i == 2):
-			ylevel = yellow15e_07
-		elif (i == 3):
-			ylevel = yellow15e_10
-		for j in range(0, 4):
-			if (j == 0):
-				glevel = green58e
-			elif (j == 1):
-				glevel = green58e_03
-			elif (j == 2):
-				glevel = green58e_07
-			elif (j == 3):
-				glevel = green58e_10
-			diffx = yellow15cs[i] - green58cs[j]
-			diffy = yellow15cs1[i] - green58cs1[j]
-			contrast = color_contrast(ylevel, glevel)
-			box[counter][3] = contrast
-			print("Y" + str(i) + " vs. G" + str(j) + ": " + str(contrast))
-			if (contrast < 1):
-				s += 1
-			else:
-				if (diffx > 0):
-					xpos += 1
-				elif (diffx < 0):
-					xneg += 1
-				if (diffy > 0):
-					ypos += 1
-				elif (diffy < 0):
-					yneg += 1
-			counter += 1
-	print("L>S: " + str(xpos))
-	print("S>L: " + str(xneg))
-	print("M>(L+S): " + str(ypos))
-	print("(L+S)>M: " + str(yneg))
-	print("Same: " + str(s))
-	binomial = binomtest(35, 40, p=(16 - s/2)/16, alternative='greater')
-	print("P-value: " + str(binomial.pvalue))
-	print("")
+	color_disc(yellow15_0, yellow15_03, yellow15_07, yellow15_10, green58_0, green58_03, green58_07, green58_10, order=3)
 	
 	# Y-B
-	xpos = 0
-	xneg = 0
-	ypos = 0
-	yneg = 0
-	s = 0
-	counter = 0
-	
 	print("Y-B")
-	for i in range(0, 4):
-		if (i == 0):
-			ylevel = yellow15e
-		elif (i == 1):
-			ylevel = yellow15e_03
-		elif (i == 2):
-			ylevel = yellow15e_07
-		elif (i == 3):
-			ylevel = yellow15e_10
-		for j in range(0, 4):
-			if (j == 0):
-				blevel = blue47
-			elif (j == 1):
-				blevel = blue47_03
-			elif (j == 2):
-				blevel = blue47_07
-			elif (j == 3):
-				blevel = blue47_10
-			diffx = yellow15cs[i] - blue47cs[j]
-			diffy = yellow15cs1[i] - blue47cs1[j]
-			contrast = color_contrast(ylevel, blevel)
-			box[counter][4] = contrast
-			print("Y" + str(i) + " vs. B" + str(j) + ": " + str(contrast))
-			if (contrast < 1):
-				s += 1
-			else:
-				if (diffx > 0):
-					xpos += 1
-				elif (diffx < 0):
-					xneg += 1
-				if (diffy > 0):
-					ypos += 1
-				elif (diffy < 0):
-					yneg += 1
-			counter += 1
-	print("L>S: " + str(xpos))
-	print("S>L: " + str(xneg))
-	print("M>(L+S): " + str(ypos))
-	print("(L+S)>M: " + str(yneg))
-	print("Same: " + str(s))
-	binomial = binomtest(35, 40, p=(16 - s/2)/16, alternative='greater')
-	print("P-value: " + str(binomial.pvalue))
-	print("")
+	color_disc(yellow15_0, yellow15_03, yellow15_07, yellow15_10, blue47_0, blue47_03, blue47_07, blue47_10, order=4)
 	
 	# G-B
-	xpos = 0
-	xneg = 0
-	ypos = 0
-	yneg = 0
-	s = 0
-	counter = 0
-	
 	print("G-B")
-	for i in range(0, 4):
-		if (i == 0):
-			glevel = green58e
-		elif (i == 1):
-			glevel = green58e_03
-		elif (i == 2):
-			glevel = green58e_07
-		elif (i == 3):
-			glevel = green58e_10
-		for j in range(0, 4):
-			if (j == 0):
-				blevel = blue47
-			elif (j == 1):
-				blevel = blue47_03
-			elif (j == 2):
-				blevel = blue47_07
-			elif (j == 3):
-				blevel = blue47_10
-			diffx = green58cs[i] - blue47cs[j]
-			diffy = green58cs1[i] - blue47cs1[j]
-			contrast = color_contrast(glevel, blevel)
-			box[counter][5] = contrast
-			print("G" + str(i) + " vs. B" + str(j) + ": " + str(contrast))
-			if (contrast < 1):
-				s += 1
-			else:
-				if (diffx > 0):
-					xpos += 1
-				elif (diffx < 0):
-					xneg += 1
-				if (diffy > 0):
-					ypos += 1
-				elif (diffy < 0):
-					yneg += 1
-			counter += 1
-	print("L>S: " + str(xpos))
-	print("S>L: " + str(xneg))
-	print("M>(L+S): " + str(ypos))
-	print("(L+S)>M: " + str(yneg))
-	print("Same: " + str(s))
-	binomial = binomtest(35, 40, p=(16 - s/2)/16, alternative='greater')
-	print("P-value: " + str(binomial.pvalue))
-	print("")
+	color_disc(green58_0, green58_03, green58_07, green58_10, blue47_0, blue47_03, blue47_07, blue47_10, order=5)
 	
 	# medians
 	mry = statistics.median([box[0][0], box[1][0], box[2][0], box[3][0], box[4][0], box[5][0], box[6][0], box[7][0], box[8][0], box[9][0], box[10][0], box[11][0], box[12][0], box[13][0], box[14][0], box[15][0]])
@@ -4167,12 +5035,12 @@ if (args.kodak):
 	myb = statistics.median([box[0][4], box[1][4], box[2][4], box[3][4], box[4][4], box[5][4], box[6][4], box[7][4], box[8][4], box[9][4], box[10][4], box[11][4], box[12][4], box[13][4], box[14][4], box[15][4]])
 	mgb = statistics.median([box[0][5], box[1][5], box[2][5], box[3][5], box[4][5], box[5][5], box[6][5], box[7][5], box[8][5], box[9][5], box[10][5], box[11][5], box[12][5], box[13][5], box[14][5], box[15][5]])
 	
-	print(mry)
-	print(mrg)
-	print(mrb)
-	print(myg)
-	print(myb)
-	print(mgb)
+	print("R-Y median contrast: " + str(mry))
+	print("R-G median contrast: " + str(mrg))
+	print("R-B median contrast: " + str(mrb))
+	print("Y-G median contrast: " + str(myg))
+	print("Y-B median contrast: " + str(myb))
+	print("G-B median contrast: " + str(mgb))
 	print("Lowest median contrast: " + str(min(mry, mrg, mrb, myg, myb, mgb)))
 	print("Highest median contrast: " + str(max(mry, mrg, mrb, myg, myb, mgb)))
 	print("")
@@ -4181,30 +5049,486 @@ if (args.kodak):
 	plt.boxplot(x=box, tick_labels=x)
 	plt.ylabel("ΔS (JND)")
 	plt.show()
+	
+	# and again for colors vs gray. Is gray distinguishable from yellow and green? If
+	# not, we have a major problem.
+	box = np.empty((16, 4))
+	labels = ["red", "yellow", "green", "blue"]
+	
+	# red
+	print("Red vs. gray")
+	color_disc(red25_0, red25_03, red25_07, red25_10, gray_0, gray_03, gray_07, gray_10, order=0, correct=68, trials=80)
+	
+	# yellow
+	print("Yellow vs. gray")
+	color_disc(yellow15_0, yellow15_03, yellow15_07, yellow15_10, gray_0, gray_03, gray_07, gray_10, correct=68, trials=80, order=1)
+	
+	# green
+	print("Green vs. gray")
+	color_disc(green58_0, green58_03, green58_07, green58_10, gray_0, gray_03, gray_07, gray_10, correct=68, trials=80, order=2)
+	
+	# blue
+	print("Blue vs. gray")
+	color_disc(blue47_0, blue47_03, blue47_07, blue47_10, gray_0, gray_03, gray_07, gray_10, correct=68, trials=80, order=3)
+	
+	plt.boxplot(x=box, tick_labels=labels)
+	plt.ylabel("ΔS (JND)")
+	plt.show()
+	# Yes, it is! This came as a bit of a surprise considering the rods and cones apparently
+	# have very similar responses to these.
 
 if (args.blackbody != 0):
+	energy = sigma * args.blackbody**4
+	surface_area = 4*math.pi*args.radius**2
 	print("Surface area of sphere: " + str(sphere_area))
 	print("Energy produced by light bulb (W/cm^2): " + str(watts_cm2))
 	print("Energy produced by light bulb (W/m^2): " + str(watts_m2))
-	print("Energy produced by blackbody model (W/m^2): " + str(sigma * args.blackbody**4))
+	#print("Surface area of light bulb (cm^2): " + str(surface_area))
+	print("Energy produced by blackbody model (W/m^2, 4pi sr): " + str(energy))
+	print("Energy produced by blackbody model (W): " + str(energy * surface_area / 10000))
+	print("W/m^2 scaling factor: " + str(scale))
 	
-	# how much energy is produced between 300-700 nm when paired with blue 47
-	visible_total = 0
-	visible = np.empty(41)
-	for i in range(41):
-		visible[i] = blackbody(i+300, args.blackbody) * watts_m2 / (sigma * args.blackbody**4)
-		visible_total += visible[i]
+	# integral approximations
+	#integral = 0
+	#for i in range(30, 90):
+	#	integral += blackbody(10*i, args.blackbody)
+	#print("Integral using 10-nm bins from 300 to 900: " + str(integral) + " (" + str(100*integral / (energy)) + "% of actual value)")
+	#integral = 0
+	#for i in range(38, 73):
+	#	integral += blackbody(10*i, args.blackbody)
+	#print("Integral using 10-nm bins from 380 to 730: " + str(integral) + " (" + str(100*integral / (energy)) + "% of actual value)")
+	#for i in range(1, 100000):
+	#	integral += blackbody(10*i, args.blackbody)
+	#print("Integral using 10-nm bins from 10 to 1000000: " + str(integral) + " (" + str(100*integral / (energy)) + "% of actual value)")
+	#integral = 0
+	#for i in range(1, 100000):
+	#	integral += blackbody(i, args.blackbody)
+	#print("Integral using 1-nm bins from 1 to 100000: " + str(integral) + " (" + str(100*integral / (energy)) + "% of actual value)")
 	
-	visible_filtered_total = 0
-	visible_filtered = np.empty(41)
-	for i in range(41):
-		visible_filtered[i] = visible[i] * math.exp(-blue47[i])
-		visible_filtered_total += visible_filtered[i]
+	# integral approximations with SciPy
+	#integral = quad(blackbody, 0, 100000, args=args.blackbody)
+	#print("SciPy integral from 0 to 100000: " + str(integral[0]) + " (" + str(100*integral[0] / (energy)) + "% of actual value)")
+	#integral = quad(blackbody, 300, 900, args=args.blackbody)
+	#print("SciPy integral from 300 to 900: " + str(integral[0]) + " (" + str(100*integral[0] / (energy)) + "% of actual value)")
+	#integral = quad(blackbody, 340, 830, args=args.blackbody)
+	#print("SciPy integral from 340 to 830: " + str(integral[0]) + " (" + str(100*integral[0] / (energy)) + "% of actual value)")
+	#integral = quad(blackbody, 380, 730, args=args.blackbody)
+	#print("SciPy integral from 380 to 730: " + str(integral[0]) + " (" + str(100*integral[0] / (energy)) + "% of actual value)")
 	
-	print("Light energy (W/m^2): " + str(visible_total*400))
-	print("Light energy (uW/cm^2): " + str(visible_total*400*1000000/100**2))
-	print("Light energy filtered through blue 47 (W/m^2): " + str(visible_filtered_total*400))
-	print("Light energy filtered through blue 47 (uW/cm^2): " + str(visible_filtered_total*400*1000000/100**2))
+	# how much energy is produced between 300-800 nm when paired with blue 47
+	# Fix this -- should use the "full" integral with 1-nm steps. As written, the values
+	# produced are about 1/10 what they should be. Also try to convert it to cd/m^2 so
+	# we can match the value given in the study of 5.5 foot-lamberts ~= 19 cd/m^2 or
+	# 59 lx (foot-lamberts are equivalent to both, and as above, the conversion factor
+	# between radiance/luminance and irradiance/illuminance is pi sr). Candelas aren't
+	# any less annoying than foot-lamberts just because they think they're an SI unit.
+	
+	# According to the new numbers, the bulbs would have to have a color temperature of
+	# about 1700 K to actually produce the brightness reported in the study. I don't
+	# think they make those. Alternatively, if the number corresponds to illuminance,
+	# this would be scaled by steradians and the true value in cd/m^2 would be ~131,
+	# which corresponds to a color temperature of between 2000 and 2100 K. This is still
+	# much lower than a typical incandescent bulb. If I change the scaling factor back to
+	# W/m^2 instead of W/m^2/sr, however, the illucd/mminance definition places the color
+	# temperature at about 2650 K, which is close to the number 2700 I found
+	# when searching for GE 656 bulbs (https://www.bulbs.com/product/656).
+	
+	# Now that I've fixed the density/transmission issues with the filters, the
+	# filtered luminance is around 19 cd/m^2 for a color temperature near 2856 K.
+	# I'm not sure I buy this because the Macbeth Illuminometer is supposed to measure
+	# illuminance in foot-candles rather than luminance in "foot-lamberts". At least
+	# the candela only has one definition. Also my quantum catch model now predicts
+	# that neither humans nor opossums can reliably distinguish the R-Y pair unless
+	# I assume a high degree of spatial summation. Since lux/foot-candles is measured
+	# by light falling on some flat surface, I don't know what distinguishes light
+	# falling only on that surface from light radiated in all directions from the
+	# source. A "perfect" reflecting surface radiates 1/pi of the illuminance it
+	# receives, but what does that say about the radiance/luminance of the light
+	# source?
+	
+	# We want to scale the directional intensity. There is technically less irradiance
+	# if spread over a larger area, but the radiance doesn't change. See the
+	# Stefan-Boltzmann law -- "power per unit area" is power per the area of the
+	# object doing the radiating, not power per how many square meters it's spread
+	# over. We need an estimate of the light bulb size. I used to have that in here
+	# but discarded it for some reason. The distance from the light source shouldn't
+	# be involved for the same reason we don't use it in the lux calculation.
+	# Actually I think this is wrong because a light bulb that's farther away from the
+	# viewing point is basically the same as a bigger bulb. If we use the value of
+	# 5 cm and define the number of cones per receptive field to include at least 1
+	# of each type, we can nearly perfectly explain both the reported brightness
+	# (assuming cd/m^2) and the opossums' behavior, though R-Y is apparently a very
+	# difficult discrimination.
+	
+	# calculate the "underestimation factor"
+	# No, forget this. We can do better.
+	radiance_full = quad(blackbody, 300, 700, args=args.blackbody)
+#	radiance_10nm = 0
+#	for i in range(30, 81):
+#		radiance_10nm += blackbody(i*10, args.blackbody)
+#	luminance_full = 0
+#	for i in range(300, 801):
+#		luminance_full += blackbody(i, args.blackbody) * (0.68990272*vpt(i, 565) + 0.34832189*vpt(i, 535))*human_filter(i) * 683.002
+#	luminance_10nm = 0
+#	for i in range(30, 81):
+#		luminance_10nm += blackbody(i*10, args.blackbody) * (0.68990272*vpt(i*10, 565) + 0.34832189*vpt(i*10, 535))*human_filter(i*10) * 683.002
+	#visible_total = 0
+	#visible = np.empty(41)
+	#for i in range(41):
+	#	visible[i] = blackbody(i+300, args.blackbody) * watts_m2 / (energy)
+	#	visible_total += visible[i]
+	visible = radiance_full[0]
+	x10nm = np.empty(51)
+	for i in range(51):
+		x10nm[i] = i*10 + 300
+	x1nm = np.empty(501)
+	for i in range(501):
+		x1nm[i] = i + 300
+	# interpolate
+	red25_0i = np.interp(x1nm, x10nm, red25_0)
+	red25_03i = np.interp(x1nm, x10nm, red25_03)
+	red25_07i = np.interp(x1nm, x10nm, red25_07)
+	red25_10i = np.interp(x1nm, x10nm, red25_10)
+	yellow15_0i = np.interp(x1nm, x10nm, yellow15_0)
+	yellow15_03i = np.interp(x1nm, x10nm, yellow15_03)
+	yellow15_07i = np.interp(x1nm, x10nm, yellow15_07)
+	yellow15_10i = np.interp(x1nm, x10nm, yellow15_10)
+	green58_0i = np.interp(x1nm, x10nm, green58_0)
+	green58_03i = np.interp(x1nm, x10nm, green58_03)
+	green58_07i = np.interp(x1nm, x10nm, green58_07)
+	green58_10i = np.interp(x1nm, x10nm, green58_10)
+	blue47_0i = np.interp(x1nm, x10nm, blue47_0)
+	blue47_03i = np.interp(x1nm, x10nm, blue47_03)
+	blue47_07i = np.interp(x1nm, x10nm, blue47_07)
+	blue47_10i = np.interp(x1nm, x10nm, blue47_10)
+	gray_0i = np.interp(x1nm, x10nm, gray_0)
+	gray_03i = np.interp(x1nm, x10nm, gray_03)
+	gray_07i = np.interp(x1nm, x10nm, gray_07)
+	gray_10i = np.interp(x1nm, x10nm, gray_10)
+	visible_r0 = 0
+	for i in range(300, 701):
+		visible_r0 += blackbody(i, args.blackbody) * red25_0i[i-300]
+	visible_r03 = 0
+	for i in range(300, 701):
+		visible_r03 += blackbody(i, args.blackbody) * red25_03i[i-300]
+	visible_r07 = 0
+	for i in range(300, 701):
+		visible_r07 += blackbody(i, args.blackbody) * red25_07i[i-300]
+	visible_r10 = 0
+	for i in range(300, 701):
+		visible_r10 += blackbody(i, args.blackbody) * red25_10i[i-300]
+	visible_y0 = 0
+	for i in range(300, 701):
+		visible_y0 += blackbody(i, args.blackbody) * yellow15_0i[i-300]
+	visible_y03 = 0
+	for i in range(300, 701):
+		visible_y03 += blackbody(i, args.blackbody) * yellow15_03i[i-300]
+	visible_y07 = 0
+	for i in range(300, 701):
+		visible_y07 += blackbody(i, args.blackbody) * yellow15_07i[i-300]
+	visible_y10 = 0
+	for i in range(300, 701):
+		visible_y10 += blackbody(i, args.blackbody) * yellow15_10i[i-300]
+	visible_g0 = 0
+	for i in range(300, 701):
+		visible_g0 += blackbody(i, args.blackbody) * green58_0i[i-300]
+	visible_g03 = 0
+	for i in range(300, 701):
+		visible_g03 += blackbody(i, args.blackbody) * green58_03i[i-300]
+	visible_g07 = 0
+	for i in range(300, 701):
+		visible_g07 += blackbody(i, args.blackbody) * green58_07i[i-300]
+	visible_g10 = 0
+	for i in range(300, 701):
+		visible_g10 += blackbody(i, args.blackbody) * green58_10i[i-300]
+	visible_b0 = 0
+	for i in range(300, 701):
+		visible_b0 += blackbody(i, args.blackbody) * blue47_0i[i-300]
+	visible_b03 = 0
+	for i in range(300, 701):
+		visible_b03 += blackbody(i, args.blackbody) * blue47_03i[i-300]
+	visible_b07 = 0
+	for i in range(300, 701):
+		visible_b07 += blackbody(i, args.blackbody) * blue47_07i[i-300]
+	visible_b10 = 0
+	for i in range(300, 701):
+		visible_b10 += blackbody(i, args.blackbody) * blue47_10i[i-300]
+	visible_gray0 = 0
+	for i in range(300, 701):
+		visible_gray0 += blackbody(i, args.blackbody) * gray_0i[i-300]
+	visible_gray03 = 0
+	for i in range(300, 701):
+		visible_gray03 += blackbody(i, args.blackbody) * gray_03i[i-300]
+	visible_gray07 = 0
+	for i in range(300, 701):
+		visible_gray07 += blackbody(i, args.blackbody) * gray_07i[i-300]
+	visible_gray10 = 0
+	for i in range(300, 701):
+		visible_gray10 += blackbody(i, args.blackbody) * gray_10i[i-300]
+	# scale
+	#visible_filtered *= luminance_full / luminance_10nm
+	#print(luminance_full / luminance_10nm)
+	
+	# As above, this is radiance, so we multiply by the sr value we found earlier to get W/m^2
+	#visible_total = visible_total * sr
+	#visible_filtered_total = visible_filtered_total * sr
+	
+	# lx/cd
+	visible_bcd0 = 0
+	for i in range(300, 801):
+		visible_bcd0 += blackbody(i, args.blackbody) * blue47_0i[i-300] *  luminosity[i-300] * 683.002
+	visible_bcd03 = 0
+	for i in range(300, 801):
+		visible_bcd03 += blackbody(i, args.blackbody) * blue47_03i[i-300] *  luminosity[i-300] * 683.002
+	visible_bcd07 = 0
+	for i in range(300, 801):
+		visible_bcd07 += blackbody(i, args.blackbody) * blue47_07i[i-300] *  luminosity[i-300] * 683.002
+	visible_bcd10 = 0
+	for i in range(300, 801):
+		visible_bcd10 += blackbody(i, args.blackbody) * blue47_10i[i-300] *  luminosity[i-300] * 683.002
+	#visible_filtered_cd *= luminance_full / luminance_10nm
+	visible_lx0 = visible_bcd0 * math.pi
+	visible_lx03 = visible_bcd03 * math.pi
+	visible_lx07 = visible_bcd07 * math.pi
+	visible_lx10 = visible_bcd10 * math.pi
+	# other colors
+	# red
+	visible_rcd0 = 0
+	for i in range(300, 801):
+		visible_rcd0 += blackbody(i, args.blackbody) * red25_0i[i-300] *  luminosity[i-300] * 683.002
+	visible_rcd03 = 0
+	for i in range(300, 801):
+		visible_rcd03 += blackbody(i, args.blackbody) * red25_03i[i-300] *  luminosity[i-300] * 683.002
+	visible_rcd07 = 0
+	for i in range(300, 801):
+		visible_rcd07 += blackbody(i, args.blackbody) * red25_07i[i-300] *  luminosity[i-300] * 683.002
+	visible_rcd10 = 0
+	for i in range(300, 801):
+		visible_rcd10 += blackbody(i, args.blackbody) * red25_10i[i-300] *  luminosity[i-300] * 683.002
+	# yellow
+	visible_ycd0 = 0
+	for i in range(300, 801):
+		visible_ycd0 += blackbody(i, args.blackbody) * yellow15_0i[i-300] *  luminosity[i-300] * 683.002
+	visible_ycd03 = 0
+	for i in range(300, 801):
+		visible_ycd03 += blackbody(i, args.blackbody) * yellow15_03i[i-300] *  luminosity[i-300] * 683.002
+	visible_ycd07 = 0
+	for i in range(300, 801):
+		visible_ycd07 += blackbody(i, args.blackbody) * yellow15_07i[i-300] *  luminosity[i-300] * 683.002
+	visible_ycd10 = 0
+	for i in range(300, 801):
+		visible_ycd10 += blackbody(i, args.blackbody) * yellow15_10i[i-300] *  luminosity[i-300] * 683.002
+	# green
+	visible_gcd0 = 0
+	for i in range(300, 801):
+		visible_gcd0 += blackbody(i, args.blackbody) * green58_0i[i-300] *  luminosity[i-300] * 683.002
+	visible_gcd03 = 0
+	for i in range(300, 801):
+		visible_gcd03 += blackbody(i, args.blackbody) * green58_03i[i-300] *  luminosity[i-300] * 683.002
+	visible_gcd07 = 0
+	for i in range(300, 801):
+		visible_gcd07 += blackbody(i, args.blackbody) * green58_07i[i-300] *  luminosity[i-300] * 683.002
+	visible_gcd10 = 0
+	for i in range(300, 801):
+		visible_gcd10 += blackbody(i, args.blackbody) * green58_10i[i-300] *  luminosity[i-300] * 683.002
+	# gray
+	visible_graycd0 = 0
+	for i in range(300, 801):
+		visible_graycd0 += blackbody(i, args.blackbody) * gray_0i[i-300] *  luminosity[i-300] * 683.002
+	visible_graycd03 = 0
+	for i in range(300, 801):
+		visible_graycd03 += blackbody(i, args.blackbody) * gray_03i[i-300] *  luminosity[i-300] * 683.002
+	visible_graycd07 = 0
+	for i in range(300, 801):
+		visible_graycd07 += blackbody(i, args.blackbody) * gray_07i[i-300] *  luminosity[i-300] * 683.002
+	visible_graycd10 = 0
+	for i in range(300, 801):
+		visible_graycd10 += blackbody(i, args.blackbody) * gray_10i[i-300] *  luminosity[i-300] * 683.002
+	
+	# candela equivalents weighted by a custom luminosity function in place of CIE
+	# to compare brightness for another species
+	
+	# blue
+	visible_bcde0 = 0
+	for i in range(300, 801):
+		visible_bcde0 += blackbody(i, args.blackbody) * blue47_0i[i-300] *  sensitivity(i) * 683.002
+	visible_bcde03 = 0
+	for i in range(300, 801):
+		visible_bcde03 += blackbody(i, args.blackbody) * blue47_03i[i-300] * sensitivity(i) * 683.002
+	visible_bcde07 = 0
+	for i in range(300, 801):
+		visible_bcde07 += blackbody(i, args.blackbody) * blue47_07i[i-300] * sensitivity(i) * 683.002
+	visible_bcde10 = 0
+	for i in range(300, 801):
+		visible_bcde10 += blackbody(i, args.blackbody) * blue47_10i[i-300] * sensitivity(i) * 683.002
+	# red
+	visible_rcde0 = 0
+	for i in range(300, 801):
+		visible_rcde0 += blackbody(i, args.blackbody) * red25_0i[i-300] * sensitivity(i) * 683.002
+	visible_rcde03 = 0
+	for i in range(300, 801):
+		visible_rcde03 += blackbody(i, args.blackbody) * red25_03i[i-300] * sensitivity(i) * 683.002
+	visible_rcde07 = 0
+	for i in range(300, 801):
+		visible_rcde07 += blackbody(i, args.blackbody) * red25_07i[i-300] * sensitivity(i) * 683.002
+	visible_rcde10 = 0
+	for i in range(300, 801):
+		visible_rcde10 += blackbody(i, args.blackbody) * red25_10i[i-300] * sensitivity(i) * 683.002
+	# yellow
+	visible_ycde0 = 0
+	for i in range(300, 801):
+		visible_ycde0 += blackbody(i, args.blackbody) * yellow15_0i[i-300] * sensitivity(i) * 683.002
+	visible_ycde03 = 0
+	for i in range(300, 801):
+		visible_ycde03 += blackbody(i, args.blackbody) * yellow15_03i[i-300] * sensitivity(i) * 683.002
+	visible_ycde07 = 0
+	for i in range(300, 801):
+		visible_ycde07 += blackbody(i, args.blackbody) * yellow15_07i[i-300] * sensitivity(i) * 683.002
+	visible_ycde10 = 0
+	for i in range(300, 801):
+		visible_ycde10 += blackbody(i, args.blackbody) * yellow15_10i[i-300] * sensitivity(i) * 683.002
+	# green
+	visible_gcde0 = 0
+	for i in range(300, 801):
+		visible_gcde0 += blackbody(i, args.blackbody) * green58_0i[i-300] * sensitivity(i) * 683.002
+	visible_gcde03 = 0
+	for i in range(300, 801):
+		visible_gcde03 += blackbody(i, args.blackbody) * green58_03i[i-300] * sensitivity(i) * 683.002
+	visible_gcde07 = 0
+	for i in range(300, 801):
+		visible_gcde07 += blackbody(i, args.blackbody) * green58_07i[i-300] * sensitivity(i) * 683.002
+	visible_gcde10 = 0
+	for i in range(300, 801):
+		visible_gcde10 += blackbody(i, args.blackbody) * green58_10i[i-300] * sensitivity(i) * 683.002
+	# gray
+	visible_graycde0 = 0
+	for i in range(300, 801):
+		visible_graycde0 += blackbody(i, args.blackbody) * gray_0i[i-300] * sensitivity(i) * 683.002
+	visible_graycde03 = 0
+	for i in range(300, 801):
+		visible_graycde03 += blackbody(i, args.blackbody) * gray_03i[i-300] * sensitivity(i) * 683.002
+	visible_graycde07 = 0
+	for i in range(300, 801):
+		visible_graycde07 += blackbody(i, args.blackbody) * gray_07i[i-300] * sensitivity(i) * 683.002
+	visible_graycde10 = 0
+	for i in range(300, 801):
+		visible_graycde10 += blackbody(i, args.blackbody) * gray_10i[i-300] * sensitivity(i) * 683.002
+	
+	print("Radiance from 300-800 nm (W/m^2/sr): " + str(visible))
+	print("Irradiance from 300-800 nm (W/m^2): " + str(visible*sr))
+	print("Irradiance from 300-800 nm (uW/cm^2): " + str(visible*sr*1000000/100**2))
+#	print("Irradiance from 300-800 nm filtered through blue 47 (W/m^2): " + str(visible_filtered*sr))
+#	print("Irradiance from 300-800 nm filtered through blue 47 (uW/cm^2): " + str(visible_filtered*sr*1000000/100**2))
+	#print("Luminance from 300-800 nm (cd/m^2): " + str(visible_filtered_cd))
+	#print("Illuminance from 300-800 nm (lx): " + str(visible_filtered_lx))
+	
+	# scaled to specified watt number
+	print("")
+	print("Scaled radiance/irradiance:")
+	print("Radiance from 300-800 nm (W/m^2/sr): " + str(scale*visible))
+	radiance = 0
+	for i in range(501):
+		radiance += ia[i]
+	print("Radiance from 300-800 nm (photons/sec/sr): " + str(radiance))
+	print("Irradiance (W/m^2): " + str(scale*visible*sr))
+	print("Irradiance (uW/cm^2): " + str(scale*visible*sr*1000000/100**2))
+	# just multiply this by 100 to get uW/cm^2
+	print("Irradiance filtered through red 25 (uW/cm^2):")
+	print("0: " + str(scale*visible_r0*sr*100))
+	print("0.3: " + str(scale*visible_r03*sr*100))
+	print("0.7: " + str(scale*visible_r07*sr*100))
+	print("1.0: " + str(scale*visible_r10*sr*100))
+	print("Irradiance filtered through yellow 15 (uW/cm^2):")
+	print("0: " + str(scale*visible_y0*sr*100))
+	print("0.3: " + str(scale*visible_y03*sr*100))
+	print("0.7: " + str(scale*visible_y07*sr*100))
+	print("1.0: " + str(scale*visible_y10*sr*100))
+	print("Irradiance filtered through green 58 (uW/cm^2):")
+	print("0: " + str(scale*visible_g0*sr*100))
+	print("0.3: " + str(scale*visible_g03*sr*100))
+	print("0.7: " + str(scale*visible_g07*sr*100))
+	print("1.0: " + str(scale*visible_g10*sr*100))
+	print("Irradiance filtered through blue 47 (uW/cm^2):")
+	print("0: " + str(scale*visible_b0*sr*100))
+	print("0.3: " + str(scale*visible_b03*sr*100))
+	print("0.7: " + str(scale*visible_b07*sr*100))
+	print("1.0: " + str(scale*visible_b10*sr*100))
+	print("Irradiance filtered through gray (uW/cm^2):")
+	print("0: " + str(scale*visible_gray0*sr*100))
+	print("0.3: " + str(scale*visible_gray03*sr*100))
+	print("0.7: " + str(scale*visible_gray07*sr*100))
+	print("1.0: " + str(scale*visible_gray10*sr*100))
+	#print("Irradiance from 300-800 nm filtered through blue 47 (uW/cm^2): " + str(scale*visible_filtered*sr*1000000/100**2))
+	print("Luminance from 300-800 nm for blue 47 (cd/m^2):")
+	print("0: " + str(scale*visible_bcd0))
+	print("0.3: " + str(scale*visible_bcd03))
+	print("0.7: " + str(scale*visible_bcd07))
+	print("1.0: " + str(scale*visible_bcd10))
+	print("Luminance from 300-800 nm for red 25 (cd/m^2):")
+	print("0: " + str(scale*visible_rcd0))
+	print("0.3: " + str(scale*visible_rcd03))
+	print("0.7: " + str(scale*visible_rcd07))
+	print("1.0: " + str(scale*visible_rcd10))
+	print("Luminance from 300-800 nm for yellow 15 (cd/m^2):")
+	print("0: " + str(scale*visible_ycd0))
+	print("0.3: " + str(scale*visible_ycd03))
+	print("0.7: " + str(scale*visible_ycd07))
+	print("1.0: " + str(scale*visible_ycd10))
+	print("Luminance from 300-800 nm for green 58 (cd/m^2):")
+	print("0: " + str(scale*visible_gcd0))
+	print("0.3: " + str(scale*visible_gcd03))
+	print("0.7: " + str(scale*visible_gcd07))
+	print("1.0: " + str(scale*visible_gcd10))
+	print("Luminance from 300-800 nm for gray (cd/m^2):")
+	print("0: " + str(scale*visible_graycd0))
+	print("0.3: " + str(scale*visible_graycd03))
+	print("0.7: " + str(scale*visible_graycd07))
+	print("1.0: " + str(scale*visible_graycd10))
+	print("Illuminance (lx):")
+	print("0: " + str(scale*visible_lx0))
+	print("0.3: " + str(scale*visible_lx03))
+	print("0.7: " + str(scale*visible_lx07))
+	print("1.0: " + str(scale*visible_lx10))
+	# alternatively it may depend on the size of the circle depending on what a
+	# foot lambert is
+	#print("Luminance/illuminance scaled to size of circle:")
+	#print("Luminance (lx/sr):")
+	#print("0: " + str(scale*visible_filtered_lx0/sr))
+	#print("0.3: " + str(scale*visible_filtered_lx03/sr))
+	#print("0.7: " + str(scale*visible_filtered_lx07/sr))
+	#print("1.0: " + str(scale*visible_filtered_lx10/sr))
+	#print("Illuminance (cd*sr/m^2):")
+	#print("0: " + str(scale*visible_filtered_cd0*sr))
+	#print("0.3: " + str(scale*visible_filtered_cd03*sr))
+	#print("0.7: " + str(scale*visible_filtered_cd07*sr))
+	#print("1.0: " + str(scale*visible_filtered_cd10*sr))
+	# "candela equivalent" brightness
+	print("Luminance in candela equivalents (cde/m^2)")
+	print("Blue 47:")
+	print("0: " + str(scale*visible_bcde0))
+	print("0.3: " + str(scale*visible_bcde03))
+	print("0.7: " + str(scale*visible_bcde07))
+	print("1.0: " + str(scale*visible_bcde10))
+	print("Red 25:")
+	print("0: " + str(scale*visible_rcde0))
+	print("0.3: " + str(scale*visible_rcde03))
+	print("0.7: " + str(scale*visible_rcde07))
+	print("1.0: " + str(scale*visible_rcde10))
+	print("Yellow 15:")
+	print("0: " + str(scale*visible_ycde0))
+	print("0.3: " + str(scale*visible_ycde03))
+	print("0.7: " + str(scale*visible_ycde07))
+	print("1.0: " + str(scale*visible_ycde10))
+	print("Green 58:")
+	print("0: " + str(scale*visible_gcde0))
+	print("0.3: " + str(scale*visible_gcde03))
+	print("0.7: " + str(scale*visible_gcde07))
+	print("1.0: " + str(scale*visible_gcde10))
+	print("Gray:")
+	print("0: " + str(scale*visible_graycde0))
+	print("0.3: " + str(scale*visible_graycde03))
+	print("0.7: " + str(scale*visible_graycde07))
+	print("1.0: " + str(scale*visible_graycde10))
 	
 	# plot curve
 	xvalues = np.empty(61)
@@ -4216,6 +5540,1187 @@ if (args.blackbody != 0):
 	plt.plot(xvalues, yvalues)
 	plt.show()
 	print("")
+	
+	# plot brightness
+	plt.subplot(1, 2, 1)
+	plt.plot([0, 0.3, 0.7, 1.0], [scale*visible_rcd0, scale*visible_rcd03, scale*visible_rcd07, scale*visible_rcd10], 'sr', mec='k')
+	plt.plot([0, 0.3, 0.7, 1.0], [scale*visible_ycd0, scale*visible_ycd03, scale*visible_ycd07, scale*visible_ycd10], 'Dy', mec='k')
+	plt.plot([0, 0.3, 0.7, 1.0], [scale*visible_gcd0, scale*visible_gcd03, scale*visible_gcd07, scale*visible_gcd10], '^g', mec='k')
+	plt.plot([0, 0.3, 0.7, 1.0], [scale*visible_bcd0, scale*visible_bcd03, scale*visible_bcd07, scale*visible_bcd10], 'ob', mec='k')
+	plt.plot([0, 0.3, 0.7, 1.0], [scale*visible_graycd0, scale*visible_graycd03, scale*visible_graycd07, scale*visible_graycd10], marker='v', linestyle='', color='gray', mec='k')
+	plt.subplot(1, 2, 2)
+	plt.plot([0, 0.3, 0.7, 1.0], [scale*visible_rcde0, scale*visible_rcde03, scale*visible_rcde07, scale*visible_rcde10], 'sr', mec='k')
+	plt.plot([0, 0.3, 0.7, 1.0], [scale*visible_ycde0, scale*visible_ycde03, scale*visible_ycde07, scale*visible_ycde10], 'Dy', mec='k')
+	plt.plot([0, 0.3, 0.7, 1.0], [scale*visible_gcde0, scale*visible_gcde03, scale*visible_gcde07, scale*visible_gcde10], '^g', mec='k')
+	plt.plot([0, 0.3, 0.7, 1.0], [scale*visible_bcde0, scale*visible_bcde03, scale*visible_bcde07, scale*visible_bcde10], 'ob', mec='k')
+	plt.plot([0, 0.3, 0.7, 1.0], [scale*visible_graycde0, scale*visible_graycde03, scale*visible_graycde07, scale*visible_graycde10], marker='v', linestyle='', color='gray', mec='k')
+	plt.show()
+
+""" Munsell color cards: 5B, 7.5B, 10YR, 5GY
+Reflectance spectra from here: https://www.munsellcolourscienceforpainters.com/MunsellResources/SpectralReflectancesOf2007MunsellBookOfColorGlossy.txt
+I can't find any Munsell reflectance spectra that go below 380 nm, so we'll just have to
+make do with this. Yet more limitations of a system designed for human vision when applied to
+anything else. I'm guessing none of these things reflect much UV, though.
+Note Python variables can't begin with a digit, so the arrays begin with "m" for Munsell.
+Lightness/chroma values used by Gutierrez et al. 2011: 10YR5-8/10, 5B4-7/6, 7.5B5-8/4, 5GY5-8/10
+Lighting specifications for absolute quantum catches:
+* card dimensions: 12.5 x 7.5 cm
+* illuminant: D65 light bulb 1.5 m above the test box, filtered with baking paper to provide
+an illuminance of 115 lx (I hate trying to interpret these human-scaled units, why can't you
+guys just use watts?)
+** I can't find any measurements of transmission for baking paper, so we'll have to assume
+it transmits all wavelengths equally. It probably doesn't.
+** Converting lux to watts: 1 W/m^2 = 683.002 lx at 555 nm. First multiply the D65 spectrum by
+the photopic luminosity function we determined earlier, then find the scaling factor to
+lux by dividing 115 by the integral of D65 x luminosity. To find the scaling factor to watts,
+take the value at 555 nm and multiply it by the lux scaling factor we just found, then divide
+it by 683.002. Except we don't have a value for 555 nm, so we have to pick a different wavelength
+(say, 550) and multiply it by the luminosity value.
+* As before, we assume the animals are arbitrarily close to the stimuli.
+* wavelength interval: 730 - 380 = 350
+"""
+if (args.munsell):
+	# lux to watts test
+	#integral = 0
+	#for i in range(d65.shape[0]):
+	#	integral += d65[i] * (0.68990272*vpt(i*10 + 300, 565) + 0.34832189*vpt(i*10 + 300, 535))*human_filter(i*10 + 300)
+	#lxscale = 115 / integral
+	#wscale = d65[25] * (0.68990272*vpt(550, 565) + 0.34832189*vpt(550, 535))*human_filter(550) * lxscale / 683.002
+	#integral1 = 0
+	#for i in range(d65.shape[0]):
+	#	integral1 += d65[i]
+	#watts = integral1 * wscale
+	#print(watts)
+	# 5B4/6
+	m5b4 = np.array([
+		# placeholders for compatibility with spectral_rendering() and color_contrast()
+		np.nan, # 300
+		np.nan, # 310
+		np.nan, # 320
+		np.nan, # 330
+		np.nan, # 340
+		np.nan, # 350
+		np.nan, # 360
+		np.nan, # 370
+		0.178745, # 380
+		0.178802,
+		0.178866,
+		0.178937,
+		0.179031,
+		0.192057,
+		0.204833,
+		0.218286,
+		0.231725,
+		0.243877,
+		0.249609,
+		0.24821,
+		0.239283,
+		0.224377,
+		0.20376,
+		0.177949,
+		0.149619,
+		0.120234,
+		0.093083,
+		0.07434,
+		0.06398,
+		0.05786,
+		0.052017,
+		0.047748,
+		0.047064,
+		0.049879,
+		0.054122,
+		0.057921,
+		0.060903,
+		0.06179,
+		0.059133,
+		0.056417,
+		0.056283,
+		0.058632,
+		0.062006,
+		0.066158, # 730
+		np.nan, # 740
+		np.nan, # 750
+		np.nan, # 760
+		np.nan, # 770
+		np.nan, # 780
+		np.nan, # 790
+		np.nan # 800
+	])
+	
+	# 5B5/6
+	m5b5 = np.array([
+		np.nan, # 300
+		np.nan, # 310
+		np.nan, # 320
+		np.nan, # 330
+		np.nan, # 340
+		np.nan, # 350
+		np.nan, # 360
+		np.nan, # 370
+		0.25803, # 380
+		0.258079,
+		0.258134,
+		0.258196,
+		0.258278,
+		0.27231,
+		0.289218,
+		0.306161,
+		0.323487,
+		0.343154,
+		0.361538,
+		0.371382,
+		0.368246,
+		0.350666,
+		0.320172,
+		0.280711,
+		0.238678,
+		0.196393,
+		0.15764,
+		0.131575,
+		0.118184,
+		0.11143,
+		0.105163,
+		0.100138,
+		0.101005,
+		0.10889,
+		0.121262,
+		0.134619,
+		0.144545,
+		0.1436,
+		0.131814,
+		0.120245,
+		0.115894,
+		0.119029,
+		0.127256,
+		0.144525, # 730
+		np.nan, # 740
+		np.nan, # 750
+		np.nan, # 760
+		np.nan, # 770
+		np.nan, # 780
+		np.nan, # 790
+		np.nan # 800
+	])
+	
+	# 5B6/6
+	m5b6 = np.array([
+		np.nan, # 300
+		np.nan, # 310
+		np.nan, # 320
+		np.nan, # 330
+		np.nan, # 340
+		np.nan, # 350
+		np.nan, # 360
+		np.nan, # 370
+		0.374389, # 380
+		0.374422,
+		0.374459,
+		0.374501,
+		0.374574,
+		0.400569,
+		0.432946,
+		0.461152,
+		0.482049,
+		0.497958,
+		0.507464,
+		0.511782,
+		0.508655,
+		0.494051,
+		0.465085,
+		0.422165,
+		0.371097,
+		0.315289,
+		0.260843,
+		0.22209,
+		0.200565,
+		0.188663,
+		0.177296,
+		0.168512,
+		0.16899,
+		0.179156,
+		0.19418,
+		0.207963,
+		0.217457,
+		0.217895,
+		0.207884,
+		0.197167,
+		0.196282,
+		0.203308,
+		0.214796,
+		0.231492, # 730
+		np.nan, # 740
+		np.nan, # 750
+		np.nan, # 760
+		np.nan, # 770
+		np.nan, # 780
+		np.nan, # 790
+		np.nan # 800
+	])
+	
+	# 5B7/6
+	m5b7 = np.array([
+		np.nan, # 300
+		np.nan, # 310
+		np.nan, # 320
+		np.nan, # 330
+		np.nan, # 340
+		np.nan, # 350
+		np.nan, # 360
+		np.nan, # 370
+		0.56984, # 380
+		0.570055,
+		0.570298,
+		0.570571,
+		0.570887,
+		0.588852,
+		0.608936,
+		0.624073,
+		0.637839,
+		0.651186,
+		0.659546,
+		0.660242,
+		0.65223,
+		0.634396,
+		0.607741,
+		0.57188,
+		0.528807,
+		0.476569,
+		0.41871,
+		0.369485,
+		0.331277,
+		0.304091,
+		0.280917,
+		0.26285,
+		0.252911,
+		0.247474,
+		0.24495,
+		0.246894,
+		0.253137,
+		0.255556,
+		0.251243,
+		0.24333,
+		0.23233,
+		0.223291,
+		0.227917,
+		0.250112, # 730
+		np.nan, # 740
+		np.nan, # 750
+		np.nan, # 760
+		np.nan, # 770
+		np.nan, # 780
+		np.nan, # 790
+		np.nan # 800
+	])
+	
+	# 7.5B5/4
+	m75b5 = np.array([
+		np.nan, # 300
+		np.nan, # 310
+		np.nan, # 320
+		np.nan, # 330
+		np.nan, # 340
+		np.nan, # 350
+		np.nan, # 360
+		np.nan, # 370
+		0.261784, # 380
+		0.261876,
+		0.26198,
+		0.262097,
+		0.262235,
+		0.272347,
+		0.281291,
+		0.289641,
+		0.296922,
+		0.301383,
+		0.302441,
+		0.300763,
+		0.295468,
+		0.287397,
+		0.274845,
+		0.257209,
+		0.236216,
+		0.212185,
+		0.187201,
+		0.169182,
+		0.158874,
+		0.152215,
+		0.143971,
+		0.136691,
+		0.135623,
+		0.140887,
+		0.149415,
+		0.158116,
+		0.166126,
+		0.167674,
+		0.160939,
+		0.152913,
+		0.148741,
+		0.149692,
+		0.155841,
+		0.172085, # 730
+		np.nan, # 740
+		np.nan, # 750
+		np.nan, # 760
+		np.nan, # 770
+		np.nan, # 780
+		np.nan, # 790
+		np.nan # 800
+	])
+	
+	# 7.5B6/4
+	m75b6 = np.array([
+		np.nan, # 300
+		np.nan, # 310
+		np.nan, # 320
+		np.nan, # 330
+		np.nan, # 340
+		np.nan, # 350
+		np.nan, # 360
+		np.nan, # 370
+		0.400169, # 380
+		0.400346,
+		0.400546,
+		0.400771,
+		0.401027,
+		0.410578,
+		0.420516,
+		0.426882,
+		0.428536,
+		0.425265,
+		0.420981,
+		0.416922,
+		0.412783,
+		0.407012,
+		0.397587,
+		0.381616,
+		0.358683,
+		0.328331,
+		0.292359,
+		0.26341,
+		0.245639,
+		0.236064,
+		0.226997,
+		0.220085,
+		0.220996,
+		0.23089,
+		0.245082,
+		0.256564,
+		0.261856,
+		0.256971,
+		0.242915,
+		0.229333,
+		0.225293,
+		0.229032,
+		0.236621,
+		0.246813, # 730
+		np.nan, # 740
+		np.nan, # 750
+		np.nan, # 760
+		np.nan, # 770
+		np.nan, # 780
+		np.nan, # 790
+		np.nan # 800
+	])
+	
+	# 7.5B7/4
+	m75b7 = np.array([
+		np.nan, # 300
+		np.nan, # 310
+		np.nan, # 320
+		np.nan, # 330
+		np.nan, # 340
+		np.nan, # 350
+		np.nan, # 360
+		np.nan, # 370
+		0.518759, # 380
+		0.518908,
+		0.519076,
+		0.519265,
+		0.519485,
+		0.534988,
+		0.546915,
+		0.558654,
+		0.571024,
+		0.57923,
+		0.582938,
+		0.582082,
+		0.57567,
+		0.56471,
+		0.549078,
+		0.526794,
+		0.498858,
+		0.463611,
+		0.42245,
+		0.389295,
+		0.367166,
+		0.352971,
+		0.338885,
+		0.327905,
+		0.326381,
+		0.333958,
+		0.346241,
+		0.357724,
+		0.366898,
+		0.368351,
+		0.361228,
+		0.352629,
+		0.350633,
+		0.353927,
+		0.362951,
+		0.379432, # 730
+		np.nan, # 740
+		np.nan, # 750
+		np.nan, # 760
+		np.nan, # 770
+		np.nan, # 780
+		np.nan, # 790
+		np.nan # 800
+	])
+	
+	# 7.5B8/4
+	m75b8 = np.array([
+		np.nan, # 300
+		np.nan, # 310
+		np.nan, # 320
+		np.nan, # 330
+		np.nan, # 340
+		np.nan, # 350
+		np.nan, # 360
+		np.nan, # 370
+		0.704227, # 380
+		0.704429,
+		0.704657,
+		0.704914,
+		0.70521,
+		0.723661,
+		0.738402,
+		0.756363,
+		0.778921,
+		0.79822,
+		0.808638,
+		0.806992,
+		0.792298,
+		0.770147,
+		0.741298,
+		0.705929,
+		0.667284,
+		0.622554,
+		0.571451,
+		0.530456,
+		0.502657,
+		0.483397,
+		0.462854,
+		0.445685,
+		0.439752,
+		0.445489,
+		0.457057,
+		0.466592,
+		0.474052,
+		0.476135,
+		0.469816,
+		0.46184,
+		0.462779,
+		0.469476,
+		0.477307,
+		0.489983, # 730
+		np.nan, # 740
+		np.nan, # 750
+		np.nan, # 760
+		np.nan, # 770
+		np.nan, # 780
+		np.nan, # 790
+		np.nan # 800
+	])
+	
+	# 10YR5/10
+	m10yr5 = np.array([
+		np.nan, # 300
+		np.nan, # 310
+		np.nan, # 320
+		np.nan, # 330
+		np.nan, # 340
+		np.nan, # 350
+		np.nan, # 360
+		np.nan, # 370
+		0.012332, # 380
+		0.012043,
+		0.011717,
+		0.011352,
+		0.010949,
+		0.016199,
+		0.017594,
+		0.018379,
+		0.018991,
+		0.019719,
+		0.020958,
+		0.023837,
+		0.032334,
+		0.060861,
+		0.106745,
+		0.140234,
+		0.156951,
+		0.174581,
+		0.208961,
+		0.259478,
+		0.302108,
+		0.325517,
+		0.333406,
+		0.334332,
+		0.332448,
+		0.329418,
+		0.326735,
+		0.323567,
+		0.320636,
+		0.317198,
+		0.314651,
+		0.312537,
+		0.310873,
+		0.309138,
+		0.305939,
+		0.302531, # 730
+		np.nan, # 740
+		np.nan, # 750
+		np.nan, # 760
+		np.nan, # 770
+		np.nan, # 780
+		np.nan, # 790
+		np.nan # 800
+	])
+	
+	# 10YR6/10
+	m10yr6 = np.array([
+		np.nan, # 300
+		np.nan, # 310
+		np.nan, # 320
+		np.nan, # 330
+		np.nan, # 340
+		np.nan, # 350
+		np.nan, # 360
+		np.nan, # 370
+		0.034696, # 380
+		0.034299,
+		0.03385,
+		0.033346,
+		0.032786,
+		0.036301,
+		0.038371,
+		0.040094,
+		0.041566,
+		0.042744,
+		0.044244,
+		0.047367,
+		0.059028,
+		0.09866,
+		0.166275,
+		0.220733,
+		0.25004,
+		0.276238,
+		0.318942,
+		0.378976,
+		0.429468,
+		0.458221,
+		0.469551,
+		0.47277,
+		0.472918,
+		0.471793,
+		0.471481,
+		0.469715,
+		0.468048,
+		0.465578,
+		0.463179,
+		0.461716,
+		0.462856,
+		0.461125,
+		0.458641,
+		0.455757, # 730
+		np.nan, # 740
+		np.nan, # 750
+		np.nan, # 760
+		np.nan, # 770
+		np.nan, # 780
+		np.nan, # 790
+		np.nan # 800
+	])
+	
+	# 10YR7/10
+	m10yr7 = np.array([
+		np.nan, # 300
+		np.nan, # 310
+		np.nan, # 320
+		np.nan, # 330
+		np.nan, # 340
+		np.nan, # 350
+		np.nan, # 360
+		np.nan, # 370
+		0.066231, # 380
+		0.065675,
+		0.065047,
+		0.064344,
+		0.063561,
+		0.06886,
+		0.072356,
+		0.075154,
+		0.077795,
+		0.079896,
+		0.081973,
+		0.08584,
+		0.101576,
+		0.155603,
+		0.25041,
+		0.333024,
+		0.381987,
+		0.421049,
+		0.476274,
+		0.549704,
+		0.608034,
+		0.640799,
+		0.654189,
+		0.659383,
+		0.662338,
+		0.664762,
+		0.668311,
+		0.670207,
+		0.670854,
+		0.669071,
+		0.668089,
+		0.668937,
+		0.671756,
+		0.673282,
+		0.672417,
+		0.670845, # 730
+		np.nan, # 740
+		np.nan, # 750
+		np.nan, # 760
+		np.nan, # 770
+		np.nan, # 780
+		np.nan, # 790
+		np.nan # 800
+	])
+	
+	# 10YR8/10
+	m10yr8 = np.array([
+		np.nan, # 300
+		np.nan, # 310
+		np.nan, # 320
+		np.nan, # 330
+		np.nan, # 340
+		np.nan, # 350
+		np.nan, # 360
+		np.nan, # 370
+		0.12431, # 380
+		0.123607,
+		0.122814,
+		0.121924,
+		0.120932,
+		0.12709,
+		0.130249,
+		0.133506,
+		0.136786,
+		0.139491,
+		0.142047,
+		0.146205,
+		0.164531,
+		0.233954,
+		0.361093,
+		0.477832,
+		0.548543,
+		0.597321,
+		0.658102,
+		0.739037,
+		0.805007,
+		0.843502,
+		0.86041,
+		0.867769,
+		0.871954,
+		0.87487,
+		0.879254,
+		0.881513,
+		0.882222,
+		0.879091,
+		0.878238,
+		0.879804,
+		0.884059,
+		0.885425,
+		0.882944,
+		0.880923, # 730
+		np.nan, # 740
+		np.nan, # 750
+		np.nan, # 760
+		np.nan, # 770
+		np.nan, # 780
+		np.nan, # 790
+		np.nan # 800
+	])
+	
+	# 5GY5/10
+	m5gy5 = np.array([
+		np.nan, # 300
+		np.nan, # 310
+		np.nan, # 320
+		np.nan, # 330
+		np.nan, # 340
+		np.nan, # 350
+		np.nan, # 360
+		np.nan, # 370
+		0.012664, # 380
+		0.012341,
+		0.011977,
+		0.011568,
+		0.011115,
+		0.015092,
+		0.016432,
+		0.017577,
+		0.018949,
+		0.021024,
+		0.023912,
+		0.027906,
+		0.039837,
+		0.084208,
+		0.178723,
+		0.282086,
+		0.339094,
+		0.342394,
+		0.314772,
+		0.278631,
+		0.23888,
+		0.197525,
+		0.156496,
+		0.124397,
+		0.105102,
+		0.094838,
+		0.088166,
+		0.082435,
+		0.079019,
+		0.079228,
+		0.082376,
+		0.087889,
+		0.09505,
+		0.100989,
+		0.100258,
+		0.098844, # 730
+		np.nan, # 740
+		np.nan, # 750
+		np.nan, # 760
+		np.nan, # 770
+		np.nan, # 780
+		np.nan, # 790
+		np.nan # 800
+	])
+	
+	# 5GY6/10
+	m5gy6 = np.array([
+		np.nan, # 300
+		np.nan, # 310
+		np.nan, # 320
+		np.nan, # 330
+		np.nan, # 340
+		np.nan, # 350
+		np.nan, # 360
+		np.nan, # 370
+		0.032315, # 380
+		0.031884,
+		0.031398,
+		0.030852,
+		0.030242,
+		0.032329,
+		0.03415,
+		0.035964,
+		0.037998,
+		0.040435,
+		0.043275,
+		0.04794,
+		0.061653,
+		0.116183,
+		0.23943,
+		0.388322,
+		0.485203,
+		0.498968,
+		0.458571,
+		0.404354,
+		0.346137,
+		0.286732,
+		0.227724,
+		0.180557,
+		0.151948,
+		0.13625,
+		0.126095,
+		0.117313,
+		0.112108,
+		0.112244,
+		0.117827,
+		0.126935,
+		0.138017,
+		0.145016,
+		0.144087,
+		0.140965, # 730
+		np.nan, # 740
+		np.nan, # 750
+		np.nan, # 760
+		np.nan, # 770
+		np.nan, # 780
+		np.nan, # 790
+		np.nan # 800
+	])
+	
+	# 5GY7/10
+	m5gy7 = np.array([
+		np.nan, # 300
+		np.nan, # 310
+		np.nan, # 320
+		np.nan, # 330
+		np.nan, # 340
+		np.nan, # 350
+		np.nan, # 360
+		np.nan, # 370
+		0.040501, # 380
+		0.039827,
+		0.039066,
+		0.038213,
+		0.037259,
+		0.040034,
+		0.044292,
+		0.051027,
+		0.062755,
+		0.083806,
+		0.120887,
+		0.187442,
+		0.289999,
+		0.403185,
+		0.487152,
+		0.527593,
+		0.542556,
+		0.549095,
+		0.551625,
+		0.545624,
+		0.517071,
+		0.469334,
+		0.408376,
+		0.352003,
+		0.31403,
+		0.291419,
+		0.2754,
+		0.260754,
+		0.251191,
+		0.250301,
+		0.257165,
+		0.269653,
+		0.286497,
+		0.29664,
+		0.295497,
+		0.293521, # 730
+		np.nan, # 740
+		np.nan, # 750
+		np.nan, # 760
+		np.nan, # 770
+		np.nan, # 780
+		np.nan, # 790
+		np.nan # 800
+	])
+	
+	# 5GY8/10
+	m5gy8 = np.array([
+		np.nan, # 300
+		np.nan, # 310
+		np.nan, # 320
+		np.nan, # 330
+		np.nan, # 340
+		np.nan, # 350
+		np.nan, # 360
+		np.nan, # 370
+		0.065944, # 380
+		0.065028,
+		0.063995,
+		0.062836,
+		0.061541,
+		0.067324,
+		0.073985,
+		0.084234,
+		0.103077,
+		0.138398,
+		0.195627,
+		0.279701,
+		0.398815,
+		0.543652,
+		0.664439,
+		0.725444,
+		0.746586,
+		0.745688,
+		0.727935,
+		0.704973,
+		0.671825,
+		0.628966,
+		0.573402,
+		0.519301,
+		0.48158,
+		0.459428,
+		0.444344,
+		0.429995,
+		0.420806,
+		0.421169,
+		0.431991,
+		0.451351,
+		0.475862,
+		0.491195,
+		0.491365,
+		0.487952, # 730
+		np.nan, # 740
+		np.nan, # 750
+		np.nan, # 760
+		np.nan, # 770
+		np.nan, # 780
+		np.nan, # 790
+		np.nan # 800
+	])
+	
+	# linear interpolation
+#	x10nm = np.empty(44)
+#	for i in range(44):
+#		x10nm[i] = i*10 + 300
+#	
+#	x1nm = np.empty(431)
+#	for i in range(431):
+#		x1nm[i] = i + 300
+#	
+#	# 5B
+#	m5b4_1nm = np.interp(x1nm, x10nm, m5b4)
+#	m5b5_1nm = np.interp(x1nm, x10nm, m5b5)
+#	m5b6_1nm = np.interp(x1nm, x10nm, m5b6)
+#	m5b7_1nm = np.interp(x1nm, x10nm, m5b7)
+#	# 7.5B
+#	m75b5_1nm = np.interp(x1nm, x10nm, m75b5)
+#	m75b6_1nm = np.interp(x1nm, x10nm, m75b6)
+#	m75b7_1nm = np.interp(x1nm, x10nm, m75b7)
+#	m75b8_1nm = np.interp(x1nm, x10nm, m75b8)
+#	# 10YR
+#	m10yr5_1nm = np.interp(x1nm, x10nm, m10yr5)
+#	m10yr6_1nm = np.interp(x1nm, x10nm, m10yr6)
+#	m10yr7_1nm = np.interp(x1nm, x10nm, m10yr7)
+#	m10yr8_1nm = np.interp(x1nm, x10nm, m10yr8)
+#	# 5GY
+#	m5gy5_1nm = np.interp(x1nm, x10nm, m5gy5)
+#	m5gy6_1nm = np.interp(x1nm, x10nm, m5gy6)
+#	m5gy7_1nm = np.interp(x1nm, x10nm, m5gy7)
+#	m5gy8_1nm = np.interp(x1nm, x10nm, m5gy8)
+	
+	# plot spectra
+	xvalues = np.empty(51)
+	for i in range(0, 51):
+		xvalues[i] = i*10 + 300
+	
+	plt.subplot(2, 2, 1)
+	plt.plot(xvalues, m5b4, color='deepskyblue', label="5B4/6")
+	plt.plot(xvalues, m5b5, color='deepskyblue', label="5B5/6")
+	plt.plot(xvalues, m5b6, color='deepskyblue', label="5B6/6")
+	plt.plot(xvalues, m5b7, color='deepskyblue', label="5B7/6")
+	#plt.legend()
+	plt.title("5B")
+	#plt.xlabel("Wavelength (nm)")
+	#plt.ylabel("Reflectance")
+	#plt.show()
+	plt.subplot(2, 2, 2)
+	plt.plot(xvalues, m75b5, color='dodgerblue', label="7.5B5/4")
+	plt.plot(xvalues, m75b6, color='dodgerblue', label="7.5B6/4")
+	plt.plot(xvalues, m75b7, color='dodgerblue', label="7.5B7/4")
+	plt.plot(xvalues, m75b8, color='dodgerblue', label="7.5B8/4")
+	#plt.legend()
+	plt.title("7.5B")
+	#plt.xlabel("Wavelength (nm)")
+	#plt.ylabel("Reflectance")
+	#plt.show()
+	plt.subplot(2, 2, 3)
+	plt.plot(xvalues, m10yr5, color='orange', label="10YR5/10")
+	plt.plot(xvalues, m10yr6, color='orange', label="10YR6/10")
+	plt.plot(xvalues, m10yr7, color='orange', label="10YR7/10")
+	plt.plot(xvalues, m10yr8, color='orange', label="10YR8/10")
+	#plt.legend()
+	plt.title("10YR")
+	#plt.xlabel("Wavelength (nm)")
+	#plt.ylabel("Reflectance")
+	#plt.show()
+	plt.subplot(2, 2, 4)
+	plt.plot(xvalues, m5gy5, color='chartreuse', label="5GY5/10")
+	plt.plot(xvalues, m5gy6, color='chartreuse', label="5GY6/10")
+	plt.plot(xvalues, m5gy7, color='chartreuse', label="5GY7/10")
+	plt.plot(xvalues, m5gy8, color='chartreuse', label="5GY8/10")
+	#plt.legend()
+	plt.title("5GY")
+	#plt.xlabel("Wavelength (nm)")
+	#plt.ylabel("Reflectance")
+	plt.show()
+	
+	# plot linear interpolations (for checking)
+	#plt.subplot(2, 2, 1)
+	#plt.plot(x1nm, m5b4_1nm, marker='^', color='deepskyblue', mec='k', label="5B4/6")
+	#plt.plot(x1nm, m5b5_1nm, marker='^', color='deepskyblue', mec='k', label="5B5/6")
+	#plt.plot(x1nm, m5b6_1nm, marker='^', color='deepskyblue', mec='k', label="5B6/6")
+	#plt.plot(x1nm, m5b7_1nm, marker='^', color='deepskyblue', mec='k', label="5B7/6")
+	#plt.legend()
+	#plt.title("5B")
+	#plt.xlabel("Wavelength (nm)")
+	#plt.ylabel("Reflectance")
+	#plt.show()
+	#plt.subplot(2, 2, 2)
+	#plt.plot(x1nm, m75b5_1nm, marker='o', color='dodgerblue', mec='k', label="7.5B5/4")
+	#plt.plot(x1nm, m75b6_1nm, marker='o', color='dodgerblue', mec='k', label="7.5B6/4")
+#	plt.plot(x1nm, m75b7_1nm, marker='o', color='dodgerblue', mec='k', label="7.5B7/4")
+#	plt.plot(x1nm, m75b8_1nm, marker='o', color='dodgerblue', mec='k', label="7.5B8/4")
+#	#plt.legend()
+#	plt.title("7.5B")
+#	#plt.xlabel("Wavelength (nm)")
+#	#plt.ylabel("Reflectance")
+#	#plt.show()
+#	plt.subplot(2, 2, 3)
+#	plt.plot(x1nm, m10yr5_1nm, marker='s', color='orange', mec='k', label="10YR5/10")
+#	plt.plot(x1nm, m10yr6_1nm, marker='s', color='orange', mec='k', label="10YR6/10")
+#	plt.plot(x1nm, m10yr7_1nm, marker='s', color='orange', mec='k', label="10YR7/10")
+#	plt.plot(x1nm, m10yr8_1nm, marker='s', color='orange', mec='k', label="10YR8/10")
+#	#plt.legend()
+#	plt.title("10YR")
+#	#plt.xlabel("Wavelength (nm)")
+#	#plt.ylabel("Reflectance")
+#	#plt.show()
+#	plt.subplot(2, 2, 4)
+#	plt.plot(x1nm, m5gy5_1nm, marker='D', color='chartreuse', mec='k', label="5GY5/10")
+#	plt.plot(x1nm, m5gy6_1nm, marker='D', color='chartreuse', mec='k', label="5GY6/10")
+#	plt.plot(x1nm, m5gy7_1nm, marker='D', color='chartreuse', mec='k', label="5GY7/10")
+#	plt.plot(x1nm, m5gy8_1nm, marker='D', color='chartreuse', mec='k', label="5GY8/10")
+#	#plt.legend()
+#	plt.title("5GY")
+#	#plt.xlabel("Wavelength (nm)")
+#	#plt.ylabel("Reflectance")
+#	plt.show()
+	
+	# rendering
+	m5bcs = np.empty((3, 4))
+	print("5B4/6")
+	m5bdata = spectral_rendering(m5b4)
+	m5bcs[0][0] = m5bdata[0]
+	m5bcs[1][0] = m5bdata[1]
+	m5bcs[2][0] = m5bdata[2]
+	print("5B5/6")
+	m5bdata = spectral_rendering(m5b5)
+	m5bcs[0][1] = m5bdata[0]
+	m5bcs[1][1] = m5bdata[1]
+	m5bcs[2][1] = m5bdata[2]
+	print("5B6/6")
+	m5bdata = spectral_rendering(m5b6)
+	m5bcs[0][2] = m5bdata[0]
+	m5bcs[1][2] = m5bdata[1]
+	m5bcs[2][2] = m5bdata[2]
+	print("5B7/6")
+	m5bdata = spectral_rendering(m5b7)
+	m5bcs[0][3] = m5bdata[0]
+	m5bcs[1][3] = m5bdata[1]
+	m5bcs[2][3] = m5bdata[2]
+	
+	m75bcs = np.empty((3, 4))
+	print("7.5B5/4")
+	m75bdata = spectral_rendering(m75b5)
+	m75bcs[0][0] = m75bdata[0]
+	m75bcs[1][0] = m75bdata[1]
+	m75bcs[2][0] = m75bdata[2]
+	print("7.5B6/4")
+	m75bdata = spectral_rendering(m75b6)
+	m75bcs[0][1] = m75bdata[0]
+	m75bcs[1][1] = m75bdata[1]
+	m75bcs[2][1] = m75bdata[2]
+	print("7.5B7/4")
+	m75bdata = spectral_rendering(m75b7)
+	m75bcs[0][2] = m75bdata[0]
+	m75bcs[1][2] = m75bdata[1]
+	m75bcs[2][2] = m75bdata[2]
+	print("7.5B8/4")
+	m75bdata = spectral_rendering(m75b8)
+	m75bcs[0][3] = m75bdata[0]
+	m75bcs[1][3] = m75bdata[1]
+	m75bcs[2][3] = m75bdata[2]
+	
+	m10yrcs = np.empty((3, 4))
+	print("10YR5/10")
+	m10yrdata = spectral_rendering(m10yr5)
+	m10yrcs[0][0] = m10yrdata[0]
+	m10yrcs[1][0] = m10yrdata[1]
+	m10yrcs[2][0] = m10yrdata[2]
+	print("10YR6/10")
+	m10yrdata = spectral_rendering(m10yr6)
+	m10yrcs[0][1] = m10yrdata[0]
+	m10yrcs[1][1] = m10yrdata[1]
+	m10yrcs[2][1] = m10yrdata[2]
+	print("10YR7/10")
+	m10yrdata = spectral_rendering(m10yr7)
+	m10yrcs[0][2] = m10yrdata[0]
+	m10yrcs[1][2] = m10yrdata[1]
+	m10yrcs[2][2] = m10yrdata[2]
+	print("10YR8/10")
+	m10yrdata = spectral_rendering(m10yr8)
+	m10yrcs[0][3] = m10yrdata[0]
+	m10yrcs[1][3] = m10yrdata[1]
+	m10yrcs[2][3] = m10yrdata[2]
+	
+	m5gycs = np.empty((3, 4))
+	print("5GY5/10")
+	m5gydata = spectral_rendering(m5gy5)
+	m5gycs[0][0] = m5gydata[0]
+	m5gycs[1][0] = m5gydata[1]
+	m5gycs[2][0] = m5gydata[2]
+	print("5GY6/10")
+	m5gydata = spectral_rendering(m5gy6)
+	m5gycs[0][1] = m5gydata[0]
+	m5gycs[1][1] = m5gydata[1]
+	m5gycs[2][1] = m5gydata[2]
+	print("5GY7/10")
+	m5gydata = spectral_rendering(m5gy7)
+	m5gycs[0][2] = m5gydata[0]
+	m5gycs[1][2] = m5gydata[1]
+	m5gycs[2][2] = m5gydata[2]
+	print("5GY8/10")
+	m5gydata = spectral_rendering(m5gy8)
+	m5gycs[0][3] = m5gydata[0]
+	m5gycs[1][3] = m5gydata[1]
+	m5gycs[2][3] = m5gydata[2]
+	
+	# color space plots
+	if (l1 == m1):
+		plt.plot(m5bcs[1], m5bcs[0], marker='^', linestyle='', color='deepskyblue', mec='k', label="5B")
+		plt.plot(m75bcs[1], m75bcs[0], marker='o', linestyle='', color='dodgerblue', mec='k', label="7.5B")
+		plt.plot(m10yrcs[1], m10yrcs[0], marker='s', linestyle='', color='orange', mec='k', label="10YR")
+		plt.plot(m5gycs[1], m5gycs[0], marker='D', linestyle='', color='chartreuse', mec='k', label="5GY")
+		plt.xlabel("Chromaticity ((L-S)/(L+S))")
+		plt.ylabel("Brightness (L)")
+		plt.legend()
+		plt.show()
+	else:
+		plt.plot(m5bcs[1], m5bcs[2], marker='^', linestyle='', color='deepskyblue', mec='k', label="5B")
+		plt.plot(m75bcs[1], m75bcs[2], marker='o', linestyle='', color='dodgerblue', mec='k', label="7.5B")
+		plt.plot(m10yrcs[1], m10yrcs[2], marker='s', linestyle='', color='orange', mec='k', label="10YR")
+		plt.plot(m5gycs[1], m5gycs[2], marker='D', linestyle='', color='chartreuse', mec='k', label="5GY")
+		plt.xlabel("(L-S)/(L+M+S)")
+		plt.ylabel("(M-0.5(L+S))/(L+M+S)")
+		xborder = np.array([-math.sqrt(1/2), 0, math.sqrt(1/2), -math.sqrt(1/2)])
+		yborder = np.array([-math.sqrt(2/3)/2, math.sqrt(2/3), -math.sqrt(2/3)/2, -math.sqrt(2/3)/2])
+		plt.plot(xborder, yborder, '-k')
+		plt.text(-math.sqrt(1/2) - 0.05, -math.sqrt(2/3)/2 - 0.025, 'S')
+		plt.text(0 - 0.025, math.sqrt(2/3) + 0.0125, 'M')
+		plt.text(math.sqrt(1/2) + 0.0125, -math.sqrt(2/3)/2 - 0.025, 'L')
+		plt.legend()
+		plt.show()
+	
+	# color contrast
+	# Here we compare the expected performance with the study's definition of chance level,
+	# 62.5%.
+	box = np.empty((16, 3))
+	
+	# 5B vs. 10YR
+	print("5B vs. 10YR")
+	color_disc(m5b4, m5b5, m5b6, m5b7, m10yr5, m10yr6, m10yr7, m10yr8, correct=8, trials=16, order=0, alternative='less')
+	
+	# 7.5B vs. 10YR
+	print("7.5B vs. 10YR")
+	color_disc(m75b5, m75b6, m75b7, m75b8, m10yr5, m10yr6, m10yr7, m10yr8, correct=8, trials=16, order=0, alternative='less')
+	
+	# 5GY vs. 10YR
+	print("5GY vs. 10YR")
+	color_disc(m5gy5, m5gy6, m5gy7, m5gy8, m10yr5, m10yr6, m10yr7, m10yr8, correct=8, trials=16, order=0, alternative='less')
 
 # print execution time
 print("%s seconds" % (time.time() - start_time))
