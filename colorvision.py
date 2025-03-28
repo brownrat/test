@@ -93,6 +93,7 @@ parser.add_argument("--peak", help="band-pass spectra", action="store_true")
 parser.add_argument("--ramp", help="ramp-function spectra", action="store_true")
 parser.add_argument("--sky", help="sky-like and sun-like spectra", action="store_true")
 parser.add_argument("--kodak", help="Kodak Wratten camera filters", action="store_true")
+parser.add_argument("--kv2", help="use tabulated Kodak Wratten data from Kodak Photographic Filters Handbook (1990)", action="store_true")
 parser.add_argument("--kcheck", help="check camera filter brightness matches", action="store_true")
 parser.add_argument("--render", help="show colormath spectral rendering for comparison", action="store_true")
 parser.add_argument("--qcheck", help="show absolute quantum catches", action="store_true")
@@ -123,8 +124,6 @@ parser.add_argument("--height", type=float, default=0, help="height of light/obj
 parser.add_argument("--radius", type=float, default=1, help="radius of light source (cm)")
 parser.add_argument("--watts", type=int, default=12, help="number of watts produced by light source")
 parser.add_argument("--lux", type=int, default=115, help="illuminance in lux")
-#parser.add_argument("--start", type=int, default=300, help="start of wavelength interval")
-#parser.add_argument("--end", type=int, default=900, help="end of wavelength interval")
 parser.add_argument("--ct", type=int, default=2856, help="color temperature of incandescent/blackbody illuminant")
 parser.add_argument("--selfscreen", help="enable pigment self-screening (varying optical density)", action="store_true")
 parser.add_argument("--selfscreen1", help="enable pigment self-screening (simple version)", action="store_true")
@@ -174,13 +173,15 @@ lms_to_xyz = np.array([
 # It can only tell us the direction of a difference in brightness, not how large or
 # perceptible it is -- for that you need Weber fractions.
 # The percentages of L, M and S cones are about 51-76%, 20-44% and 2% in humans (Wikipedia)
-# and 68-73%, 20-25% and 7% in the fat-tailed dunnart ("Diversity of Color Vision [sic]: Not All
+# and 68-73%, 20-25% and 7% in the fat-tailed dunnart ("Diversity of Color* Vision: Not All
 # Australian Marsupials are Trichromatic"). In Norway rats, the percentage of S cones is 11-12%
 # ("Cone-based vision of rats for ultraviolet and visible lights") and in the house mouse the
 # percentage of exclusive non-coexpressing S cones is 26% ("Number and Distribution of Mouse
 # Retinal Cone Photoreceptors").
+# * normally spelled "colour" in Australia, but this is the correct title.
 
 # function approximating human lens filtering, for real this time (Lamb 1995)
+# 21/03/2025 -- optical density uses 10 not e, again.
 def template_filter(w, a, b, c, d, e, f):
 	try:
 		density = a*math.exp((b - w) / c) + d*math.exp((e - w) / f)
@@ -189,7 +190,7 @@ def template_filter(w, a, b, c, d, e, f):
 		return 0
 	if (density < 0):
 		return 0
-	return math.exp(-density)
+	return 10**(-density)
 def human_filter(w):
 	return template_filter(w, 1.1, 400, 15, 0.11, 500, 80)
 
@@ -200,123 +201,13 @@ def filter_fit(xdata, a, b, c, d, e, f):
 		ydata[i] = template_filter(xdata[i], a, b, c, d, e, f)
 	return(ydata)
 
-# Data for Thylamys elegans from Palacios et al. (2010). They say the measurements were
-# every 20 nm, but the graph shows every 4 nm. Numbered because I can't count.
-opossum_filter_data = np.array([
-	4.198057132, # 300
-	4.940696766, # 304
-	5.078876161, # 308
-	5.501061962, # 312
-	6.584859955, # 316
-	7.209278612, # 320
-	7.901294748, # 324
-	8.620954224, # 328
-	9.398772899, # 332
-	10.347077491, # 336
-	10.347077491, # 340
-	11.277550076, # 344
-	11.7416299, # 348
-	12.36134807, # 352
-	12.706348891, # 356
-	13.514198455, # 360
-	13.671217103, # 364
-	13.883186681, # 368
-	14.331523604, # 372
-	14.679061196, # 376
-	14.956837592, # 380
-	15.445837458, # 384
-	15.658142785, # 388
-	16.148261815, # 392
-	16.148261815, # 396
-	16.469760201, # 400
-	17.049486926, # 404
-	17.049486926, # 408
-	17.049486926, # 412
-	17.754783802, # 416
-	18.383417975, # 420
-	18.665186055, # 424
-	18.465415359, # 428
-	18.800194486, # 432
-	18.800194486, # 436
-	19.319971349, # 440
-	19.747790274, # 444
-	19.747790274, # 448
-	19.747790274, # 452
-	19.554921087, # 456
-	19.96248315, # 460
-	19.627330969, # 464
-	19.76767408, # 468
-	19.860751183, # 472
-	19.921297931, # 476
-	20.081897902, # 480
-	21.329242998, # 484
-	21.266830976, # 488
-	20.999089747, # 492
-	21.050795104, # 496
-	20.877623195, # 500
-	20.972341738, # 504
-	21.270598827, # 508
-	21.485291704, # 512
-	21.705468482, # 516
-	21.848684112, # 520
-	21.723113961, # 526
-	22.91506046, # 530
-	22.780275861, # 534
-	22.620944276, # 536
-	23.162768661, # 540
-	23.162768661, # 544
-	22.572782937, # 548
-	22.581960078, # 552
-	22.620571221, # 556
-	22.597516452, # 560
-	23.17746701, # 564
-	23.074242824, # 568
-	23.545671821, # 572
-	23.609016479, # 576
-	23.112518217, # 580
-	23.144973961, # 584
-	23.489564422, # 588
-	23.638674313, # 592
-	24.366951349, # 596
-	23.92103928, # 600
-	24.628835622, # 604
-	24.580935422, # 608
-	24.381015504, # 612
-	23.953420413, # 616
-	24.122488721, # 620
-	24.43510841, # 624
-	24.616338296, # 628
-	24.61712171, # 632
-	24.756233741, # 636
-	24.676549295, # 640
-	24.652897639, # 644
-	24.798276986, # 648
-	25.008567819, # 652
-	25.276943241, # 656
-	25.865996329, # 660
-	25.24340564, # 664
-	25.300445676, # 668
-	25.404042916, # 672
-	25.44354939, # 676
-	25.638134628, # 680
-	25.358679486, # 684
-	25.557368324, # 688
-	25.510661898, # 692
-	26.081547231, # 696
-	26.750956263 # 700
-])
-
-# normalize to 1 at 700
-opossum_filter_data = opossum_filter_data / opossum_filter_data[100]
-
-xvalues = np.empty(101)
-for i in range(0, 101):
-	xvalues[i] = i*4 + 300
-
-opossum_fit = scipy.optimize.curve_fit(filter_fit, xvalues, opossum_filter_data, p0=[1.1, 400, 15, 0.11, 500, 80])
-
 # mouse (Jacobs & Williams 2007)
-mouse_filter_data = np.array([
+# Transmission below 310 nm is not provided and has been set to 0. This means we're effectively
+# only considering wavelengths >=310, but it's easier to keep track of the numbers if they begin
+# with a multiple of 100.
+mouse_lens = np.array([
+	0, # 300
+	0, #309
 	10.3, # 310
 	33.0, # 320
 	44.9, # 330
@@ -359,37 +250,31 @@ mouse_filter_data = np.array([
 	100.0 # 700
 ])
 
-xvalues = np.empty(40)
-for i in range(0, 40):
-	xvalues[i] = i*10 + 310
+# interpolate
+x_10nm = np.empty(42)
+x_10nm[0] = 300
+x_10nm[1] = 309
+for i in range(2, 42):
+	x_10nm[i] = (i-1)*10 + 300
+x_1nm = np.empty(401)
+for i in range(401): x_1nm[i] = i + 300
 
-mouse_fit = scipy.optimize.curve_fit(filter_fit, xvalues, mouse_filter_data/100, p0=[1.1, 400, 15, 0.11, 500, 80])
-
-mousesquared_fit = scipy.optimize.curve_fit(filter_fit, xvalues, (mouse_filter_data/100)**2, p0=[1.1, 400, 15, 0.11, 500, 80])
-
-# functions
-def opossum_filter(w):
-	return template_filter(w, *opossum_fit[0])
-
-def mouse_filter(w):
-	return template_filter(w, *mouse_fit[0])
-
-def mousesquared_filter(w):
-	return template_filter(w, *mousesquared_fit[0])
+mouse_lens_1nm = np.interp(x_1nm, x_10nm, mouse_lens/100)
+mouse_lens_1nm_squared = np.interp(x_1nm, x_10nm, (mouse_lens/100)**2)
 
 def lens_filter(w):
 	if (args.filter == "human"):
 		return human_filter(w)
-	elif (args.filter == "opossum"):
-		return opossum_filter(w)
 	elif (args.filter == "mouse"):
-		return mouse_filter(w)
+		w = round(w)
+		return mouse_lens_1nm[w-300]
 	elif (args.filter == "mousesquared"):
-		return mousesquared_filter(w)
+		w = round(w)
+		return mouse_lens_1nm_squared[w-300]
 	return 1
 
 def sensitivity(w, l=l1, m=m1, s=s1):
-	if (args.filter == "human"):
+	if (args.filter == "human2"):
 		return luminosity[w-300]
 	return (args.lb*vpt(w, l) + args.mb*vpt(w, m) + args.sb*vpt(w, s) + args.rb*vpt(w, rod)) * lens_filter(w)
 
@@ -414,10 +299,7 @@ def blackbody(w, t):
 def normal(mu, std_dev, x):
 	return (1 / std_dev*math.sqrt(2*math.pi)) * math.exp((-1/2)*((x - mu)/std_dev)**2)
 
-# light sources -- standardize to 300-900
-#d65 = np.zeros(61)
-#for i in range(4, 54):
-#	d65[i] = spectral_constants.REF_ILLUM_TABLE["d65"][i-4]
+# illuminants
 
 # D65 300-830 (CIE)
 d65_1nm = np.array([
@@ -2360,13 +2242,15 @@ if (args.q10deg): hcf = hcf10deg
 if (args.e2deg): hcf = hcfe2deg
 
 # find sensitivity of a given photoreceptor type to a wavelength using visual pigment templates
-# from Govardovskii et al. (2000)
+# from Govardovskii et al. (2000). l is short for lambda. See also https://pmc.ncbi.nlm.nih.gov/articles/PMC2962788/
 # This produces the human cone fundamentals instead if the "lmax" (peak sensitivity) argument
 # is set to -1 (L cone), -2 (M cone) or -3 (S cone), since negative values are not meaningful
 # here. This option should not be used with ocular media filtering because it's already
 # built in. The results are similar to -l 560 -m 530 -s 420 --filter human, but not identical
 # because they include the macular pigment. So far I haven't found any tabulated data for
 # this.
+# Palacios et al. 2010 use a different equation for the beta-band peak (123 + 0.429 * alpha
+# peak).
 def vpt(w, lmax):
 	# use human cone fundamentals for testing
 	if (lmax == -1): # L cone
@@ -3009,48 +2893,52 @@ else:
 # Non-integer values are supported, but when using the human cone fundamentals they're
 # rounded off because we look up the sensitivity in an array rather than calculating it directly.
 # This probably doesn't matter much.
-# primaries
-r = args.red
-g = args.green
-b = args.blue
+# This part prevents the script from running if we don't specify all of L, M and S as separate
+# values, so it's been made conditional on this. Determining a set of dichromatic CMFs would
+# follow a different process.
+if (l1 != m1 != s1):
+	# primaries
+	r = args.red
+	g = args.green
+	b = args.blue
 
-# sensitivity of cones to primaries
-matrix_a = np.array([
-	[vpt(r, l1)*lens_filter(r), vpt(g, l1)*lens_filter(g), vpt(b, l1)*lens_filter(b)],
-	[vpt(r, m1)*lens_filter(r), vpt(g, m1)*lens_filter(g), vpt(b, m1)*lens_filter(b)],
-	[vpt(r, s1)*lens_filter(r), vpt(g, s1)*lens_filter(g), vpt(b, s1)*lens_filter(b)]
-])
+	# sensitivity of cones to primaries
+	matrix_a = np.array([
+		[vpt(r, l1)*lens_filter(r), vpt(g, l1)*lens_filter(g), vpt(b, l1)*lens_filter(b)],
+		[vpt(r, m1)*lens_filter(r), vpt(g, m1)*lens_filter(g), vpt(b, m1)*lens_filter(b)],
+		[vpt(r, s1)*lens_filter(r), vpt(g, s1)*lens_filter(g), vpt(b, s1)*lens_filter(b)]
+	])
 
-# sensitivity of cones to each wavelength from 300 to 800 nm in 1 nm increments
-matrix_c = np.empty((3, 401)) # 500x3 matrix -- this is height x width, not width x height
+	# sensitivity of cones to each wavelength from 300 to 800 nm in 1 nm increments
+	matrix_c = np.empty((3, 401)) # 500x3 matrix -- this is height x width, not width x height
 
-# red row
-for i in range(401):
-	matrix_c[0][i] = vpt(i + 300, l1)*lens_filter(i+300)
-# green row
-	matrix_c[1][i] = vpt(i + 300, m1)*lens_filter(i+300)
-# blue row
-	matrix_c[2][i] = vpt(i + 300, s1)*lens_filter(i+300)
+	# red row
+	for i in range(401):
+		matrix_c[0][i] = vpt(i + 300, l1)*lens_filter(i+300)
+	# green row
+		matrix_c[1][i] = vpt(i + 300, m1)*lens_filter(i+300)
+	# blue row
+		matrix_c[2][i] = vpt(i + 300, s1)*lens_filter(i+300)
 
-# initial color match matrix
-matrix_m = np.matmul(np.linalg.inv(matrix_a), matrix_c) # A x M = C, so M = A^-1 x C
+	# initial color match matrix
+	matrix_m = np.matmul(np.linalg.inv(matrix_a), matrix_c) # A x M = C, so M = A^-1 x C
 
-# adjust to reference white
-#watts = 0
-#for i in range(401): watts += wp_1nm[i] # scale to 1 watt
-rw = 0.0
-gw = 0.0
-bw = 0.0
-for i in range (401):
-	rw += matrix_m[0][i] * wp_1nm[i]#/watts
-	gw += matrix_m[1][i] * wp_1nm[i]#/watts
-	bw += matrix_m[2][i] * wp_1nm[i]#/watts
+	# adjust to reference white
+	#watts = 0
+	#for i in range(401): watts += wp_1nm[i] # scale to 1 watt
+	rw = 0.0
+	gw = 0.0
+	bw = 0.0
+	for i in range (401):
+		rw += matrix_m[0][i] * wp_1nm[i]#/watts
+		gw += matrix_m[1][i] * wp_1nm[i]#/watts
+		bw += matrix_m[2][i] * wp_1nm[i]#/watts
 
-# final color match matrix
-matrix_cmf = np.empty((3, 401))
-matrix_cmf[0] = matrix_m[0] / rw
-matrix_cmf[1] = matrix_m[1] / gw
-matrix_cmf[2] = matrix_m[2] / bw
+	# final color match matrix
+	matrix_cmf = np.empty((3, 401))
+	matrix_cmf[0] = matrix_m[0] / rw
+	matrix_cmf[1] = matrix_m[1] / gw
+	matrix_cmf[2] = matrix_m[2] / bw
 
 if (args.cmf):
 	print("White units: r=" + str(rw) + ", g=" + str(gw) + ", b=" + str(bw))
@@ -3130,7 +3018,7 @@ def gamma(v):
 # 03/03/2025 -- added a "reflect" argument for specifying whether this is a
 # reflectance/transmission spectrum and should be multiplied by our light source. If it's
 # an emission spectrum as in the sky and illuminant examples, we don't want this.
-def spectral_rendering(table, light_source=wp_1nm, output=True, lw=args.lw, mw=args.mw, sw=args.sw, reflect=True):
+def spectral_rendering(table, light_source=wp_1nm, output=True, lw=l1, mw=m1, sw=s1, reflect=True):
 	table_l = 0
 	table_m = 0
 	table_s = 0
@@ -3169,12 +3057,13 @@ def spectral_rendering(table, light_source=wp_1nm, output=True, lw=args.lw, mw=a
 			else: brightness += sensitivity(w) * table[i]
 			
 			# CMF
-			if (reflect == True): table_r += matrix_cmf[0][i] * table[i] * light_source[i]
-			else: table_r += matrix_cmf[0][i] * table[i]
-			if (reflect == True): table_g += matrix_cmf[1][i] * table[i] * light_source[i]
-			else: table_g += matrix_cmf[1][i] * table[i]
-			if (reflect == True): table_b += matrix_cmf[2][i] * table[i] * light_source[i]
-			else: table_b += matrix_cmf[2][i] * table[i]
+			if (lw != mw != sw):
+				if (reflect == True): table_r += matrix_cmf[0][i] * table[i] * light_source[i]
+				else: table_r += matrix_cmf[0][i] * table[i]
+				if (reflect == True): table_g += matrix_cmf[1][i] * table[i] * light_source[i]
+				else: table_g += matrix_cmf[1][i] * table[i]
+				if (reflect == True): table_b += matrix_cmf[2][i] * table[i] * light_source[i]
+				else: table_b += matrix_cmf[2][i] * table[i]
 	
 	# normalize according to provided light source
 	n = 0
@@ -3253,7 +3142,7 @@ def spectral_rendering(table, light_source=wp_1nm, output=True, lw=args.lw, mw=a
 			while (lens_filter(match) == 0):
 				match += 1
 			
-			for i in range(300, 800):
+			for i in range(300, 701):
 				matchl1 = vpt(match, lw)*lens_filter(match) / wpl
 				matchm1 = vpt(match, mw)*lens_filter(match) / wpm
 				matchs1 = vpt(match, sw)*lens_filter(match) / wps
@@ -3683,6 +3572,27 @@ def color_contrast(table1, table2, quantum_noise=args.qn, lw = args.lw, mw = arg
 
 # brightness contrast based on https://journals.biologists.com/jeb/article/207/14/2471/14748/Interspecific-and-intraspecific-views-of-color
 def brightness_contrast(table1, table2):
+	# interpolate 1-nm intervals if we're provided with 10-nm
+	if (len(table1) < 401):
+		x10nm = np.empty(41)
+		for i in range(41):
+			x10nm[i] = i*10 + 300
+		
+		x1nm = np.empty(401)
+		for i in range(401):
+			x1nm[i] = i + 300
+		
+		table1 = np.interp(x1nm, x10nm, table1)
+	if (len(table2) < 401):
+		x10nm = np.empty(41)
+		for i in range(41):
+			x10nm[i] = i*10 + 300
+		
+		x1nm = np.empty(401)
+		for i in range(401):
+			x1nm[i] = i + 300
+		
+		table2 = np.interp(x1nm, x10nm, table2)
 	
 	# background light
 	# This doesn't seem to be used for anything? I don't think a von Kries transform is
@@ -3700,18 +3610,18 @@ def brightness_contrast(table1, table2):
 	q1 = 0
 	q2 = 0
 	for i in range(table1.shape[0]):
-		w = i*10 + 300
-		wpt += sensitivity(w, l1) * wp[i]
+		w = i + 300
+		wpt += sensitivity(w, l1) * wp_1nm[i]
 		#ql1 += vpt(w, l1) * table1[i] * wp[i] * lens_filter(w)
 		#qm1 += vpt(w, m1) * table1[i] * wp[i] * lens_filter(w)
 		#qr1 += vpt(w, rod) * table1[i] * wp[i] * lens_filter(w)
-		q1 += sensitivity(w) * table1[i] * wp[i]
+		q1 += sensitivity(w) * table1[i] * wp_1nm[i]
 	for i in range(table2.shape[0]):
-		w = i*10 + 300
+		w = i + 300
 		#ql2 += vpt(w, l1) * table2[i] * wp[i] * lens_filter(w)
 		#qm2 += vpt(w, m1) * table2[i] * wp[i] * lens_filter(w)
 		#qr2 += vpt(w, rod) * table2[i] * wp[i] * lens_filter(w)
-		q2 += sensitivity(w) * table2[i] * wp[i]
+		q2 += sensitivity(w) * table2[i] * wp_1nm[i]
 	
 	#if (l1 != m1):
 	#	df = math.log((args.lb*ql1 + args.mb*qm1 + args.rb*qr1) / (args.lb*ql2 + args.mb*qm2 + args.rb*qr2))
@@ -3726,6 +3636,10 @@ print("L: " + str(l1) + ", M: " + str(m1) + ", S: " + str(s1) + ", rod: " + str(
 print("")
 
 # plot visual pigment templates
+# I changed the line colors back to red, green and blue. I've been trying to avoid this kind
+# of color coding, but in this case it's generally understood which visual pigment template
+# is which based on its position on the graph, and the shades-of-gray "color" scheme was too
+# pale for my liking.
 if (args.vpt):
 	xvalues = np.empty(400)
 	lvalues = np.empty(400)
@@ -3757,12 +3671,12 @@ if (args.vpt):
 			smax = 1
 			rmax = 1
 
-	plt.plot(xvalues, lvalues/lmax, 'gray', label="L (" + str(args.lw) + ")")
+	plt.plot(xvalues, lvalues/lmax, 'r', label="L (" + str(args.lw) + ")")
 	# don't plot redundant curves
 	if (l1 != m1):
-		plt.plot(xvalues, mvalues/mmax, 'silver', label="M (" + str(args.mw) + ")")
+		plt.plot(xvalues, mvalues/mmax, 'g', label="M (" + str(args.mw) + ")")
 	if (m1 != s1):
-		plt.plot(xvalues, svalues/smax, 'k', label="S (" + str(args.sw) + ")")
+		plt.plot(xvalues, svalues/smax, 'b', label="S (" + str(args.sw) + ")")
 	if (args.rod != 0):
 		plt.plot(xvalues, rvalues/rmax, ':k', label="rod (" + str(args.rod) + ")")
 	plt.xlabel("Wavelength (nm)")
@@ -3772,11 +3686,11 @@ if (args.vpt):
 
 # show luminous efficiency function and lens filtering
 if (args.luminosity):
-	xvalues = np.empty(500)
-	yvalues = np.empty(500)
-	yvalues1 = np.empty(500)
+	xvalues = np.empty(401)
+	yvalues = np.empty(401)
+	yvalues1 = np.empty(401)
 	ms = 300
-	for i in range(300, 800):
+	for i in range(300, 701):
 		if (sensitivity(i) > (sensitivity(ms))):
 			ms = i
 		xvalues[i-300] = i
@@ -3786,7 +3700,7 @@ if (args.luminosity):
 	print("")
 	
 	plt.plot(xvalues, yvalues/sensitivity(ms), 'k')
-	if (args.filter == "none"):
+	if (args.filter != "none"):
 		plt.plot(xvalues, yvalues1, ':k')
 	plt.xlabel("Wavelength (nm)")
 	plt.ylabel("Relative sensitivity")
@@ -4288,645 +4202,6 @@ if (args.lighting):
 	print("Brightness contrast between A and incandescent: " + str(brightness_contrast(a, incandescent)))
 	print("Brightness contrast between incandescent and incandescent: " + str(brightness_contrast(incandescent, incandescent)))
 
-# leaves
-# Again, something is wrong with the XYZ conversions. The LCHab hues kind of make sense
-# if you interpret them as HSL/HSV hues, but they're not supposed to work that way --
-# the hue varies with lightness. This means the three leaf spectra are interpreted as
-# "yellow". This is probably why using LCH rather than HSL for image transformations
-# totally mangles the colors.
-# The output is somewhat better when using Python's built-in XYZ<->LMS matrix, E instead
-# of D65 and 440-540-565 instead of 420-530-560, but it's still wrong.
-# Using the "physiological" matrix from Wikipedia produces a much better result as it
-# increases the contribution from M and S, though now somewhat green-shifted. I'm unsure
-# if the luminous efficiency function should be included. Is the absorption ratio
-# affected by the relative sensitivity and density of cone types, or are they
-# adjusted relative to each other?
-# 10/02/2025 -- took out 810-900 nm for compatibility with other changes
-	
-if (args.leaves):
-	# reflectance spectrum of maple leaves estimated from this graph:
-	# https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEgKwT9GhKlvdbOROD_JtEEym7Ovzq8GPfSCORiVcKklEQI9DSTuNjoaIJMWMdpJpc4ijq0T1m_PXF2seWczauKLz-4VPIY9TSXQqXdp1B80vu4w5O4lWaAF0k2kaA5ThrJrjCzlck8Ez1fF/s1600/LeafSpectra.jpg
-	# The graph has information for 300-400 but appears to be roughly 0 there.
-	leaf_table = np.array([
-		0.0, # 300
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.01, # 400
-		0.01,
-		0.02,
-		0.02,
-		0.02,
-		0.03,
-		0.03,
-		0.03,
-		0.04,
-		0.04,
-		0.05, # 500
-		0.08,
-		0.19,
-		0.23,
-		0.25,
-		0.27,
-		0.25,
-		0.23,
-		0.19,
-		0.17,
-		0.17, # 600
-		0.15,
-		0.14,
-		0.14,
-		0.10,
-		0.07,
-		0.05,
-		0.04,
-		0.10,
-		0.30,
-		0.35, # 700
-		0.45,
-		0.55,
-		0.60,
-		0.63,
-		0.65,
-		0.65,
-		0.65,
-		0.65,
-		0.65,
-		0.65 # 800
-		#0.65,
-		#0.65,
-		#0.65,
-		#0.0,
-		#0.0,
-		#0.0,
-		#0.0,
-		#0.0,
-		#0.0,
-		#0.0 # 900
-	])
-	print("Green maple leaf")
-	leaf_table = leaf_table * 1 / 0.65
-	spectral_rendering(leaf_table)
-	
-	red_leaf_table = np.array([
-		0.0, # 300
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0, # 400
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0, # 500
-		0.01,
-		0.01,
-		0.02,
-		0.02,
-		0.03,
-		0.05,
-		0.06,
-		0.08,
-		0.10,
-		0.10, # 600
-		0.09,
-		0.08,
-		0.05,
-		0.10,
-		0.30,
-		0.35,
-		0.45,
-		0.55,
-		0.60,
-		0.63, # 700
-		0.65,
-		0.65,
-		0.65,
-		0.65,
-		0.65,
-		0.65,
-		0.65,
-		0.65,
-		0.65,
-		0.0 # 800
-		#0.0,
-		#0.0,
-		#0.0,
-		#0.0,
-		#0.0,
-		#0.0,
-		#0.0,
-		#0.0,
-		#0.0,
-		#0.0 # 900
-	])
-	print("Red maple leaf")
-	red_leaf_table = red_leaf_table * 1 / 0.65
-	spectral_rendering(red_leaf_table)
-	
-	# color/brightness contrast test
-	print("Color contrast between green and red maple leaves: " + str(color_contrast(leaf_table, red_leaf_table)))
-	print("Brightness contrast between green and red maple leaves: " + str(brightness_contrast(leaf_table, red_leaf_table)))
-	print("")
-	
-	# corn
-	# estimated from https://www.yorku.ca/planters/photosynthesis/2014_08_15_lab_manual_static_html/images/Corn_leaf_reflectance.png. Values below 400 are estimated to be the same as 400.
-	corn_table = np.array([
-		0.45,
-		0.45,
-		0.45,
-		0.45,
-		0.45,
-		0.45,
-		0.45,
-		0.45,
-		0.45,
-		0.45,
-		0.45,
-		0.40,
-		0.35,
-		0.35,
-		0.35,
-		0.35,
-		0.37,
-		0.37,
-		0.37,
-		0.37,
-		0.43,
-		0.50,
-		0.60,
-		0.77,
-		0.80,
-		0.80,
-		0.77,
-		0.75,
-		0.65,
-		0.63,
-		0.62,
-		0.60,
-		0.55,
-		0.55,
-		0.55,
-		0.45,
-		0.35,
-		0.35,
-		0.40,
-		0.60,
-		0.65,
-		0.75,
-		0.80,
-		0.83,
-		0.83,
-		0.83,
-		0.83,
-		0.80,
-		0.80,
-		0.80,
-		0.80
-		#0.80,
-		#0.80,
-		#0.80,
-		#0.0,
-		#0.0,
-		#0.0,
-		#0.0,
-		#0.0,
-		#0.0,
-		#0.0
-	])
-	print("Corn leaf")
-	spectral_rendering(corn_table)
-		
-	# hydrangea
-	# estimated from https://spectralevolution.com/wp-content/uploads/2024/04/RT_hydrang_ref.jpg
-	hydrangea_table = np.array([
-		0.2,
-		0.2,
-		0.2,
-		0.2,
-		0.2,
-		0.2,
-		0.175,
-		0.1375,
-		0.125,
-		0.1,
-		0.0875,
-		0.075,
-		0.075,
-		0.0625,
-		0.0625,
-		0.0625,
-		0.0625,
-		0.0625,
-		0.0625,
-		0.0625,
-		0.0625,
-		0.075,
-		0.075,
-		0.0875,
-		0.1,
-		0.1,
-		0.0875,
-		0.0875,
-		0.075,
-		0.075,
-		0.075,
-		0.0625,
-		0.0625,
-		0.0625,
-		0.0625,
-		0.0625,
-		0.0625,
-		0.0625,
-		0.0625,
-		0.0875,
-		0.125,
-		0.1875,
-		0.3,
-		0.375,
-		0.45,
-		0.4875,
-		0.5125,
-		0.5125,
-		0.525,
-		0.525,
-		0.525
-		#0.525,
-		#0.525,
-		#0.525,
-		#0.0,
-		#0.0,
-		#0.0,
-		#0.0,
-		#0.0,
-		#0.0,
-		#0.0
-	])
-	print("Hydrangea leaf")
-	spectral_rendering(hydrangea_table)
-	
-# flowers
-# estimated from https://www.researchgate.net/profile/Robert-Gegear/publication/222035355/figure/fig1/AS:632345413578753@1527774303378/The-spectral-reflectance-curves-of-coloured-flowers-and-the-green-array-background-used.png
-	
-if (args.flowers):
-	flower0_table = np.array([
-		0.05,
-		0.08,
-		0.08,
-		0.08,
-		0.08,
-		0.08,
-		0.08,
-		0.1,
-		0.13,
-		0.2,
-		0.35,
-		0.55,
-		0.65,
-		0.73,
-		0.83,
-		0.85,
-		0.88,
-		0.9,
-		0.9,
-		0.88,
-		0.85,
-		0.8,
-		0.75,
-		0.65,
-		0.55,
-		0.4,
-		0.25,
-		0.15,
-		0.1,
-		0.08,
-		0.08,
-		0.05,
-		0.05,
-		0.05,
-		0.05,
-		0.05,
-		0.08,
-		0.08,
-		0.08,
-		0.08,
-		0.08,
-		0.08,
-		0.08,
-		0.08,
-		0.08,
-		0.08,
-		0.08,
-		0.08,
-		0.08,
-		0.08,
-		0.08,
-		0.08,
-		0.08,
-		0.08,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0
-	])
-	print("Blue flower")
-	spectral_rendering(flower0_table)
-		
-	flower1_table = np.array([
-		0.08,
-		0.08,
-		0.08,
-		0.08,
-		0.08,
-		0.1,
-		0.1,
-		0.1,
-		0.1,
-		0.08,
-		0.05,
-		0.05,
-		0.05,
-		0.05,
-		0.05,
-		0.05,
-		0.05,
-		0.05,
-		0.05,
-		0.08,
-		0.1,
-		0.2,
-		0.55,
-		0.8,
-		0.95,
-		0.95,
-		0.98,
-		0.98,
-		0.98,
-		0.98,
-		0.98,
-		0.1,
-		0.1,
-		0.1,
-		0.1,
-		0.1,
-		0.1,
-		0.1,
-		0.1,
-		0.1,
-		0.1,
-		0.1,
-		0.1,
-		0.1,
-		0.1,
-		0.1,
-		0.1,
-		0.1,
-		0.1,
-		0.1,
-		0.1,
-		0.1,
-		0.1,
-		0.1,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0
-	])
-	print("Yellow flower")
-	spectral_rendering(flower1_table)
-	
-	# green flower
-	flower2_table = np.array([
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.120045133,
-		0.12964042,
-		0.135836894,
-		0.139659595,
-		0.144615233,
-		0.146226008,
-		0.1469813,
-		0.14724334,
-		0.148160479,
-		0.149686477,
-		0.151150818,
-		0.154565044,
-		0.167196912,
-		0.183543582,
-		0.205685959,
-		0.238541146,
-		0.293554125,
-		0.352829107,
-		0.380420374,
-		0.387256534,
-		0.38048203,
-		0.366046711,
-		0.341592216,
-		0.317623267,
-		0.293184186,
-		0.269269186,
-		0.24610177,
-		0.226148197,
-		0.20576303,
-		0.197354629,
-		0.199111839,
-		0.221816831,
-		0.264459982,
-		0.330794628,
-		0.401653318,
-		0.45626553,
-		0.482384749,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0
-	])
-	print("Green flower")
-	spectral_rendering(flower2_table)
-	
-	# Banksia attenuata flowers
-	# estimated from fig. 5 in Arrese et al. 2005
-	
-	# immature
-	banksia0_table = np.array([
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0625,
-		0.125,
-		0.125,
-		0.125,
-		0.125,
-		0.125,
-		0.25,
-		0.375,
-		0.5,
-		0.625,
-		0.75,
-		0.75,
-		0.6875,
-		0.625,
-		0.5625,
-		0.625,
-		0.5625,
-		0.5,
-		0.5,
-		0.5,
-		0.375,
-		0.3125,
-		0.1875,
-		0.1875,
-		0.625,
-		0.9375,
-		0.9375,
-		0.9375,
-		0.9375,
-		0.9375,
-		0.9375,
-		0.9375,
-		0.9375,
-		0.9375,
-		0.9375,
-		0.9375,
-		0.9375,
-		0.9375,
-		0.9375,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0
-	])
-	print("Immature Banksia attenuata flower")
-	spectral_rendering(banksia0_table)
-	
-	# mature
-	banksia1_table = np.array([
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0625,
-		0.125,
-		0.125,
-		0.1875,
-		0.25,
-		0.25,
-		0.25,
-		0.375,
-		0.375,
-		0.5,
-		0.5,
-		0.625,
-		0.625,
-		0.625,
-		0.625,
-		0.5625,
-		0.625,
-		0.625,
-		0.625,
-		0.625,
-		0.625,
-		0.625,
-		0.625,
-		0.5625,
-		0.5625,
-		0.625,
-		0.75,
-		0.75,
-		0.75,
-		0.75,
-		0.75,
-		0.75,
-		0.75,
-		0.75,
-		0.75,
-		0.75,
-		0.75,
-		0.75,
-		0.75,
-		0.75,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0,
-		0.0
-	])
-	print("Mature Banksia attenuata flower")
-	spectral_rendering(banksia1_table)
-	
-	print("Color contrast between blue and yellow flower: " + str(color_contrast(flower0_table, flower1_table)))
-	print("Brightness contrast between blue and yellow flower: " + str(brightness_contrast(flower0_table, flower1_table)))
-	print("Color contrast between Banksia flowers: " + str(color_contrast(banksia0_table, banksia1_table)))
-	print("Brightness contrast between Banksia flowers: " + str(brightness_contrast(banksia0_table, banksia1_table)))
-
 # "long-pass" step functions: 0 for wavelengths less than the step and 1 for longer wavelengths.
 # Many white, yellow, orange and red flowers have reflectance spectra like these, and they're
 # also found in paints and camera filters.
@@ -5285,1321 +4560,4337 @@ if (args.sky):
 	spectral_rendering(sky1_table, reflect=False)
 
 # Kodak Wratten camera filters
-# Note these are 300-900 nm rather than 340-830 nm. I removed 800-900 nm because it's probably
-# not relevant here.
+# These were obtained from the graphs at https://www.kodak.com/en/motion/page/wratten-2-filters/
+# using Plot Digitizer (https://plotdigitizer.sourceforge.net/). The wavelength intervals are
+# roughly 5 nm (getting exact integer X values usually isn't possible).
 
-# optical density (-log10 transmission, not -ln(transmission))
-# The names of these end in "d" for density so I don't confuse them with the transmission
-# arrays (ending in "t").
 # yellow 15
-yellow15d = np.array([
-	np.nan, # 300
-	2.07925,
-	1.87288,
-	2.39146,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan, # 400
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan, # 500
-	1.61358,
-	0.58700,
-	0.21129,
-	0.08958,
-	0.05254,
-	0.04196,
-	0.04196,
-	0.04196,
-	0.04196,
-	0.03667, # 600
-	0.03667,
-	0.03667,
-	0.03667,
-	0.04196,
-	0.03667,
-	0.03667,
-	0.03667,
-	0.04196,
-	0.03667,
-	0.03667, # 700
-	#0.04196,
-	#0.03137,
-	#0.04196,
-	#0.03667,
-	#0.03667,
-	#0.03667,
-	#0.03667,
-	#0.03667,
-	#0.03137,
-	#0.03667 # 800
-])
+yellow15_5nm = np.array([[
+	300,
+	301.510,
+	305.402,
+	310.343,
+	314.208,
+	317.014,
+	320.513,
+	325.750,
+	329.928,
+	335.146,
+	336.536,
+	337,
+	501,
+	502.211,
+	505.413,
+	510.383,
+	515.688,
+	519.566,
+	525.542,
+	530.806,
+	535.015,
+	540.273,
+	545.178,
+	550.433,
+	555.688,
+	560.241,
+	565.146,
+	570.399,
+	575.303,
+	579.857,
+	585.111,
+	590.365,
+	595.619,
+	599.822,
+	605.426,
+	609.279,
+	615.233,
+	619.437,
+	625.040,
+	629.944,
+	635.549,
+	639.752,
+	644.656,
+	650.259,
+	655.513,
+	659.367,
+	665.671,
+	669.875,
+	675.128,
+	680.032,
+	685.286,
+	690.190,
+	695.793,
+	700.347,
+	705.251,
+	710.504,
+	715.409,
+	720.312,
+	725.216,
+	729.768,
+	734.673,
+	739.927,
+	744.830,
+	750.785,
+	756.039,
+	760.592,
+	765.495,
+	770.750,
+	774.603,
+	779.857,
+	786.512,
+	791.416,
+	795.619,
+	799.822,
+	805.776,
+	810.680,
+	815.934,
+	820.137,
+	825.041,
+	830.295,
+	835.199,
+	840.102,
+	844.305,
+	849.559,
+	854.463,
+	859.717,
+	864.971,
+	870.224,
+	874.428,
+	880.032,
+	884.936,
+	890.189,
+	895.443,
+	900.347,
+],[
+	0,
+	0.00100584,
+	0.00311012,
+	0.00896471,
+	0.0128078,
+	0.0141464,
+	0.0127323,
+	0.00792732,
+	0.00386065,
+	0.00137094,
+	0.00101140,
+	0,
+	0,
+	0.00101569,
+	0.00425698,
+	0.0279919,
+	0.122221,
+	0.245141,
+	0.463741,
+	0.621248,
+	0.727500,
+	0.803516,
+	0.856872,
+	0.877112,
+	0.897829,
+	0.897789,
+	0.908310,
+	0.908263,
+	0.908220,
+	0.913507,
+	0.918819,
+	0.913413,
+	0.913366,
+	0.918687,
+	0.918637,
+	0.923991,
+	0.913192,
+	0.923899,
+	0.907779,
+	0.918417,
+	0.918367,
+	0.918329,
+	0.923672,
+	0.907556,
+	0.912833,
+	0.923540,
+	0.907420,
+	0.923445,
+	0.918013,
+	0.907293,
+	0.923307,
+	0.917878,
+	0.907153,
+	0.923171,
+	0.923127,
+	0.907023,
+	0.923035,
+	0.917608,
+	0.912213,
+	0.896306,
+	0.922862,
+	0.922815,
+	0.912039,
+	0.922717,
+	0.922670,
+	0.917248,
+	0.901250,
+	0.917157,
+	0.922503,
+	0.911728,
+	0.917016,
+	0.927763,
+	0.922314,
+	0.916897,
+	0.916844,
+	0.922179,
+	0.922131,
+	0.911370,
+	0.911326,
+	0.916625,
+	0.921958,
+	0.921914,
+	0.905841,
+	0.905795,
+	0.916409,
+	0.916362,
+	0.916315,
+	0.905612,
+	0.916231,
+	0.921555,
+	0.916137,
+	0.910747,
+	0.905390,
+	0.915999,
+]])
 
 # red 25
-red25d = np.array([
-	2.41792, # 300
-	2.29092,
-	2.08983,
-	1.81996,
-	1.77763,
-	1.93108,
-	2.19037,
-	2.62429,
-	np.nan,
-	np.nan,
-	np.nan, # 400
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan, # 500
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	1.94167,
-	0.51292,
-	0.13721, # 600
-	0.06313,
-	0.04725,
-	0.04725,
-	0.04196,
-	0.04196,
-	0.04196,
-	0.03667,
-	0.04196,
-	0.03667,
-	0.03667, # 700
-	#0.03667,
-	#0.03667,
-	#0.03667,
-	#0.03667,
-	#0.03667,
-	#0.03138,
-	#0.04196,
-	#0.03138,
-	#0.03667,
-	0.03667 # 800
-])
+red25_5nm = np.array([[
+	299.592,
+	304.516,
+	310.143,
+	314.722,
+	320.361,
+	325.306,
+	330.239,
+	334.810,
+	339.713,
+	344.954,
+	349.841,
+	354.723,
+	359.945,
+	365.152,
+	370.356,
+	374.853,
+	376.932,
+	377,
+	573,
+	573.600,
+	575.761,
+	580.171,
+	584.921,
+	589.604,
+	594.587,
+	600.227,
+	605.150,
+	610.415,
+	615.324,
+	620.234,
+	625.493,
+	630.751,
+	635.310,
+	640.219,
+	645.476,
+	650.385,
+	654.592,
+	660.201,
+	664.758,
+	669.667,
+	674.576,
+	680.534,
+	684.741,
+	689.650,
+	694.908,
+	700.517,
+	705.424,
+	710.685,
+	715.241,
+	720.851,
+	725.407,
+	729.615,
+	735.224,
+	740.132,
+	745.740,
+	750.298,
+	755.207,
+	760.465,
+	765.022,
+	769.929,
+	774.837,
+	780.448,
+	785.005,
+	789.913,
+	795.521,
+	800.430,
+	805.338,
+	810.598,
+	815.154,
+	820.412,
+	825.320,
+	830.229,
+	835.137,
+	840.396,
+	845.302,
+	850.210,
+	855.118,
+	860.027,
+	864.584,
+	869.843,
+	875.802,
+	880.360,
+	885.267,
+	890.526,
+	895.435,
+	900.342,
+],[
+	0.00372910,
+	0.00437114,
+	0.00518432,
+	0.00637012,
+	0.00844965,
+	0.0121000,
+	0.0154022,
+	0.0175304,
+	0.0166230,
+	0.0140939,
+	0.0115349,
+	0.00895313,
+	0.00632429,
+	0.00387854,
+	0.00229604,
+	0.00128908,
+	0.00101250,
+	0,
+	0,
+	0.00100074,
+	0.00174062,
+	0.0121518,
+	0.0767534,
+	0.256647,
+	0.526375,
+	0.710655,
+	0.818422,
+	0.867931,
+	0.878087,
+	0.893609,
+	0.904056,
+	0.898609,
+	0.909133,
+	0.914371,
+	0.903525,
+	0.914097,
+	0.919382,
+	0.913833,
+	0.908345,
+	0.918974,
+	0.924268,
+	0.913286,
+	0.913173,
+	0.923858,
+	0.923715,
+	0.918140,
+	0.912617,
+	0.928739,
+	0.923162,
+	0.923010,
+	0.912080,
+	0.922772,
+	0.928069,
+	0.922486,
+	0.911534,
+	0.922210,
+	0.933001,
+	0.927379,
+	0.916398,
+	0.910885,
+	0.910753,
+	0.926834,
+	0.926709,
+	0.921135,
+	0.915575,
+	0.926288,
+	0.926155,
+	0.936982,
+	0.925887,
+	0.920308,
+	0.920175,
+	0.925476,
+	0.925342,
+	0.930664,
+	0.919634,
+	0.919501,
+	0.919368,
+	0.924664,
+	0.924540,
+	0.924397,
+	0.924235,
+	0.929569,
+	0.918552,
+	0.918410,
+	0.929157,
+	0.918145,
+]])
 
 # blue 47
-blue47d = np.array([
-	2.80421, # 300
-	2.94708,
-	2.75658,
-	2.53962,
-	2.60312,
-	2.51317,
-	2.20625,
-	1.84642,
-	1.54479,
-	1.24317,
-	0.90979, # 400
-	0.57112,
-	0.37533,
-	0.31183,
-	0.30654,
-	0.33829,
-	0.39650,
-	0.49175,
-	0.61875,
-	0.81983,
-	1.10029, # 500
-	1.51304,
-	2.11100,
-	2.92062,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan, # 600
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	2.96296,
-	2.42850, # 700
-	#2.01575,
-	#1.64004,
-	#1.28021,
-	#0.91508,
-	#0.61875,
-	#0.39121,
-	#0.24833,
-	#0.15308,
-	#0.11075,
-	#0.08429 # 800
-])
+blue47_5nm = np.array([[
+	299.664,
+	304.912,
+	310.505,
+	315.063,
+	319.985,
+	324.907,
+	329.819,
+	335.070,
+	340.319,
+	345.925,
+	350.488,
+	355.408,
+	359.630,
+	365.257,
+	370.180,
+	375.103,
+	380.376,
+	384.946,
+	389.515,
+	395.140,
+	400.416,
+	405.340,
+	410.261,
+	415.181,
+	420.445,
+	425.003,
+	430.261,
+	435.165,
+	440.419,
+	444.971,
+	449.872,
+	455.473,
+	460.373,
+	465.272,
+	470.519,
+	475.766,
+	480.312,
+	485.555,
+	489.746,
+	494.636,
+	499.870,
+	505.101,
+	509.979,
+	514.850,
+	520.415,
+	525.274,
+	529.783,
+	531.164,
+	532,
+	689,
+	689.833,
+	694.770,
+	700.408,
+	704.986,
+	709.915,
+	715.190,
+	720.468,
+	725.392,
+	730.319,
+	734.540,
+	740.520,
+	745.440,
+	750.362,
+	754.929,
+	760.197,
+	764.759,
+	770.022,
+	774.582,
+	780.192,
+	785.449,
+	790.354,
+	794.910,
+	800.165,
+	805.071,
+	810.676,
+	815.579,
+	820.483,
+	825.387,
+	830.292,
+	835.197,
+	840.100,
+	845.003,
+	850.257,
+	855.512,
+	860.065,
+	864.969,
+	869.873,
+	875.477,
+	880.380,
+	885.284,
+	890.188,
+	895.443,
+	900.347,
+],[
+	0.00155619,
+	0.00140765,
+	0.00113164,
+	0.00123621,
+	0.00175044,
+	0.00250799,
+	0.00290613,
+	0.00273951,
+	0.00249268,
+	0.00259751,
+	0.00311826,
+	0.00423686,
+	0.00614255,
+	0.00944611,
+	0.0138572,
+	0.0199717,
+	0.0287840,
+	0.0393410,
+	0.0534539,
+	0.0793447,
+	0.122018,
+	0.181121,
+	0.253456,
+	0.344377,
+	0.415860,
+	0.459676,
+	0.490441,
+	0.499158,
+	0.493268,
+	0.484586,
+	0.459507,
+	0.435722,
+	0.403541,
+	0.369355,
+	0.322486,
+	0.279910,
+	0.245839,
+	0.198805,
+	0.157025,
+	0.119712,
+	0.0815928,
+	0.0524272,
+	0.0321349,
+	0.0173005,
+	0.00813278,
+	0.00341796,
+	0.00147076,
+	0.000990734,
+	0,
+	0,
+	0.000994265,
+	0.00190178,
+	0.00363760,
+	0.00576142,
+	0.00939824,
+	0.0141159,
+	0.0224895,
+	0.0331866,
+	0.0522534,
+	0.0726932,
+	0.119985,
+	0.164960,
+	0.233580,
+	0.304539,
+	0.399399,
+	0.471065,
+	0.552318,
+	0.625082,
+	0.707422,
+	0.745920,
+	0.768184,
+	0.805235,
+	0.829264,
+	0.859066,
+	0.869185,
+	0.869122,
+	0.869059,
+	0.879305,
+	0.894933,
+	0.910839,
+	0.910773,
+	0.900031,
+	0.899961,
+	0.910567,
+	0.915890,
+	0.910440,
+	0.915758,
+	0.910299,
+	0.910233,
+	0.910167,
+	0.915483,
+	0.926272,
+	0.931682,
+]])
 
 # green 58
-green58d = np.array([
-	np.nan, # 300
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan, # 400
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	2.15333,
-	1.47600,
-	0.94154,
-	0.50763, # 500
-	0.30654,
-	0.25892,
-	0.28008,
-	0.34358,
-	0.44942,
-	0.59758,
-	0.81454,
-	1.13733,
-	1.57125,
-	2.07925, # 600
-	2.60842,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	3.00000, # 700
-	#2.24858,
-	#1.48129,
-	#0.93625,
-	#0.58171,
-	#0.36475,
-	#0.23246,
-	#0.16367,
-	#0.12133,
-	#0.09488,
-	#0.07900 # 800
-])
+green58_5nm = np.array([[
+	300,
+	462,
+	462.347,
+	465.499,
+	469.702,
+	480.210,
+	485.464,
+	489.667,
+	495.447,
+	499.650,
+	505.429,
+	510.158,
+	515.412,
+	520.140,
+	524.869,
+	530.123,
+	535.026,
+	540.280,
+	544.834,
+	550.438,
+	555.692,
+	560.245,
+	565.149,
+	570.403,
+	575.306,
+	580.210,
+	585.814,
+	590.018,
+	594.571,
+	600.525,
+	605.429,
+	609.982,
+	614.536,
+	617.338,
+	618,
+	702,
+	702.102,
+	705.254,
+	710.158,
+	715.061,
+	719.965,
+	725.219,
+	730.823,
+	735.026,
+	739.930,
+	745.884,
+	750.088,
+	754.991,
+	760.245,
+	765.149,
+	770.403,
+	774.956,
+	780.210,
+	785.814,
+	790.368,
+	795.271,
+	800.175,
+	805.779,
+	810.683,
+	815.236,
+	820.490,
+	825.744,
+	829.947,
+	835.201,
+	840.105,
+	845.359,
+	850.963,
+	855.166,
+	860.070,
+	864.623,
+	870.928,
+	875.832,
+	880.385,
+	884.939,
+	890.543,
+	895.447,
+	900,
+],[
+	0,
+	0,
+	0.00100884,
+	0.00236877,
+	0.00634670,
+	0.0331909,
+	0.0614519,
+	0.110812,
+	0.199819,
+	0.294300,
+	0.407560,
+	0.485987,
+	0.540112,
+	0.549702,
+	0.544886,
+	0.521432,
+	0.494615,
+	0.455616,
+	0.409958,
+	0.360320,
+	0.309347,
+	0.256400,
+	0.207586,
+	0.155724,
+	0.112120,
+	0.0774769,
+	0.0436004,
+	0.0280807,
+	0.0167573,
+	0.00843557,
+	0.00469178,
+	0.00278347,
+	0.00145993,
+	0.00101477,
+	0,
+	0,
+	0.00101477,
+	0.00187882,
+	0.00494615,
+	0.0125708,
+	0.0287474,
+	0.0591527,
+	0.108879,
+	0.166105,
+	0.248988,
+	0.339790,
+	0.414796,
+	0.494615,
+	0.576115,
+	0.636534,
+	0.678965,
+	0.719987,
+	0.754583,
+	0.781616,
+	0.800175,
+	0.814382,
+	0.828841,
+	0.838623,
+	0.843557,
+	0.853513,
+	0.853513,
+	0.858535,
+	0.863586,
+	0.863586,
+	0.863586,
+	0.868667,
+	0.868667,
+	0.868667,
+	0.878919,
+	0.878919,
+	0.878919,
+	0.878919,
+	0.878919,
+	0.878919,
+	0.884091,
+	0.873778,
+	0.878919,
+]])
 
-# neutral density filters
-# 0.1
-nd01d = np.array([
-	0.33728, # 300
-	0.30024,
-	0.25790,
-	0.22615,
-	0.21028,
-	0.18911,
-	0.17324,
-	0.15736,
-	0.15207,
-	0.14678,
-	0.13620, # 400
-	0.13090,
-	0.12561,
-	0.12032,
-	0.12032,
-	0.11503,
-	0.11503,
-	0.11503,
-	0.10974,
-	0.10974,
-	0.10974, # 500
-	0.10974,
-	0.10974,
-	0.10974,
-	0.10445,
-	0.10445,
-	0.10445,
-	0.10445,
-	0.10445,
-	0.10445,
-	0.10445, # 600
-	0.10445,
-	0.10445,
-	0.10445,
-	0.10445,
-	0.10445,
-	0.10445,
-	0.10445,
-	0.10445,
-	0.10445,
-	0.10445, # 700
-	#0.09915,
-	#0.09386,
-	#0.08857,
-	#0.08328,
-	#0.08328,
-	#0.08328,
-	#0.07799,
-	#0.07799,
-	#0.07799,
-	#0.07799 # 800
-])
+# neutral density 0.1
+nd01_5nm = np.array([[
+	299.973,
+	304.881,
+	310.490,
+	315.398,
+	319.956,
+	324.864,
+	330.122,
+	335.029,
+	339.586,
+	344.494,
+	350.102,
+	355.009,
+	359.916,
+	365.174,
+	370.081,
+	375.338,
+	380.245,
+	385.502,
+	390.760,
+	395.316,
+	400.223,
+	404.779,
+	410.036,
+	415.644,
+	420.200,
+	424.757,
+	430.715,
+	434.920,
+	440.178,
+	445.435,
+	450.692,
+	455.949,
+	459.804,
+	465.061,
+	469.968,
+	475.225,
+	480.482,
+	485.389,
+	490.295,
+	495.202,
+	499.758,
+	505.365,
+	509.922,
+	514.828,
+	520.436,
+	525.342,
+	530.599,
+	535.155,
+	540.412,
+	545.319,
+	550.226,
+	555.483,
+	560.039,
+	565.296,
+	570.553,
+	575.459,
+	580.016,
+	585.623,
+	590.529,
+	595.436,
+	599.992,
+	605.600,
+	609.455,
+	614.712,
+	619.618,
+	625.226,
+	630.483,
+	635.389,
+	639.945,
+	645.202,
+	650.459,
+	655.716,
+	660.272,
+	665.880,
+	670.436,
+	675.342,
+	680.249,
+	685.506,
+	690.763,
+	695.319,
+	699.525,
+	705.132,
+	710.740,
+	715.297,
+	720.554,
+	725.811,
+	730.367,
+	735.624,
+	740.181,
+	745.788,
+	750.344,
+	755.251,
+	760.157,
+	765.414,
+	770.321,
+	774.877,
+	780.485,
+	785.742,
+	790.298,
+	794.854,
+	800.462,
+	805.368,
+	810.625,
+	815.181,
+	820.438,
+	825.695,
+	830.251,
+	834.807,
+	840.064,
+	844.971,
+	850.228,
+	855.485,
+	860.392,
+	864.948,
+	870.205,
+	875.111,
+	880.368,
+	885.625,
+	890.532,
+	895.088,
+	900.345,
+],[
+	0.462957,
+	0.479427,
+	0.505246,
+	0.532459,
+	0.561140,
+	0.577722,
+	0.594793,
+	0.608808,
+	0.623155,
+	0.641571,
+	0.652863,
+	0.668246,
+	0.680013,
+	0.687959,
+	0.700073,
+	0.704133,
+	0.712363,
+	0.716495,
+	0.724867,
+	0.733343,
+	0.737598,
+	0.737566,
+	0.741844,
+	0.750510,
+	0.750476,
+	0.754834,
+	0.759207,
+	0.759176,
+	0.768047,
+	0.772501,
+	0.767968,
+	0.776942,
+	0.776913,
+	0.776873,
+	0.781382,
+	0.781342,
+	0.781302,
+	0.781265,
+	0.781227,
+	0.785761,
+	0.785726,
+	0.781113,
+	0.790246,
+	0.790208,
+	0.790165,
+	0.790127,
+	0.790087,
+	0.790052,
+	0.794634,
+	0.794596,
+	0.794558,
+	0.794518,
+	0.799131,
+	0.794442,
+	0.794401,
+	0.799011,
+	0.798976,
+	0.798932,
+	0.794247,
+	0.794209,
+	0.798821,
+	0.798777,
+	0.798747,
+	0.798706,
+	0.794022,
+	0.793979,
+	0.793938,
+	0.793900,
+	0.793865,
+	0.793825,
+	0.793784,
+	0.793744,
+	0.793708,
+	0.793665,
+	0.793630,
+	0.793592,
+	0.793554,
+	0.793514,
+	0.793473,
+	0.793438,
+	0.798048,
+	0.802674,
+	0.807326,
+	0.816766,
+	0.816724,
+	0.821461,
+	0.821425,
+	0.826189,
+	0.835849,
+	0.835803,
+	0.835766,
+	0.835726,
+	0.840576,
+	0.835643,
+	0.835604,
+	0.845374,
+	0.845327,
+	0.845284,
+	0.845247,
+	0.845209,
+	0.850109,
+	0.850068,
+	0.850025,
+	0.849987,
+	0.849943,
+	0.849900,
+	0.849862,
+	0.844881,
+	0.844838,
+	0.844798,
+	0.849697,
+	0.849654,
+	0.854585,
+	0.849576,
+	0.859503,
+	0.854462,
+	0.854419,
+	0.849405,
+	0.854334,
+	0.849327,
+	0.849283,
+]])
 
 # 0.2
-nd02d = np.array([
-	0.52360, # 300
-	0.47068,
-	0.39660,
-	0.35426,
-	0.33839,
-	0.30664,
-	0.28547,
-	0.26960,
-	0.26431,
-	0.25372,
-	0.24843, # 400
-	0.23785,
-	0.22726,
-	0.22197,
-	0.21668,
-	0.21139,
-	0.21139,
-	0.20610,
-	0.20610,
-	0.20610,
-	0.20081, # 500
-	0.20081,
-	0.20081,
-	0.20081,
-	0.20081,
-	0.20081,
-	0.20081,
-	0.20081,
-	0.20081,
-	0.19551,
-	0.19551, # 600
-	0.19551,
-	0.20081,
-	0.20081,
-	0.20610,
-	0.20610,
-	0.20610,
-	0.20610,
-	0.20610,
-	0.20081,
-	0.19551, # 700
-	#0.19022,
-	#0.16906,
-	#0.16376,
-	#0.14789,
-	#0.14260,
-	#0.13731,
-	#0.13731,
-	#0.13201,
-	#0.12672,
-	#0.12672 # 800
-])
+nd02_5nm = np.array([[
+	299.825,
+	305.439,
+	310.351,
+	314.561,
+	319.474,
+	325.439,
+	330,
+	335.263,
+	339.825,
+	345.088,
+	350,
+	355.263,
+	359.825,
+	365.088,
+	370.351,
+	374.561,
+	380.175,
+	385.439,
+	390,
+	395.263,
+	399.825,
+	404.386,
+	410.351,
+	415.263,
+	419.825,
+	425.439,
+	430.351,
+	435.263,
+	439.825,
+	445.439,
+	450,
+	455.263,
+	460.175,
+	465.088,
+	470,
+	474.912,
+	479.825,
+	485.088,
+	490,
+	494.912,
+	499.825,
+	505.088,
+	510,
+	515.263,
+	519.825,
+	525.088,
+	530,
+	535.263,
+	539.825,
+	545.088,
+	550,
+	554.912,
+	560.175,
+	565.088,
+	570,
+	574.912,
+	580.175,
+	585.088,
+	590,
+	594.912,
+	600.175,
+	605.088,
+	610,
+	615.263,
+	619.825,
+	625.088,
+	630,
+	634.912,
+	640.175,
+	645.088,
+	649.649,
+	654.912,
+	660.175,
+	664.737,
+	670,
+	674.912,
+	680.175,
+	685.088,
+	690,
+	694.912,
+	700.175,
+	705.088,
+	710,
+	714.912,
+	720.175,
+	725.088,
+	730,
+	734.912,
+	740.175,
+	745.088,
+	750,
+	755.263,
+	759.825,
+	765.088,
+	770,
+	774.912,
+	780.175,
+	785.088,
+	790.351,
+	794.912,
+	800.175,
+	805.088,
+	810,
+	814.912,
+	820.175,
+	825.088,
+	830,
+	835.263,
+	839.825,
+	845.088,
+	850,
+	855.614,
+	860.175,
+	864.737,
+	870.351,
+	875.263,
+	880.175,
+	885.088,
+	890.351,
+	894.912,
+	900.175,
+],[
+	0.304441,
+	0.319012,
+	0.344193,
+	0.373538,
+	0.407761,
+	0.432302,
+	0.447729,
+	0.458319,
+	0.469159,
+	0.483070,
+	0.500309,
+	0.515144,
+	0.527328,
+	0.536655,
+	0.546147,
+	0.552568,
+	0.555807,
+	0.562341,
+	0.568953,
+	0.575642,
+	0.579016,
+	0.582409,
+	0.592711,
+	0.596185,
+	0.603194,
+	0.606729,
+	0.610285,
+	0.613862,
+	0.621080,
+	0.617460,
+	0.624720,
+	0.628381,
+	0.628381,
+	0.635769,
+	0.635769,
+	0.639496,
+	0.643244,
+	0.643244,
+	0.643244,
+	0.643244,
+	0.643244,
+	0.643244,
+	0.643244,
+	0.647014,
+	0.643244,
+	0.647014,
+	0.643244,
+	0.647014,
+	0.647014,
+	0.647014,
+	0.650806,
+	0.647014,
+	0.647014,
+	0.647014,
+	0.643244,
+	0.647014,
+	0.647014,
+	0.650806,
+	0.654621,
+	0.654621,
+	0.654621,
+	0.658458,
+	0.650806,
+	0.647014,
+	0.647014,
+	0.643244,
+	0.643244,
+	0.643244,
+	0.639496,
+	0.639496,
+	0.639496,
+	0.639496,
+	0.639496,
+	0.635769,
+	0.635769,
+	0.643244,
+	0.635769,
+	0.635769,
+	0.639496,
+	0.647014,
+	0.650806,
+	0.650806,
+	0.662317,
+	0.674031,
+	0.685953,
+	0.694018,
+	0.702177,
+	0.710433,
+	0.722998,
+	0.727236,
+	0.735786,
+	0.740098,
+	0.744436,
+	0.748799,
+	0.748799,
+	0.748799,
+	0.753188,
+	0.766510,
+	0.757603,
+	0.762043,
+	0.753188,
+	0.762043,
+	0.762043,
+	0.771003,
+	0.766510,
+	0.762043,
+	0.762043,
+	0.762043,
+	0.771003,
+	0.771003,
+	0.775522,
+	0.771003,
+	0.766510,
+	0.771003,
+	0.775522,
+	0.775522,
+	0.780067,
+	0.775522,
+	0.775522,
+	0.775522,
+	0.775522,
+]])
 
 # 0.3
-nd03d = np.array([
-	0.84947, # 300
-	0.76480,
-	0.63780,
-	0.56901,
-	0.54255,
-	0.48964,
-	0.44730,
-	0.42614,
-	0.41555,
-	0.39968,
-	0.38909, # 400
-	0.37322,
-	0.36264,
-	0.34676,
-	0.34147,
-	0.33089,
-	0.32559,
-	0.32030,
-	0.32030,
-	0.31501,
-	0.31501, # 500
-	0.31501,
-	0.31501,
-	0.31501,
-	0.31501,
-	0.31501,
-	0.31501,
-	0.32030,
-	0.31501,
-	0.30443,
-	0.30443, # 600
-	0.30972,
-	0.31501,
-	0.32030,
-	0.32559,
-	0.32559,
-	0.32030,
-	0.32559,
-	0.32559,
-	0.32559,
-	0.31501, # 700
-	#0.29914,
-	#0.27797,
-	#0.25151,
-	#0.23034,
-	#0.21447,
-	#0.20918,
-	#0.19859,
-	#0.19859,
-	#0.19330,
-	#0.18801 # 800
-])
+nd03_5nm = np.array([[
+	299.719,
+	304.620,
+	309.870,
+	314.768,
+	320.017,
+	325.267,
+	329.468,
+	335.071,
+	339.974,
+	344.526,
+	349.778,
+	355.029,
+	359.931,
+	364.834,
+	370.437,
+	375.691,
+	380.243,
+	385.147,
+	390.750,
+	394.953,
+	400.206,
+	404.759,
+	409.662,
+	414.565,
+	420.169,
+	425.072,
+	429.625,
+	434.528,
+	440.132,
+	445.036,
+	449.939,
+	455.193,
+	460.447,
+	464.650,
+	470.604,
+	475.508,
+	480.411,
+	485.665,
+	490.919,
+	494.772,
+	499.675,
+	505.279,
+	510.183,
+	515.087,
+	520.341,
+	525.244,
+	529.798,
+	534.701,
+	539.605,
+	545.209,
+	550.463,
+	555.717,
+	559.920,
+	564.824,
+	570.078,
+	574.631,
+	579.535,
+	584.438,
+	590.042,
+	594.945,
+	599.849,
+	605.103,
+	610.358,
+	614.911,
+	619.465,
+	625.069,
+	630.323,
+	635.578,
+	639.781,
+	645.735,
+	650.639,
+	655.192,
+	659.395,
+	664.299,
+	670.254,
+	675.508,
+	680.061,
+	684.615,
+	690.219,
+	695.122,
+	700.025,
+	704.928,
+	710.181,
+	715.084,
+	719.987,
+	724.540,
+	730.143,
+	735.396,
+	740.299,
+	745.202,
+	750.455,
+	755.008,
+	759.561,
+	764.115,
+	769.368,
+	774.972,
+	780.226,
+	784.779,
+	790.383,
+	795.987,
+	800.190,
+	805.794,
+	809.997,
+	815.251,
+	820.155,
+	825.409,
+	830.663,
+	834.866,
+	839.769,
+	844.673,
+	850.277,
+	855.881,
+	860.084,
+	865.338,
+	870.242,
+	875.846,
+	880.399,
+	885.303,
+	890.557,
+	895.461,
+	900.014,
+],[
+	0.140340,
+	0.148742,
+	0.170015,
+	0.197747,
+	0.228670,
+	0.255371,
+	0.267531,
+	0.278650,
+	0.288548,
+	0.300538,
+	0.318532,
+	0.341549,
+	0.355742,
+	0.368379,
+	0.374876,
+	0.381486,
+	0.388211,
+	0.395055,
+	0.399694,
+	0.406738,
+	0.411512,
+	0.418766,
+	0.423680,
+	0.433662,
+	0.436212,
+	0.443903,
+	0.449111,
+	0.457029,
+	0.459716,
+	0.459738,
+	0.465133,
+	0.467867,
+	0.470617,
+	0.473379,
+	0.476164,
+	0.478962,
+	0.481775,
+	0.484607,
+	0.484632,
+	0.484650,
+	0.484673,
+	0.484699,
+	0.484722,
+	0.484745,
+	0.484770,
+	0.484793,
+	0.484814,
+	0.484837,
+	0.487685,
+	0.490553,
+	0.490578,
+	0.484936,
+	0.484956,
+	0.484979,
+	0.482194,
+	0.485025,
+	0.490717,
+	0.493599,
+	0.499395,
+	0.505256,
+	0.499443,
+	0.499468,
+	0.493723,
+	0.493745,
+	0.488063,
+	0.485262,
+	0.482475,
+	0.476926,
+	0.476945,
+	0.479752,
+	0.476995,
+	0.477016,
+	0.479815,
+	0.477058,
+	0.477086,
+	0.477110,
+	0.477131,
+	0.477152,
+	0.477178,
+	0.479981,
+	0.488443,
+	0.497055,
+	0.508767,
+	0.517737,
+	0.533022,
+	0.545578,
+	0.564962,
+	0.578274,
+	0.591898,
+	0.598844,
+	0.612955,
+	0.620146,
+	0.623787,
+	0.627449,
+	0.631137,
+	0.638548,
+	0.642301,
+	0.642329,
+	0.642364,
+	0.649907,
+	0.649933,
+	0.653756,
+	0.653782,
+	0.653816,
+	0.653847,
+	0.657690,
+	0.661556,
+	0.661582,
+	0.665469,
+	0.665500,
+	0.665537,
+	0.669451,
+	0.665600,
+	0.665634,
+	0.669544,
+	0.669580,
+	0.669610,
+	0.673543,
+	0.673577,
+	0.673609,
+	0.673639,
+]])
 
 # 0.4
-nd04d = np.array([
-	1.03346, # 300
-	0.94350,
-	0.80592,
-	0.73184,
-	0.69480,
-	0.63659,
-	0.58367,
-	0.55721,
-	0.53605,
-	0.52017,
-	0.50430, # 400
-	0.48313,
-	0.46725,
-	0.45138,
-	0.44080,
-	0.43021,
-	0.42492,
-	0.41963,
-	0.41434,
-	0.41434,
-	0.40905, # 500
-	0.40905,
-	0.40905,
-	0.40905,
-	0.40375,
-	0.40375,
-	0.40905,
-	0.40905,
-	0.40375,
-	0.39317,
-	0.39317, # 600
-	0.39317,
-	0.40375,
-	0.40905,
-	0.41963,
-	0.41963,
-	0.41434,
-	0.41434,
-	0.41963,
-	0.41434,
-	0.40375, # 700
-	#0.38259,
-	#0.35613,
-	#0.32438,
-	#0.29792,
-	#0.28205,
-	#0.26617,
-	#0.26088,
-	#0.25030,
-	#0.24500,
-	#0.23971 # 800
-])
+nd04_5nm = np.array([[
+	300,
+	305.254,
+	310.158,
+	315.412,
+	319.615,
+	324.518,
+	329.422,
+	334.676,
+	339.930,
+	344.834,
+	349.387,
+	354.291,
+	359.895,
+	364.799,
+	369.002,
+	375.306,
+	380.210,
+	385.814,
+	390.718,
+	395.271,
+	400.525,
+	405.079,
+	409.632,
+	415.587,
+	419.790,
+	424.694,
+	430.648,
+	435.552,
+	440.455,
+	445.709,
+	450.263,
+	455.517,
+	460.070,
+	464.623,
+	469.877,
+	475.482,
+	479.685,
+	484.588,
+	490.543,
+	494.746,
+	500,
+	505.254,
+	510.508,
+	515.762,
+	519.965,
+	525.569,
+	530.473,
+	535.377,
+	540.280,
+	545.534,
+	550.788,
+	555.692,
+	559.545,
+	565.149,
+	570.053,
+	574.606,
+	580.210,
+	585.464,
+	589.667,
+	594.921,
+	599.825,
+	604.729,
+	610.333,
+	615.937,
+	620.140,
+	625.394,
+	630.298,
+	635.201,
+	640.455,
+	645.359,
+	650.613,
+	655.517,
+	659.720,
+	664.623,
+	669.527,
+	674.431,
+	680.035,
+	685.289,
+	690.893,
+	695.447,
+	700.350,
+	705.954,
+	710.508,
+	714.711,
+	719.965,
+	724.869,
+	729.422,
+	735.026,
+	740.280,
+	745.184,
+	749.387,
+	754.291,
+	759.895,
+	765.149,
+	770.403,
+	775.657,
+	780.210,
+	785.114,
+	790.718,
+	795.271,
+	799.825,
+	805.079,
+	810.333,
+	815.587,
+	820.140,
+	825.044,
+	829.597,
+	834.501,
+	840.105,
+	844.659,
+	849.562,
+	854.816,
+	860.070,
+	864.623,
+	869.877,
+	875.131,
+	875.131,
+	880.035,
+	884.588,
+	889.142,
+	894.746,
+	900,
+],[
+	0.0936174,
+	0.100389,
+	0.114766,
+	0.135077,
+	0.154423,
+	0.175515,
+	0.186032,
+	0.193767,
+	0.203001,
+	0.213917,
+	0.230728,
+	0.245981,
+	0.262242,
+	0.271561,
+	0.279579,
+	0.287833,
+	0.292902,
+	0.298061,
+	0.305081,
+	0.310454,
+	0.317765,
+	0.325249,
+	0.332909,
+	0.340749,
+	0.346750,
+	0.350810,
+	0.359072,
+	0.361167,
+	0.367528,
+	0.371831,
+	0.374001,
+	0.378379,
+	0.380588,
+	0.382809,
+	0.387291,
+	0.387291,
+	0.387291,
+	0.391825,
+	0.391825,
+	0.394112,
+	0.394112,
+	0.394112,
+	0.394112,
+	0.394112,
+	0.394112,
+	0.391825,
+	0.394112,
+	0.394112,
+	0.394112,
+	0.396412,
+	0.398725,
+	0.396412,
+	0.394112,
+	0.394112,
+	0.394112,
+	0.394112,
+	0.398725,
+	0.405748,
+	0.408116,
+	0.408116,
+	0.410498,
+	0.408116,
+	0.405748,
+	0.401053,
+	0.398725,
+	0.394112,
+	0.391825,
+	0.387291,
+	0.387291,
+	0.387291,
+	0.387291,
+	0.387291,
+	0.389551,
+	0.389551,
+	0.389551,
+	0.387291,
+	0.389551,
+	0.389551,
+	0.387291,
+	0.391825,
+	0.394112,
+	0.405748,
+	0.417727,
+	0.430061,
+	0.442758,
+	0.455831,
+	0.472028,
+	0.491654,
+	0.503233,
+	0.518091,
+	0.524156,
+	0.536501,
+	0.545950,
+	0.549136,
+	0.555565,
+	0.562069,
+	0.565349,
+	0.571968,
+	0.571968,
+	0.575306,
+	0.575306,
+	0.582041,
+	0.585438,
+	0.585438,
+	0.585438,
+	0.585438,
+	0.592292,
+	0.588855,
+	0.592292,
+	0.595749,
+	0.595749,
+	0.595749,
+	0.599226,
+	0.602723,
+	0.599226,
+	0.599226,
+	0.599226,
+	0.599226,
+	0.602723,
+	0.606241,
+	0.606241,
+	0.609779,
+]])
 
 # 0.5
-nd05d = np.array([
-	1.13191, # 300
-	1.05782,
-	0.96257,
-	0.90436,
-	0.86203,
-	0.79324,
-	0.72445,
-	0.68741,
-	0.66624,
-	0.64507,
-	0.62391, # 400
-	0.59745,
-	0.58157,
-	0.56041,
-	0.54982,
-	0.53395,
-	0.52336,
-	0.51807,
-	0.51278,
-	0.50749,
-	0.50220, # 500
-	0.50220,
-	0.49691,
-	0.49691,
-	0.49691,
-	0.49161,
-	0.49161,
-	0.49161,
-	0.48632,
-	0.48103,
-	0.47574, # 600
-	0.48103,
-	0.49161,
-	0.49691,
-	0.50220,
-	0.50220,
-	0.49691,
-	0.49691,
-	0.50220,
-	0.49691,
-	0.48632, # 700
-	#0.45986,
-	#0.42811,
-	#0.39636,
-	#0.36991,
-	#0.34874,
-	#0.33816,
-	#0.32757,
-	#0.31699,
-	#0.31170,
-	#0.30641 # 800
-])
+nd05_5nm = np.array([[
+	299.688,
+	305.302,
+	310.565,
+	314.778,
+	319.691,
+	324.953,
+	329.163,
+	334.073,
+	339.336,
+	345.299,
+	350.212,
+	354.422,
+	359.685,
+	364.244,
+	370.557,
+	374.765,
+	380.376,
+	385.636,
+	389.143,
+	394.052,
+	400.364,
+	404.572,
+	409.131,
+	414.040,
+	420.001,
+	424.910,
+	430.169,
+	435.078,
+	439.637,
+	444.195,
+	449.454,
+	455.064,
+	460.323,
+	465.932,
+	470.841,
+	475.398,
+	480.307,
+	484.514,
+	489.773,
+	495.382,
+	499.589,
+	505.199,
+	510.457,
+	515.716,
+	520.274,
+	525.532,
+	530.440,
+	535.699,
+	539.555,
+	544.814,
+	550.073,
+	555.332,
+	559.889,
+	565.148,
+	570.406,
+	575.314,
+	580.222,
+	585.131,
+	589.689,
+	595.298,
+	600.206,
+	605.815,
+	610.723,
+	615.980,
+	619.836,
+	625.095,
+	630.353,
+	635.611,
+	639.818,
+	645.076,
+	650.686,
+	655.944,
+	660.151,
+	664.358,
+	669.616,
+	675.225,
+	680.484,
+	685.041,
+	690.651,
+	695.559,
+	700.468,
+	704.675,
+	710.637,
+	715.898,
+	720.106,
+	724.665,
+	730.276,
+	734.835,
+	740.096,
+	745.005,
+	750.966,
+	755.525,
+	760.433,
+	765.342,
+	770.601,
+	775.860,
+	780.418,
+	785.326,
+	790.936,
+	795.844,
+	800.752,
+	805.660,
+	810.919,
+	815.126,
+	820.385,
+	825.994,
+	830.902,
+	835.810,
+	840.018,
+	844.926,
+	850.886,
+	855.093,
+	860.001,
+	865.260,
+	870.167,
+	874.725,
+	880.335,
+	885.944,
+	890.852,
+	895.760,
+	900.668,
+],[
+	0.0735785,
+	0.0812574,
+	0.0892152,
+	0.0991054,
+	0.109449,
+	0.117392,
+	0.123724,
+	0.130396,
+	0.139858,
+	0.150885,
+	0.163737,
+	0.175621,
+	0.189469,
+	0.197368,
+	0.206795,
+	0.211673,
+	0.219209,
+	0.225692,
+	0.229672,
+	0.235087,
+	0.243455,
+	0.249197,
+	0.255074,
+	0.261089,
+	0.268807,
+	0.273542,
+	0.278358,
+	0.283262,
+	0.288252,
+	0.291622,
+	0.295028,
+	0.300221,
+	0.301958,
+	0.305483,
+	0.309052,
+	0.309032,
+	0.310821,
+	0.312623,
+	0.316274,
+	0.316248,
+	0.318082,
+	0.319921,
+	0.321771,
+	0.321746,
+	0.323611,
+	0.323586,
+	0.323563,
+	0.325434,
+	0.325416,
+	0.325391,
+	0.327273,
+	0.329166,
+	0.327226,
+	0.329118,
+	0.329093,
+	0.329070,
+	0.330975,
+	0.334842,
+	0.336782,
+	0.338728,
+	0.340689,
+	0.340661,
+	0.336678,
+	0.330802,
+	0.328856,
+	0.328830,
+	0.324984,
+	0.324959,
+	0.321163,
+	0.321139,
+	0.322995,
+	0.322970,
+	0.322950,
+	0.324823,
+	0.322905,
+	0.322879,
+	0.320973,
+	0.322832,
+	0.324698,
+	0.328492,
+	0.330394,
+	0.336217,
+	0.350226,
+	0.362696,
+	0.375617,
+	0.386728,
+	0.400497,
+	0.414762,
+	0.429530,
+	0.442235,
+	0.452655,
+	0.460630,
+	0.466013,
+	0.474221,
+	0.479759,
+	0.479723,
+	0.488175,
+	0.488140,
+	0.493838,
+	0.496697,
+	0.496662,
+	0.499537,
+	0.502426,
+	0.505340,
+	0.505301,
+	0.508221,
+	0.511163,
+	0.511127,
+	0.514091,
+	0.514054,
+	0.517022,
+	0.520020,
+	0.526097,
+	0.522991,
+	0.522953,
+	0.525983,
+	0.529023,
+	0.528980,
+	0.532042,
+	0.532004,
+	0.528866,
+]])
 
 # 0.6
-nd06d = np.array([
-	1.33333, # 300
-	1.25396,
-	1.13225,
-	1.05816,
-	1.02112,
-	0.93116,
-	0.85179,
-	0.80945,
-	0.78300,
-	0.75654,
-	0.73537, # 400
-	0.70362,
-	0.68245,
-	0.66129,
-	0.64541,
-	0.62954,
-	0.61895,
-	0.60837,
-	0.60308,
-	0.60308,
-	0.59779, # 500
-	0.59779,
-	0.59779,
-	0.59779,
-	0.59250,
-	0.59250,
-	0.59779,
-	0.60308,
-	0.59250,
-	0.57662,
-	0.57133, # 600
-	0.57662,
-	0.59250,
-	0.60308,
-	0.61366,
-	0.61366,
-	0.61366,
-	0.60837,
-	0.61366,
-	0.60837,
-	0.60308, # 700
-	#0.57133,
-	#0.52900,
-	#0.48137,
-	#0.43904,
-	#0.41258,
-	#0.38612,
-	#0.37554,
-	#0.35966,
-	#0.35437,
-	#0.34908 # 800
-])
+nd06_5nm = np.array([[
+	300,
+	305.954,
+	310.858,
+	314.711,
+	320.315,
+	324.168,
+	329.422,
+	335.026,
+	340.280,
+	344.483,
+	349.387,
+	354.291,
+	360.245,
+	365.499,
+	370.753,
+	374.956,
+	380.560,
+	384.764,
+	389.317,
+	394.221,
+	400.525,
+	405.079,
+	410.683,
+	415.937,
+	420.490,
+	424.343,
+	429.247,
+	434.851,
+	440.806,
+	445.359,
+	450.613,
+	455.517,
+	460.420,
+	465.324,
+	470.928,
+	475.832,
+	480.736,
+	485.990,
+	490.543,
+	495.096,
+	500,
+	504.553,
+	510.858,
+	515.412,
+	520.666,
+	525.919,
+	530.823,
+	535.377,
+	540.630,
+	545.884,
+	550.788,
+	555.692,
+	560.595,
+	565.849,
+	570.053,
+	575.306,
+	579.860,
+	585.114,
+	590.718,
+	595.271,
+	600.175,
+	604.378,
+	609.632,
+	615.587,
+	619.790,
+	624.343,
+	629.597,
+	635.201,
+	640.455,
+	645.359,
+	650.963,
+	655.867,
+	660.070,
+	664.273,
+	670.228,
+	674.431,
+	680.385,
+	685.639,
+	690.893,
+	695.797,
+	700.701,
+	705.954,
+	710.858,
+	715.412,
+	720.315,
+	724.869,
+	730.823,
+	735.026,
+	740.630,
+	745.884,
+	750.788,
+	755.341,
+	760.595,
+	765.149,
+	769.702,
+	775.306,
+	780.560,
+	785.464,
+	790.018,
+	794.571,
+	800.525,
+	804.028,
+	809.282,
+	815.587,
+	820.490,
+	825.744,
+	830.998,
+	835.552,
+	840.105,
+	845.709,
+	850.263,
+	854.816,
+	860.420,
+	865.674,
+	870.578,
+	875.832,
+	880.385,
+	885.289,
+	890.193,
+	895.096,
+	900,
+],[
+	0.0469609,
+	0.0509594,
+	0.0572692,
+	0.0643604,
+	0.0744715,
+	0.0817612,
+	0.0882065,
+	0.0924229,
+	0.0974077,
+	0.103867,
+	0.116048,
+	0.128904,
+	0.142350,
+	0.150906,
+	0.157200,
+	0.160913,
+	0.166648,
+	0.171583,
+	0.175636,
+	0.180837,
+	0.187282,
+	0.192828,
+	0.199701,
+	0.205615,
+	0.211704,
+	0.215443,
+	0.220533,
+	0.224428,
+	0.229729,
+	0.233788,
+	0.237917,
+	0.240711,
+	0.244963,
+	0.247839,
+	0.249290,
+	0.252217,
+	0.252217,
+	0.253693,
+	0.255179,
+	0.258175,
+	0.258175,
+	0.258175,
+	0.258175,
+	0.256672,
+	0.256672,
+	0.256672,
+	0.256672,
+	0.258175,
+	0.259686,
+	0.259686,
+	0.259686,
+	0.258175,
+	0.256672,
+	0.255179,
+	0.255179,
+	0.256672,
+	0.261206,
+	0.264273,
+	0.268941,
+	0.270516,
+	0.273692,
+	0.272099,
+	0.268941,
+	0.267376,
+	0.262735,
+	0.256672,
+	0.252217,
+	0.250749,
+	0.247839,
+	0.249290,
+	0.247839,
+	0.249290,
+	0.247839,
+	0.249290,
+	0.250749,
+	0.249290,
+	0.247839,
+	0.249290,
+	0.250749,
+	0.250749,
+	0.255179,
+	0.262735,
+	0.273692,
+	0.288454,
+	0.302242,
+	0.313014,
+	0.333770,
+	0.351772,
+	0.366442,
+	0.379502,
+	0.393028,
+	0.407036,
+	0.416650,
+	0.424010,
+	0.428989,
+	0.431500,
+	0.441693,
+	0.449495,
+	0.449495,
+	0.446879,
+	0.452126,
+	0.454773,
+	0.460113,
+	0.462806,
+	0.462806,
+	0.462806,
+	0.465515,
+	0.468240,
+	0.473738,
+	0.476512,
+	0.476512,
+	0.476512,
+	0.479301,
+	0.479301,
+	0.482107,
+	0.484929,
+	0.484929,
+	0.487768,
+	0.487768,
+	0.487768,
+	0.484929,
+]])
 
 # 0.7
-nd07d = np.array([
-	1.54847, # 300
-	1.45852,
-	1.32622,
-	1.24156,
-	1.19922,
-	1.09868,
-	1.00872,
-	0.96110,
-	0.92935,
-	0.89760,
-	0.86585, # 400
-	0.83410,
-	0.80235,
-	0.78118,
-	0.76002,
-	0.74414,
-	0.72827,
-	0.71768,
-	0.70710,
-	0.70181,
-	0.69652, # 500
-	0.69652,
-	0.69652,
-	0.69122,
-	0.68593,
-	0.68593,
-	0.69122,
-	0.69122,
-	0.68064,
-	0.66477,
-	0.65947, # 600
-	0.66477,
-	0.68064,
-	0.69122,
-	0.70181,
-	0.70181,
-	0.70181,
-	0.69652,
-	0.70181,
-	0.69652,
-	0.68593, # 700
-	#0.64889,
-	#0.60656,
-	#0.54835,
-	#0.51131,
-	#0.47427,
-	#0.45310,
-	#0.43722,
-	#0.42135,
-	#0.41606,
-	#0.40547 # 800
-])
+nd07_5nm = np.array([[
+	300,
+	304.904,
+	309.807,
+	315.762,
+	319.965,
+	324.168,
+	330.123,
+	334.676,
+	339.930,
+	344.483,
+	349.387,
+	354.641,
+	360.245,
+	365.849,
+	370.753,
+	374.956,
+	380.560,
+	384.413,
+	390.368,
+	395.622,
+	400.525,
+	404.378,
+	409.282,
+	414.886,
+	420.490,
+	425.744,
+	429.947,
+	435.201,
+	440.105,
+	445.009,
+	450.613,
+	455.867,
+	460.420,
+	464.974,
+	470.928,
+	475.482,
+	480.035,
+	485.639,
+	490.543,
+	495.797,
+	500.350,
+	505.954,
+	510.508,
+	515.762,
+	519.965,
+	524.518,
+	530.123,
+	535.727,
+	540.630,
+	545.534,
+	550.088,
+	554.991,
+	560.245,
+	565.149,
+	570.403,
+	574.256,
+	580.560,
+	585.114,
+	589.317,
+	594.921,
+	600.175,
+	605.429,
+	610.683,
+	615.937,
+	620.490,
+	625.744,
+	630.998,
+	635.902,
+	640.806,
+	645.709,
+	649.562,
+	654.816,
+	660.070,
+	665.324,
+	670.228,
+	675.832,
+	680.736,
+	684.939,
+	690.193,
+	694.746,
+	700,
+	705.254,
+	710.158,
+	715.061,
+	720.666,
+	724.869,
+	729.422,
+	735.377,
+	740.630,
+	745.884,
+	750.788,
+	755.341,
+	760.245,
+	765.849,
+	770.753,
+	775.657,
+	780.560,
+	785.114,
+	790.368,
+	795.622,
+	800.175,
+	804.729,
+	809.632,
+	814.536,
+	820.140,
+	825.394,
+	830.998,
+	835.552,
+	840.455,
+	844.659,
+	849.212,
+	854.466,
+	859.720,
+	865.324,
+	870.578,
+	875.832,
+	880.736,
+	885.289,
+	890.543,
+	895.797,
+	900,
+],[
+	0.0285559,
+	0.0308040,
+	0.0348155,
+	0.0414688,
+	0.0476959,
+	0.0520542,
+	0.0568107,
+	0.0602208,
+	0.0638357,
+	0.0692638,
+	0.0778286,
+	0.0889953,
+	0.0988409,
+	0.106003,
+	0.111063,
+	0.115016,
+	0.119110,
+	0.122633,
+	0.128487,
+	0.132288,
+	0.136996,
+	0.141048,
+	0.146923,
+	0.153042,
+	0.158489,
+	0.162228,
+	0.167026,
+	0.171966,
+	0.176023,
+	0.179128,
+	0.182289,
+	0.185504,
+	0.187680,
+	0.189881,
+	0.193231,
+	0.195497,
+	0.196640,
+	0.198946,
+	0.200109,
+	0.201279,
+	0.203639,
+	0.203639,
+	0.203639,
+	0.204829,
+	0.204829,
+	0.204829,
+	0.204829,
+	0.206027,
+	0.208443,
+	0.209662,
+	0.209662,
+	0.208443,
+	0.207231,
+	0.206027,
+	0.206027,
+	0.208443,
+	0.210887,
+	0.214608,
+	0.218394,
+	0.220955,
+	0.223546,
+	0.220955,
+	0.218394,
+	0.215863,
+	0.212120,
+	0.207231,
+	0.206027,
+	0.204829,
+	0.202455,
+	0.202455,
+	0.202455,
+	0.202455,
+	0.202455,
+	0.203639,
+	0.204829,
+	0.202455,
+	0.201279,
+	0.202455,
+	0.203639,
+	0.203639,
+	0.208443,
+	0.215863,
+	0.224853,
+	0.235587,
+	0.248277,
+	0.261650,
+	0.278978,
+	0.295724,
+	0.309841,
+	0.326531,
+	0.340131,
+	0.350190,
+	0.358451,
+	0.362655,
+	0.371211,
+	0.379968,
+	0.382189,
+	0.386671,
+	0.388932,
+	0.391206,
+	0.395793,
+	0.400435,
+	0.402776,
+	0.402776,
+	0.405131,
+	0.409881,
+	0.412278,
+	0.414688,
+	0.414688,
+	0.409881,
+	0.414688,
+	0.422004,
+	0.424471,
+	0.424471,
+	0.426953,
+	0.426953,
+	0.429449,
+	0.431960,
+	0.434485,
+	0.437025,
+	0.437025,
+]])
 
 # 0.8
-nd08d = np.array([
-	1.73990, # 300
-	1.63406,
-	1.49648,
-	1.40976,
-	1.36214,
-	1.25101,
-	1.14518,
-	1.09226,
-	1.05522,
-	1.01881,
-	0.98706, # 400
-	0.95002,
-	0.91827,
-	0.88652,
-	0.86535,
-	0.84419,
-	0.82831,
-	0.81773,
-	0.80715,
-	0.79656,
-	0.79127, # 500
-	0.79127,
-	0.79127,
-	0.78598,
-	0.78069,
-	0.77540,
-	0.78069,
-	0.78069,
-	0.77010,
-	0.75148,
-	0.74618, # 600
-	0.75677,
-	0.76735,
-	0.78323,
-	0.78852,
-	0.78852,
-	0.78852,
-	0.78323,
-	0.79381,
-	0.78852,
-	0.77264, # 700
-	#0.73560,
-	#0.68798,
-	#0.62977,
-	#0.57685,
-	#0.53981,
-	#0.50806,
-	#0.49218,
-	#0.47631,
-	#0.46573,
-	#0.46043 # 800
-])
+nd08_5nm = np.array([[
+	300,
+	305.954,
+	310.508,
+	315.412,
+	320.315,
+	324.869,
+	330.123,
+	334.326,
+	340.280,
+	344.834,
+	350.788,
+	354.641,
+	359.895,
+	365.499,
+	370.753,
+	374.606,
+	380.210,
+	384.063,
+	389.667,
+	395.622,
+	400.525,
+	405.429,
+	410.333,
+	415.236,
+	420.841,
+	425.394,
+	430.298,
+	435.902,
+	440.806,
+	445.709,
+	450.613,
+	455.166,
+	460.420,
+	464.974,
+	470.578,
+	475.482,
+	480.736,
+	485.639,
+	489.842,
+	495.447,
+	500.350,
+	504.904,
+	510.158,
+	515.061,
+	520.315,
+	525.219,
+	530.473,
+	535.377,
+	540.280,
+	545.184,
+	549.387,
+	554.641,
+	559.895,
+	565.149,
+	570.053,
+	575.657,
+	580.560,
+	585.464,
+	590.718,
+	595.622,
+	600.525,
+	605.779,
+	610.333,
+	615.937,
+	620.490,
+	625.044,
+	629.247,
+	635.201,
+	640.105,
+	645.359,
+	649.912,
+	655.166,
+	659.720,
+	665.324,
+	669.877,
+	675.482,
+	680.385,
+	684.939,
+	689.842,
+	695.447,
+	700.350,
+	705.254,
+	710.508,
+	714.711,
+	720.315,
+	724.518,
+	729.422,
+	735.026,
+	740.280,
+	745.184,
+	749.737,
+	754.641,
+	760.245,
+	765.149,
+	770.053,
+	774.956,
+	780.210,
+	785.464,
+	790.368,
+	794.921,
+	800.175,
+	805.079,
+	810.333,
+	815.236,
+	820.490,
+	825.044,
+	830.298,
+	835.201,
+	840.455,
+	845.359,
+	850.263,
+	854.816,
+	859.720,
+	864.623,
+	870.228,
+	875.131,
+	880.035,
+	884.939,
+	890.193,
+	894.746,
+	900,
+],[
+	0.0182567,
+	0.0201636,
+	0.0227965,
+	0.0270067,
+	0.0314385,
+	0.0353365,
+	0.0388001,
+	0.0408955,
+	0.0436108,
+	0.0476064,
+	0.0570618,
+	0.0633914,
+	0.0712511,
+	0.0773259,
+	0.0819796,
+	0.0844104,
+	0.0884505,
+	0.0916071,
+	0.0954323,
+	0.100000,
+	0.103569,
+	0.107893,
+	0.113058,
+	0.117778,
+	0.122697,
+	0.126335,
+	0.130081,
+	0.133938,
+	0.137909,
+	0.141171,
+	0.143668,
+	0.146209,
+	0.148795,
+	0.151427,
+	0.153207,
+	0.155917,
+	0.157750,
+	0.159605,
+	0.160540,
+	0.161481,
+	0.162428,
+	0.163380,
+	0.164337,
+	0.164337,
+	0.164337,
+	0.164337,
+	0.164337,
+	0.166269,
+	0.168224,
+	0.169210,
+	0.170202,
+	0.169210,
+	0.167244,
+	0.166269,
+	0.167244,
+	0.168224,
+	0.170202,
+	0.175249,
+	0.178348,
+	0.179394,
+	0.181503,
+	0.179394,
+	0.177309,
+	0.175249,
+	0.173212,
+	0.169210,
+	0.167244,
+	0.165300,
+	0.163380,
+	0.162428,
+	0.163380,
+	0.163380,
+	0.164337,
+	0.164337,
+	0.165300,
+	0.164337,
+	0.164337,
+	0.163380,
+	0.165300,
+	0.167244,
+	0.169210,
+	0.174228,
+	0.183637,
+	0.192426,
+	0.206405,
+	0.216284,
+	0.231997,
+	0.251777,
+	0.266929,
+	0.278075,
+	0.289687,
+	0.300025,
+	0.310732,
+	0.318081,
+	0.323707,
+	0.329433,
+	0.337224,
+	0.341189,
+	0.345200,
+	0.345200,
+	0.347224,
+	0.351306,
+	0.355436,
+	0.355436,
+	0.357519,
+	0.359615,
+	0.361723,
+	0.365975,
+	0.370278,
+	0.368120,
+	0.370278,
+	0.372448,
+	0.374631,
+	0.376827,
+	0.379036,
+	0.381257,
+	0.383492,
+	0.381257,
+	0.383492,
+	0.385740,
+	0.388001,
+]])
 
 # 0.9
-nd09d = np.array([
-	1.88770, # 300
-	1.76868,
-	1.62620,
-	1.53316,
-	1.46437,
-	1.34735,
-	1.23623,
-	1.17273,
-	1.13189,
-	1.09335,
-	1.06160, # 400
-	1.01927,
-	0.98752,
-	0.96009,
-	0.93363,
-	0.91247,
-	0.89659,
-	0.88601,
-	0.87543,
-	0.86484,
-	0.85955, # 500
-	0.85426,
-	0.85426,
-	0.85128,
-	0.84368,
-	0.83967,
-	0.83838,
-	0.84368,
-	0.83309,
-	0.81873,
-	0.81193, # 600
-	0.81921,
-	0.83174,
-	0.84762,
-	0.85820,
-	0.85820,
-	0.85291,
-	0.85052,
-	0.85291,
-	0.85291,
-	0.83785, # 700
-	#0.80193,
-	#0.74707,
-	#0.68887,
-	#0.63595,
-	#0.59566,
-	#0.56671,
-	#0.54804,
-	#0.53216,
-	#0.52525,
-	#0.51629 # 800
-])
+nd09_5nm = np.array([[
+	300,
+	304.904,
+	310.158,
+	315.412,
+	319.965,
+	325.219,
+	330.473,
+	335.026,
+	339.930,
+	344.483,
+	349.387,
+	354.641,
+	360.245,
+	365.499,
+	370.753,
+	375.306,
+	380.560,
+	385.814,
+	390.018,
+	394.921,
+	399.825,
+	405.429,
+	409.982,
+	415.236,
+	420.490,
+	425.394,
+	429.597,
+	434.501,
+	440.105,
+	444.659,
+	450.613,
+	455.867,
+	460.420,
+	464.623,
+	469.877,
+	475.832,
+	480.035,
+	485.289,
+	489.842,
+	495.096,
+	500.350,
+	505.254,
+	510.158,
+	515.412,
+	519.965,
+	524.869,
+	530.123,
+	535.026,
+	540.280,
+	545.534,
+	550.438,
+	554.991,
+	559.895,
+	565.149,
+	570.403,
+	574.606,
+	579.860,
+	585.114,
+	589.667,
+	594.571,
+	600.175,
+	605.079,
+	610.333,
+	615.236,
+	620.140,
+	625.044,
+	630.298,
+	635.201,
+	639.755,
+	645.009,
+	650.263,
+	655.166,
+	660.070,
+	664.974,
+	669.877,
+	675.482,
+	680.035,
+	684.939,
+	690.193,
+	695.096,
+	700,
+	705.254,
+	710.158,
+	715.061,
+	719.965,
+	724.869,
+	730.123,
+	735.026,
+	740.280,
+	745.184,
+	749.387,
+	754.991,
+	760.245,
+	765.149,
+	770.403,
+	774.956,
+	780.210,
+	785.114,
+	790.018,
+	795.271,
+	799.825,
+	804.729,
+	810.333,
+	815.236,
+	819.790,
+	825.044,
+	829.947,
+	835.201,
+	840.455,
+	844.659,
+	849.912,
+	855.166,
+	860.420,
+	865.324,
+	870.228,
+	874.781,
+	879.685,
+	884.939,
+	890.193,
+	895.096,
+	900,
+],[
+	0.0128904,
+	0.0145713,
+	0.0171583,
+	0.0205615,
+	0.0239310,
+	0.0265820,
+	0.0295267,
+	0.0313014,
+	0.0349725,
+	0.0386206,
+	0.0436567,
+	0.0508109,
+	0.0584512,
+	0.0634281,
+	0.0680299,
+	0.0708669,
+	0.0742544,
+	0.0778039,
+	0.0810485,
+	0.0839372,
+	0.0874376,
+	0.0921535,
+	0.0959966,
+	0.100000,
+	0.104170,
+	0.108515,
+	0.110431,
+	0.114367,
+	0.117069,
+	0.119834,
+	0.123383,
+	0.125562,
+	0.127780,
+	0.130037,
+	0.131564,
+	0.133109,
+	0.135460,
+	0.137051,
+	0.138660,
+	0.138660,
+	0.140288,
+	0.141110,
+	0.141936,
+	0.141936,
+	0.141936,
+	0.142766,
+	0.142766,
+	0.143602,
+	0.145288,
+	0.146139,
+	0.146994,
+	0.146139,
+	0.146139,
+	0.146139,
+	0.146139,
+	0.146994,
+	0.148720,
+	0.151347,
+	0.153124,
+	0.154922,
+	0.154922,
+	0.154922,
+	0.153124,
+	0.152233,
+	0.149591,
+	0.146994,
+	0.145288,
+	0.142766,
+	0.141936,
+	0.141110,
+	0.141110,
+	0.141936,
+	0.141936,
+	0.142766,
+	0.142766,
+	0.142766,
+	0.141936,
+	0.141936,
+	0.141936,
+	0.143602,
+	0.147855,
+	0.152233,
+	0.158582,
+	0.168113,
+	0.180310,
+	0.192267,
+	0.206216,
+	0.219890,
+	0.231750,
+	0.245679,
+	0.254435,
+	0.266597,
+	0.276099,
+	0.282621,
+	0.287613,
+	0.292694,
+	0.297864,
+	0.301361,
+	0.304900,
+	0.306685,
+	0.310286,
+	0.313929,
+	0.315767,
+	0.319474,
+	0.319474,
+	0.323226,
+	0.327021,
+	0.327021,
+	0.328935,
+	0.330861,
+	0.330861,
+	0.334746,
+	0.336705,
+	0.340659,
+	0.340659,
+	0.340659,
+	0.342653,
+	0.346676,
+	0.348706,
+	0.348706,
+	0.350747,
+]])
 
 # 1.0
-nd10d = np.array([
-	2.16924, # 300
-	2.03191,
-	1.87489,
-	1.76947,
-	1.69268,
-	1.55559,
-	1.43246,
-	1.35751,
-	1.31309,
-	1.27284,
-	1.23051, # 400
-	1.18817,
-	1.14892,
-	1.11741,
-	1.08966,
-	1.06646,
-	1.04862,
-	1.03686,
-	1.02574,
-	1.01687,
-	1.01158, # 500
-	1.00628,
-	1.00628,
-	1.00628,
-	0.99998,
-	0.99570,
-	0.99570,
-	1.00099,
-	0.98982,
-	0.96924,
-	0.96395, # 600
-	0.96924,
-	0.98512,
-	1.00628,
-	1.01687,
-	1.01687,
-	1.01158,
-	1.01158,
-	1.01158,
-	1.01158,
-	0.99570, # 700
-	#0.94808,
-	#0.88458,
-	#0.81578,
-	#0.75758,
-	#0.71289,
-	#0.68007,
-	#0.65886,
-	#0.64116,
-	#0.63058,
-	#0.62143 # 800
-])
+nd10_5nm = np.array([[
+	299.914,
+	304.829,
+	309.395,
+	314.664,
+	319.580,
+	324.846,
+	330.111,
+	335.023,
+	339.585,
+	344.501,
+	350.119,
+	355.387,
+	359.950,
+	364.862,
+	370.827,
+	375.036,
+	379.947,
+	385.208,
+	390.820,
+	395.380,
+	399.939,
+	405.551,
+	410.462,
+	414.671,
+	419.932,
+	425.192,
+	430.453,
+	435.362,
+	439.921,
+	445.181,
+	450.091,
+	455.701,
+	459.909,
+	465.168,
+	470.778,
+	475.336,
+	479.894,
+	484.802,
+	490.412,
+	495.321,
+	499.878,
+	504.787,
+	510.396,
+	515.304,
+	520.212,
+	525.120,
+	530.028,
+	535.637,
+	540.195,
+	545.104,
+	550.012,
+	555.972,
+	559.828,
+	565.436,
+	569.994,
+	575.253,
+	579.811,
+	584.720,
+	590.331,
+	595.239,
+	599.796,
+	605.405,
+	610.313,
+	615.220,
+	620.127,
+	625.034,
+	629.941,
+	634.848,
+	640.106,
+	644.663,
+	649.571,
+	654.829,
+	659.738,
+	664.295,
+	670.255,
+	675.514,
+	680.421,
+	685.329,
+	690.237,
+	695.497,
+	700.056,
+	704.966,
+	710.228,
+	715.139,
+	720.401,
+	724.963,
+	730.225,
+	735.488,
+	740.049,
+	745.310,
+	750.221,
+	754.780,
+	760.041,
+	765.301,
+	769.859,
+	774.768,
+	779.677,
+	785.287,
+	790.196,
+	795.455,
+	800.363,
+	805.272,
+	810.180,
+	814.738,
+	820.348,
+	825.256,
+	830.164,
+	835.073,
+	839.981,
+	844.539,
+	850.148,
+	855.407,
+	859.965,
+	865.224,
+	870.132,
+	874.690,
+	880.300,
+	884.857,
+	890.116,
+	895.024,
+	900.283,
+],[
+	0.00685623,
+	0.00788942,
+	0.00923913,
+	0.0113382,
+	0.0132778,
+	0.0152786,
+	0.0171742,
+	0.0186391,
+	0.0204671,
+	0.0236896,
+	0.0282332,
+	0.0336485,
+	0.0369486,
+	0.0405721,
+	0.0445502,
+	0.0466825,
+	0.0489162,
+	0.0518600,
+	0.0546599,
+	0.0569415,
+	0.0589722,
+	0.0625208,
+	0.0658969,
+	0.0686480,
+	0.0715127,
+	0.0744970,
+	0.0771531,
+	0.0794381,
+	0.0817911,
+	0.0842130,
+	0.0867071,
+	0.0882354,
+	0.0903194,
+	0.0919119,
+	0.0935319,
+	0.0946267,
+	0.0957342,
+	0.0957274,
+	0.0974147,
+	0.0979793,
+	0.0985478,
+	0.0991190,
+	0.0996925,
+	0.100270,
+	0.0996782,
+	0.0996710,
+	0.0996639,
+	0.100241,
+	0.101414,
+	0.102002,
+	0.102593,
+	0.102584,
+	0.101980,
+	0.100785,
+	0.101370,
+	0.101957,
+	0.103755,
+	0.106205,
+	0.109349,
+	0.110628,
+	0.109976,
+	0.109325,
+	0.108045,
+	0.106781,
+	0.104915,
+	0.102480,
+	0.100690,
+	0.0989306,
+	0.0977720,
+	0.0971951,
+	0.0977585,
+	0.0971806,
+	0.0977439,
+	0.0983110,
+	0.0983024,
+	0.0982949,
+	0.0977144,
+	0.0977074,
+	0.0982737,
+	0.100006,
+	0.102969,
+	0.106640,
+	0.113722,
+	0.121273,
+	0.130085,
+	0.141181,
+	0.152328,
+	0.165320,
+	0.175271,
+	0.184734,
+	0.193574,
+	0.201654,
+	0.211302,
+	0.216290,
+	0.220105,
+	0.225302,
+	0.229275,
+	0.233317,
+	0.236046,
+	0.237413,
+	0.240191,
+	0.244427,
+	0.245844,
+	0.247270,
+	0.248701,
+	0.251610,
+	0.251592,
+	0.254536,
+	0.257514,
+	0.257496,
+	0.260506,
+	0.262015,
+	0.263535,
+	0.266617,
+	0.266598,
+	0.269718,
+	0.271279,
+	0.271261,
+	0.272832,
+	0.276024,
+	0.276002,
+]])
 
 # 2.0
-nd20d = np.array([
-	np.nan, # 300
-	4.00000,
-	3.81479,
-	3.73012,
-	3.55021,
-	3.24858,
-	2.98400,
-	2.87287,
-	2.75117,
-	2.66650,
-	2.58183, # 400
-	2.47071,
-	2.39133,
-	2.31196,
-	2.24846,
-	2.20083,
-	2.15850,
-	2.11617,
-	2.08971,
-	2.07383,
-	2.05267, # 500
-	2.03679,
-	2.04208,
-	2.03679,
-	2.01033,
-	1.99975,
-	2.00504,
-	2.01562,
-	1.98387,
-	1.92037,
-	1.90450, # 600
-	1.91508,
-	1.94154,
-	1.97858,
-	2.00504,
-	2.00504,
-	1.99446,
-	1.98917,
-	1.98387,
-	1.98917,
-	1.96271, # 700
-	1.89392,
-	1.76162,
-	1.61875,
-	1.48117,
-	1.38062,
-	1.30654,
-	1.25362,
-	1.21658,
-	1.19012,
-	1.17425 # 800
-])
+nd20_5nm = np.array([[
+	300,
+	312,
+	312.248,
+	315.748,
+	320.297,
+	325.197,
+	330.446,
+	334.996,
+	340.245,
+	345.144,
+	349.694,
+	355.293,
+	360.192,
+	364.742,
+	370.341,
+	375.241,
+	380.140,
+	385.039,
+	389.939,
+	395.188,
+	400.087,
+	404.987,
+	409.536,
+	415.136,
+	420.385,
+	425.284,
+	430.184,
+	435.433,
+	440.332,
+	444.182,
+	449.781,
+	455.031,
+	460.630,
+	465.179,
+	470.429,
+	475.328,
+	480.227,
+	485.477,
+	490.376,
+	495.276,
+	500.175,
+	505.074,
+	510.324,
+	515.223,
+	520.122,
+	525.372,
+	530.271,
+	534.821,
+	540.070,
+	545.319,
+	550.219,
+	555.468,
+	560.018,
+	564.917,
+	569.816,
+	575.066,
+	579.615,
+	584.864,
+	590.114,
+	595.363,
+	599.913,
+	604.812,
+	610.061,
+	614.961,
+	620.210,
+	625.459,
+	629.659,
+	635.258,
+	640.157,
+	645.407,
+	649.956,
+	654.856,
+	659.755,
+	665.354,
+	670.254,
+	675.153,
+	680.402,
+	684.602,
+	689.851,
+	694.751,
+	700.350,
+	705.249,
+	710.149,
+	715.048,
+	719.948,
+	724.847,
+	730.096,
+	734.996,
+	739.895,
+	745.144,
+	750.394,
+	754.943,
+	759.843,
+	765.092,
+	769.991,
+	774.891,
+	779.790,
+	785.389,
+	790.289,
+	794.838,
+	799.738,
+	804.987,
+	809.886,
+	815.136,
+	820.035,
+	824.584,
+	830.184,
+	835.433,
+	839.633,
+	845.232,
+	850.131,
+	855.381,
+	859.580,
+	865.179,
+	870.079,
+	874.628,
+	879.528,
+	885.477,
+	889.676,
+	895.276,
+	900.175,
+],[
+	0,
+	0,
+	9.92267e-05,
+	0.000101565,
+	0.000152072,
+	0.000154451,
+	0.000184642,
+	0.000222454,
+	0.000278616,
+	0.000413943,
+	0.000498713,
+	0.000788415,
+	0.00101861,
+	0.00121772,
+	0.00134701,
+	0.00158551,
+	0.00178130,
+	0.00197044,
+	0.00214609,
+	0.00237396,
+	0.00262603,
+	0.00295032,
+	0.00331465,
+	0.00369518,
+	0.00415150,
+	0.00448660,
+	0.00488654,
+	0.00532213,
+	0.00570724,
+	0.00597935,
+	0.00641203,
+	0.00677009,
+	0.00709287,
+	0.00737357,
+	0.00772513,
+	0.00803086,
+	0.00822007,
+	0.00841375,
+	0.00854539,
+	0.00881489,
+	0.00902258,
+	0.00916375,
+	0.00930713,
+	0.00923516,
+	0.00930713,
+	0.00930713,
+	0.00937966,
+	0.00960066,
+	0.00998061,
+	0.0101368,
+	0.0102158,
+	0.0101368,
+	0.0100584,
+	0.00990344,
+	0.00998061,
+	0.0101368,
+	0.0106201,
+	0.0113886,
+	0.0120245,
+	0.0124037,
+	0.0126960,
+	0.0126960,
+	0.0125004,
+	0.0121182,
+	0.0116569,
+	0.0112131,
+	0.0107862,
+	0.0104565,
+	0.0101368,
+	0.0100584,
+	0.0100584,
+	0.0102158,
+	0.0103756,
+	0.0105379,
+	0.0106201,
+	0.0106201,
+	0.0107028,
+	0.0106201,
+	0.0105379,
+	0.0107862,
+	0.0112131,
+	0.0119315,
+	0.0131984,
+	0.0150603,
+	0.0173188,
+	0.0203851,
+	0.0241814,
+	0.0282427,
+	0.0327311,
+	0.0376394,
+	0.0419605,
+	0.0460570,
+	0.0501625,
+	0.0537924,
+	0.0567962,
+	0.0590440,
+	0.0613807,
+	0.0638099,
+	0.0658223,
+	0.0673732,
+	0.0689606,
+	0.0694980,
+	0.0711354,
+	0.0728115,
+	0.0739507,
+	0.0751078,
+	0.0762829,
+	0.0774765,
+	0.0780802,
+	0.0799199,
+	0.0818029,
+	0.0824404,
+	0.0837303,
+	0.0837303,
+	0.0857030,
+	0.0870440,
+	0.0877223,
+	0.0890948,
+	0.0897891,
+	0.0919047,
+	0.0919047,
+]])
 
 # 3.0
-nd30d = np.array([
-	np.nan, # 300
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	3.96296,
-	3.86242, # 400
-	3.68779,
-	3.56608,
-	3.47083,
-	3.37029,
-	3.30150,
-	3.23271,
-	3.17979,
-	3.14804,
-	3.10042,
-	3.08454, # 500
-	3.06337,
-	3.05279,
-	3.03692,
-	3.01575,
-	2.98929,
-	2.98929,
-	2.98929,
-	2.96283,
-	2.91521,
-	2.88346, # 600
-	2.88875,
-	2.93108,
-	2.98400,
-	3.02633,
-	3.03162,
-	3.01046,
-	2.99987,
-	2.99987,
-	3.01575,
-	2.97871, # 700
-	2.87287,
-	2.67708,
-	2.46012,
-	2.24846,
-	2.08971,
-	1.97858,
-	1.89921,
-	1.84100,
-	1.80396,
-	1.76692 # 800
-])
+nd30_5nm = np.array([[
+	300,
+	385,
+	385.727,
+	389.931,
+	394.835,
+	400.088,
+	404.988,
+	410.239,
+	414.791,
+	420.394,
+	425.298,
+	430.201,
+	435.455,
+	440.359,
+	445.263,
+	450.869,
+	455.774,
+	460.329,
+	464.884,
+	470.140,
+	475.046,
+	480.303,
+	484.858,
+	490.115,
+	495.022,
+	499.929,
+	505.186,
+	509.743,
+	515.351,
+	520.259,
+	524.816,
+	530.424,
+	534.981,
+	540.238,
+	545.145,
+	550.052,
+	555.310,
+	560.218,
+	565.126,
+	569.684,
+	574.942,
+	579.848,
+	584.754,
+	590.010,
+	595.267,
+	600.174,
+	605.082,
+	610.341,
+	614.549,
+	620.160,
+	625.070,
+	629.981,
+	635.241,
+	640.151,
+	645.411,
+	649.617,
+	655.226,
+	659.782,
+	665.391,
+	670.298,
+	675.206,
+	680.465,
+	685.373,
+	690.282,
+	695.189,
+	700.445,
+	704.649,
+	709.902,
+	715.152,
+	720.401,
+	725.299,
+	730.197,
+	735.446,
+	740.345,
+	745.245,
+	750.147,
+	755.048,
+	760.302,
+	764.856,
+	769.761,
+	775.016,
+	780.272,
+	785.178,
+	790.084,
+	795.341,
+	799.897,
+	805.154,
+	810.412,
+	815.318,
+	820.225,
+	825.133,
+	830.390,
+	834.596,
+	840.204,
+	845.111,
+	849.667,
+	854.924,
+	860.180,
+	865.437,
+	870.344,
+	875.251,
+	879.808,
+	885.417,
+	890.325,
+	895.232,
+	900.140,
+],[
+	0,
+	0,
+	0.000101343,
+	0.000108705,
+	0.000119357,
+	0.000137319,
+	0.000166827,
+	0.000204261,
+	0.000233174,
+	0.000270361,
+	0.000303866,
+	0.000341524,
+	0.000386849,
+	0.000428076,
+	0.000466380,
+	0.000508119,
+	0.000549294,
+	0.000589198,
+	0.000627103,
+	0.000667454,
+	0.000694004,
+	0.000727252,
+	0.000762083,
+	0.000798593,
+	0.000823922,
+	0.000843465,
+	0.000863478,
+	0.000877100,
+	0.000897916,
+	0.000912089,
+	0.000919296,
+	0.000933818,
+	0.000963430,
+	0.000986288,
+	0.00100968,
+	0.00104171,
+	0.00104995,
+	0.00105005,
+	0.00104201,
+	0.00105025,
+	0.00106683,
+	0.00110927,
+	0.00117148,
+	0.00123720,
+	0.00130660,
+	0.00132722,
+	0.00133772,
+	0.00131719,
+	0.00127692,
+	0.00119998,
+	0.00113647,
+	0.00107632,
+	0.00101936,
+	0.000980547,
+	0.000950591,
+	0.000958096,
+	0.000973231,
+	0.000996308,
+	0.00101205,
+	0.00102802,
+	0.00103615,
+	0.00102025,
+	0.00100459,
+	0.000996900,
+	0.00102055,
+	0.00107779,
+	0.00115608,
+	0.00133006,
+	0.00164123,
+	0.00210556,
+	0.00270123,
+	0.00349251,
+	0.00448059,
+	0.00557200,
+	0.00682225,
+	0.00803424,
+	0.00938820,
+	0.0106342,
+	0.0116762,
+	0.0126223,
+	0.0137519,
+	0.0145233,
+	0.0153379,
+	0.0160726,
+	0.0167120,
+	0.0173766,
+	0.0179279,
+	0.0184967,
+	0.0190833,
+	0.0195360,
+	0.0199993,
+	0.0206338,
+	0.0209592,
+	0.0214566,
+	0.0219656,
+	0.0226621,
+	0.0241203,
+	0.0254733,
+	0.0262815,
+	0.0269048,
+	0.0275430,
+	0.0279775,
+	0.0279806,
+	0.0282019,
+	0.0286470,
+	0.0288736,
+]]) 
 
-# 4.0
-nd40d = np.array([
-	np.nan, # 300
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan,
-	np.nan, # 400
-	4.91108,
-	4.76816,
-	4.62525,
-	4.49186,
-	4.40612,
-	4.34895,
-	4.24415,
-	4.20604,
-	4.16475,
-	4.13617, # 500
-	4.11711,
-	4.10758,
-	4.10123,
-	4.06312,
-	4.03454,
-	4.03454,
-	4.05360,
-	3.99325,
-	3.90115,
-	3.86940, # 600
-	3.87575,
-	3.93291,
-	4.00913,
-	4.05677,
-	4.06630,
-	4.04089,
-	4.02184,
-	4.03136,
-	4.03772,
-	3.98055, # 700
-	#3.83446,
-	#3.58039,
-	#3.27234,
-	#3.01827,
-	#2.80866,
-	#2.65940,
-	#2.56412,
-	#2.48155,
-	#2.43391,
-	#2.39262 # 800
-])
+# 4.0 
+nd40_5nm = np.array([[
+	300,
+	406,
+	406.398,
+	409.904,
+	414.461,
+	420.070,
+	424.628,
+	430.587,
+	434.794,
+	440.053,
+	444.961,
+	449.518,
+	455.478,
+	459.684,
+	464.943,
+	469.851,
+	474.759,
+	480.368,
+	484.926,
+	490.184,
+	495.092,
+	499.649,
+	504.908,
+	510.167,
+	515.425,
+	519.982,
+	525.241,
+	530.149,
+	535.057,
+	539.614,
+	544.873,
+	550.482,
+	555.390,
+	560.298,
+	564.505,
+	569.763,
+	575.022,
+	579.930,
+	584.838,
+	590.096,
+	595.355,
+	599.912,
+	604.820,
+	609.728,
+	614.987,
+	620.245,
+	624.803,
+	629.711,
+	634.969,
+	639.877,
+	645.486,
+	650.394,
+	655.302,
+	659.860,
+	665.118,
+	669.676,
+	675.285,
+	680.193,
+	685.101,
+	689.658,
+	695.267,
+	699.825,
+	704.733,
+	709.991,
+	714.899,
+	720.158,
+	724.715,
+	729.974,
+	734.882,
+	740.491,
+	745.048,
+	750.307,
+	754.514,
+	760.473,
+	765.381,
+	770.289,
+	774.847,
+	780.105,
+	785.364,
+	790.272,
+	795.180,
+	800.438,
+	804.996,
+	809.553,
+	815.162,
+	820.421,
+	824.628,
+	829.886,
+	835.145,
+	840.053,
+	845.311,
+	849.167,
+	855.127,
+	860.386,
+	865.294,
+	870.202,
+	874.759,
+	880.368,
+	884.925,
+	889.833,
+	895.443,
+	900,
+],[
+	0,
+	0,
+	1.02059e-05,
+	1.22959e-05,
+	1.44729e-05,
+	1.71349e-05,
+	1.98195e-05,
+	2.42990e-05,
+	2.76194e-05,
+	3.19466e-05,
+	3.63120e-05,
+	3.89396e-05,
+	4.12740e-05,
+	4.47790e-05,
+	5.14941e-05,
+	5.65213e-05,
+	5.95619e-05,
+	6.24016e-05,
+	6.57585e-05,
+	6.88937e-05,
+	7.13428e-05,
+	7.34501e-05,
+	7.51807e-05,
+	7.69520e-05,
+	7.83079e-05,
+	7.92250e-05,
+	7.92250e-05,
+	8.06209e-05,
+	8.34869e-05,
+	8.69596e-05,
+	9.00509e-05,
+	9.27108e-05,
+	9.32521e-05,
+	9.27108e-05,
+	9.11056e-05,
+	9.00509e-05,
+	9.48951e-05,
+	0.000101762,
+	0.000112349,
+	0.000124037,
+	0.000133013,
+	0.000136147,
+	0.000136942,
+	0.000135357,
+	0.000127701,
+	0.000117705,
+	0.000109126,
+	0.000101171,
+	9.37966e-05,
+	9.05767e-05,
+	8.69596e-05,
+	8.69596e-05,
+	8.90084e-05,
+	9.11056e-05,
+	9.43443e-05,
+	9.60066e-05,
+	9.54492e-05,
+	9.43443e-05,
+	9.27108e-05,
+	9.21726e-05,
+	9.60066e-05,
+	0.000103555,
+	0.000117022,
+	0.000143471,
+	0.000186442,
+	0.000255317,
+	0.000347606,
+	0.000498713,
+	0.000682947,
+	0.000940700,
+	0.00116682,
+	0.00151630,
+	0.00179518,
+	0.00215026,
+	0.00242990,
+	0.00269836,
+	0.00299648,
+	0.00326993,
+	0.00348619,
+	0.00365241,
+	0.00384889,
+	0.00405594,
+	0.00420012,
+	0.00440037,
+	0.00461017,
+	0.00477406,
+	0.00488654,
+	0.00500167,
+	0.00520972,
+	0.00542642,
+	0.00568514,
+	0.00581908,
+	0.00592161,
+	0.00609652,
+	0.00635011,
+	0.00673079,
+	0.00713428,
+	0.00730237,
+	0.00725998,
+	0.00730237,
+	0.00806209,
+	0.00830022,
+]])
 
-# transmission
-yellow15t = np.empty(51)
-for i in range(41):
-	if (np.isnan(yellow15d[i])): # nan check
-		yellow15t[i] = 0
-	else:
-		yellow15t[i] = 10**(-yellow15d[i])
-red25t = np.empty(41)
-for i in range(41):
-	if (np.isnan(red25d[i])):
-		red25t[i] = 0
-	else:
-		red25t[i] = 10**(-red25d[i])
-blue47t = np.empty(41)
-for i in range(41):
-	if (np.isnan(blue47d[i])):
-		blue47t[i] = 0
-	else:
-		blue47t[i] = 10**(-blue47d[i])
-green58t = np.empty(41)
-for i in range(41):
-	if (np.isnan(green58d[i])):
-		green58t[i] = 0
-	else:
-		green58t[i] = 10**(-green58d[i])
-# neutral density filters -- these do not contain nans except 2.0, 3.0 and 4.0
-nd01t = np.empty(41)
-for i in range(41):
-	nd01t[i] = 10**(-nd01d[i])
-nd02t = np.empty(41)
-for i in range(41):
-	nd02t[i] = 10**(-nd02d[i])
-nd03t = np.empty(41)
-for i in range(41):
-	nd03t[i] = 10**(-nd03d[i])
-nd04t = np.empty(41)
-for i in range(41):
-	nd04t[i] = 10**(-nd04d[i])
-nd05t = np.empty(41)
-for i in range(41):
-	nd05t[i] = 10**(-nd05d[i])
-nd06t = np.empty(41)
-for i in range(41):
-	nd06t[i] = 10**(-nd06d[i])
-nd07t = np.empty(41)
-for i in range(41):
-	nd07t[i] = 10**(-nd07d[i])
-nd08t = np.empty(41)
-for i in range(41):
-	nd08t[i] = 10**(-nd08d[i])
-nd09t = np.empty(41)
-for i in range(41):
-	nd09t[i] = 10**(-nd09d[i])
-nd10t = np.empty(41)
-for i in range(41):
-	nd10t[i] = 10**(-nd10d[i])
-nd20t = np.empty(41)
-for i in range(41):
-	if (np.isnan(nd20d[i])):
-		nd20t[i] = 0
-	else:
-		nd20t[i] = 10**(-nd20d[i])
-nd30t = np.empty(41)
-for i in range(41):
-	if (np.isnan(nd30d[i])):
-		nd30t[i] = 0
-	else:
-		nd30t[i] = 10**(-nd30d[i])
-nd40t = np.empty(41)
-for i in range(41):
-	if (np.isnan(nd40d[i])):
-		nd40t[i] = 0
-	else:
-		nd40t[i] = 10**(-nd40d[i])
+# 1-nm interpolation from 300 to 700 nm
+x_1nm = np.empty(401)
+for i in range(401): x_1nm[i] = i + 300
+yellow15_1nm = np.interp(x_1nm, yellow15_5nm[0], yellow15_5nm[1])
+red25_1nm = np.interp(x_1nm, red25_5nm[0], red25_5nm[1])
+blue47_1nm = np.interp(x_1nm, blue47_5nm[0], blue47_5nm[1])
+green58_1nm = np.interp(x_1nm, green58_5nm[0], green58_5nm[1])
+nd01_1nm = np.interp(x_1nm, nd01_5nm[0], nd01_5nm[1])
+nd02_1nm = np.interp(x_1nm, nd02_5nm[0], nd02_5nm[1])
+nd03_1nm = np.interp(x_1nm, nd03_5nm[0], nd03_5nm[1])
+nd04_1nm = np.interp(x_1nm, nd04_5nm[0], nd04_5nm[1])
+nd05_1nm = np.interp(x_1nm, nd05_5nm[0], nd05_5nm[1])
+nd06_1nm = np.interp(x_1nm, nd06_5nm[0], nd06_5nm[1])
+nd07_1nm = np.interp(x_1nm, nd07_5nm[0], nd07_5nm[1])
+nd08_1nm = np.interp(x_1nm, nd08_5nm[0], nd08_5nm[1])
+nd09_1nm = np.interp(x_1nm, nd09_5nm[0], nd09_5nm[1])
+nd10_1nm = np.interp(x_1nm, nd10_5nm[0], nd10_5nm[1])
+nd20_1nm = np.interp(x_1nm, nd20_5nm[0], nd20_5nm[1])
+nd30_1nm = np.interp(x_1nm, nd30_5nm[0], nd30_5nm[1])
+nd40_1nm = np.interp(x_1nm, nd40_5nm[0], nd40_5nm[1])
 
-if (args.kcheck):
-	# plot test
-	#xvalues = np.empty(51)
-	#for i in range(51):
-#		xvalues[i] = i*10 + 300
-#	plt.plot(xvalues, red25, 's-r', mec='k', label="red 25")
-#	plt.plot(xvalues, yellow15, 'D-y', mec='k', label="yellow 15")
-#	plt.plot(xvalues, green58, '^-g', mec='k', label="green 58")
-#	plt.plot(xvalues, blue47, 'o-b', mec='k', label="blue 47")
-#	plt.xlabel("Wavelength (nm)")
-#	plt.ylabel("Optical density")
-#	plt.legend()
-#	plt.show()
+# Alternate data for 400-700 nm from Kodak Photographic Filters Handbook (1990). There are
+# also graphs going down to 300 that we could scan, but there's no information for neutral
+# density filters other than 1.0. The biggest difference below 400 nm evident in these
+# and earlier published graphs is that the Wratten 2 glass version of red 25 transmits a
+# small amount of light in this range whereas all other sources show no transmission at all.
+# The other four are consistently shown as either transmitting UV (yellow, blue, ND 1.0) or
+# not (green).
+if (args.kv2):
+	# yellow 15 -- page 104
+	yellow15_10nm = np.array([
+		0, # 400
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0, # 500
+		1.0,
+		19.4,
+		56.2,
+		77.6,
+		85.6,
+		88.2,
+		89.3,
+		89.8,
+		90.1,
+		90.4, # 600
+		90.5,
+		90.6,
+		90.7,
+		90.9,
+		91.0,
+		91.1,
+		91.1,
+		91.1,
+		91.1,
+		91.1 # 700
+	])
+
+	# red 25 -- page 111
+	red25_10nm = np.array([
+		0, # 400
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0, # 500
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		12.6,
+		50.0, # 600
+		75.0,
+		82.6,
+		85.5,
+		86.7,
+		87.6,
+		88.2,
+		88.5,
+		89.0,
+		89.3,
+		89.5 # 700
+	])
+
+	# blue 47 -- page 121
+	blue47_10nm = np.array([
+		9.7, # 400
+		21.8,
+		37.8,
+		47.8,
+		50.3,
+		48.2,
+		42.8,
+		35.7,
+		27.1,
+		18.2,
+		10.2, # 500
+		4.3,
+		1.2,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0, # 600
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0 # 700
+	])
+
+	# green 58 -- page 124
+	green58_10nm = np.array([
+		0, # 400
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0.23,
+		1.38,
+		4.90,
+		17.7, # 500
+		38.8,
+		52.2,
+		53.6,
+		47.6,
+		38.4,
+		27.8,
+		17.4,
+		9.0,
+		3.50,
+		1.50, # 600
+		0.41,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0,
+		0.53 # 700
+	])
+
+	# neutral density 96 -- page 132
+	nd10_10nm = np.array([
+		4.28, # 400
+		4.91,
+		5.50,
+		6.17,
+		6.92,
+		7.50,
+		7.81,
+		8.15,
+		8.47,
+		8.60,
+		8.73, # 500
+		8.85,
+		8.90,
+		9.01,
+		9.07,
+		9.20,
+		9.30,
+		9.20,
+		9.19,
+		9.54,
+		9.64, # 600
+		9.73,
+		9.56,
+		9.27,
+		9.10,
+		9.07,
+		9.00,
+		9.13,
+		9.08,
+		9.21,
+		9.52 # 700
+	])
 	
-	# plot test 2
-#	plt.subplot(2, 2, 1)
-#	plt.plot(xvalues, red25, 'r')
-#	plt.title("Red 25")
-#	plt.subplot(2, 2, 2)
-#	plt.plot(xvalues, yellow15, 'y')
-#	plt.title("Yellow 15")
-#	plt.subplot(2, 2, 3)
-#	plt.plot(xvalues, green58, 'g')
-#	plt.title("Green 58")
-#	plt.subplot(2, 2, 4)
-#	plt.plot(xvalues, blue47, 'b')
-#	plt.title("Blue 47")
-	#plt.show()
+	# interpolate
+	x_400700_10nm = np.empty(31)
+	for i in range(31): x_400700_10nm[i] = i*10 + 400
+	x_400700_1nm = np.empty(301)
+	for i in range(301): x_400700_1nm[i] = i + 400
+	yellow15_400700 = np.interp(x_400700_1nm, x_400700_10nm, yellow15_10nm)
+	red25_400700 = np.interp(x_400700_1nm, x_400700_10nm, red25_10nm)
+	blue47_400700 = np.interp(x_400700_1nm, x_400700_10nm, blue47_10nm)
+	green58_400700 = np.interp(x_400700_1nm, x_400700_10nm, green58_10nm)
+	nd10_400700 = np.interp(x_400700_1nm, x_400700_10nm, nd10_10nm)
 	
-#	plt.subplot(2, 2, 1)
-#	plt.plot(xvalues, nd01, color='0.5')
-#	plt.plot(xvalues, nd02, color='0.25')
-#	plt.plot(xvalues, nd03, 'k')
-#	plt.title("0.1-0.3")
-#	plt.subplot(2, 2, 2)
-#	plt.plot(xvalues, nd04, color='0.5')
-#	plt.plot(xvalues, nd05, color='0.25')
-#	plt.plot(xvalues, nd06, 'k')
-#	plt.title("0.4-0.6")
-#	plt.subplot(2, 2, 3)
-#	plt.plot(xvalues, nd07, color='0.5')
-#	plt.plot(xvalues, nd08, color='0.25')
-#	plt.plot(xvalues, nd09, 'k')
-#	plt.title("0.7-0.9")
-#	plt.subplot(2, 2, 4)
-#	plt.plot(xvalues, nd10, color='0.6')
-#	plt.plot(xvalues, nd20, color='0.4')
-#	plt.plot(xvalues, nd30, color='0.2')
-#	plt.plot(xvalues, nd40, 'k')
-#	plt.title("1.0-4.0")
-#	#plt.show()
-	
-	# transmission
-#	red25t = np.empty(51)
-#	for i in range(51):
-#		red25t[i] = math.exp(-red25[i])
-#	yellow15t = np.empty(51)
-#	for i in range(51):
-#		yellow15t[i] = math.exp(-yellow15[i])
-#	green58t = np.empty(51)
-#	for i in range(51):
-#		green58t[i] = math.exp(-green58[i])
-#	blue47t = np.empty(51)
-#	for i in range(51):
-#		blue47t[i] = math.exp(-blue47[i])
-#	plt.plot(xvalues, red25t*100, 's-r', mec='k', label="red 25")
-#	plt.plot(xvalues, yellow15t*100, 'D-y', mec='k', label="yellow 15")
-#	plt.plot(xvalues, green58t*100, '^-g', mec='k', label="green 58")
-#	plt.plot(xvalues, blue47t*100, 'o-b', mec='k', label="blue 47")
-#	plt.xlabel("Wavelength (nm)")
-#	plt.ylabel("Transmission (%)")
-#	plt.legend()
-#	#plt.show()
-	
+	# replace
+	for i in range(100, 401):
+		yellow15_1nm[i] = yellow15_400700[i-100]/100
+		red25_1nm[i] = red25_400700[i-100]/100
+		blue47_1nm[i] = blue47_400700[i-100]/100
+		green58_1nm[i] = green58_400700[i-100]/100
+		nd10_1nm[i] = nd10_400700[i-100]/100
+
+# Find brightness matches for human vision. Since we begin with colors that are much
+# brighter than blue 47, we choose the "brightest" ND filter or pair of filters that produces
+# an achromatic contrast less than 1, but in practice there seems to be only one match for each
+# color. This depends on the specified vision system and illuminant like everything else, so
+# we have to set --filter human --white i (L, M and S don't matter). The current matches are:
+# * red: 1.0 + 0.5
+# * yellow: 2.0
+# * green: 1.0 + 0.3
+# * gray: 2.0 + 0.1
+# When using the 1990 data, the matches are one or two steps brighter:
+# * red: 1.0 + 0.3
+# * yellow: 1.0 + 0.9
+# * green: 1.0 + 0.2
+# * gray: 2.0
+if (args.kcheck):	
 	# "dummy" array for gray as we assume no color filter
-	placeholder = np.empty(41)
-	for i in range(41):
+	placeholder = np.empty(401)
+	for i in range(401):
 		placeholder[i] = 1
 	
 	# brightness tests -- wrap this up in a function so we don't have to copy it a million
 	# times
 	def brightness_tests(f):
-		f_01 = np.empty(41)
-		for i in range(41):
-			f_01[i] = f[i] * nd01t[i]
-		f_02 = np.empty(41)
-		for i in range(41):
-			f_02[i] = f[i] * nd02t[i]
-		f_03 = np.empty(41)
-		for i in range(41):
-			f_03[i] = f[i] * nd03t[i]
-		f_04 = np.empty(41)
-		for i in range(41):
-			f_04[i] = f[i] * nd04t[i]
-		f_05 = np.empty(41)
-		for i in range(41):
-			f_05[i] = f[i] * nd05t[i]
-		f_06 = np.empty(41)
-		for i in range(41):
-			f_06[i] = f[i] * nd06t[i]
-		f_07 = np.empty(41)
-		for i in range(41):
-			f_07[i] = f[i] * nd07t[i]
-		f_08 = np.empty(41)
-		for i in range(41):
-			f_08[i] = f[i] * nd08t[i]
-		f_09 = np.empty(41)
-		for i in range(41):
-			f_09[i] = f[i] * nd09t[i]
+		f_01 = np.empty(401)
+		for i in range(401):
+			f_01[i] = f[i] * nd01_1nm[i]
+		f_02 = np.empty(401)
+		for i in range(401):
+			f_02[i] = f[i] * nd02_1nm[i]
+		f_03 = np.empty(401)
+		for i in range(401):
+			f_03[i] = f[i] * nd03_1nm[i]
+		f_04 = np.empty(401)
+		for i in range(401):
+			f_04[i] = f[i] * nd04_1nm[i]
+		f_05 = np.empty(401)
+		for i in range(401):
+			f_05[i] = f[i] * nd05_1nm[i]
+		f_06 = np.empty(401)
+		for i in range(401):
+			f_06[i] = f[i] * nd06_1nm[i]
+		f_07 = np.empty(401)
+		for i in range(401):
+			f_07[i] = f[i] * nd07_1nm[i]
+		f_08 = np.empty(401)
+		for i in range(401):
+			f_08[i] = f[i] * nd08_1nm[i]
+		f_09 = np.empty(401)
+		for i in range(401):
+			f_09[i] = f[i] * nd09_1nm[i]
 		# 1.0 + others
-		f_10 = np.empty(41)
-		for i in range(41):
-			f_10[i] = f[i] * nd10t[i]
-		f_1001 = np.empty(41)
-		for i in range(41):
-			f_1001[i] = f[i] * nd10t[i] * nd01t[i]
-		f_1002 = np.empty(41)
-		for i in range(41):
-			f_1002[i] = f[i] * nd10t[i] * nd02t[i]
-		f_1003 = np.empty(41)
-		for i in range(41):
-			f_1003[i] = f[i] * nd10t[i] * nd03t[i]
-		f_1004 = np.empty(41)
-		for i in range(41):
-			f_1004[i] = f[i] * nd10t[i] * nd04t[i]
-		f_1005 = np.empty(41)
-		for i in range(41):
-			f_1005[i] = f[i] * nd10t[i] * nd05t[i]
-		f_1006 = np.empty(41)
-		for i in range(41):
-			f_1006[i] = f[i] * nd10t[i] * nd06t[i]
-		f_1007 = np.empty(41)
-		for i in range(41):
-			f_1007[i] = f[i] * nd10t[i] * nd07t[i]
-		f_1008 = np.empty(41)
-		for i in range(41):
-			f_1008[i] = f[i] * nd10t[i] * nd08t[i]
-		f_1009 = np.empty(41)
-		for i in range(41):
-			f_1009[i] = f[i] * nd10t[i] * nd09t[i]
+		f_10 = np.empty(401)
+		for i in range(401):
+			f_10[i] = f[i] * nd10_1nm[i]
+		f_1001 = np.empty(401)
+		for i in range(401):
+			f_1001[i] = f[i] * nd10_1nm[i] * nd01_1nm[i]
+		f_1002 = np.empty(401)
+		for i in range(401):
+			f_1002[i] = f[i] * nd10_1nm[i] * nd02_1nm[i]
+		f_1003 = np.empty(401)
+		for i in range(401):
+			f_1003[i] = f[i] * nd10_1nm[i] * nd03_1nm[i]
+		f_1004 = np.empty(401)
+		for i in range(401):
+			f_1004[i] = f[i] * nd10_1nm[i] * nd04_1nm[i]
+		f_1005 = np.empty(401)
+		for i in range(401):
+			f_1005[i] = f[i] * nd10_1nm[i] * nd05_1nm[i]
+		f_1006 = np.empty(401)
+		for i in range(401):
+			f_1006[i] = f[i] * nd10_1nm[i] * nd06_1nm[i]
+		f_1007 = np.empty(401)
+		for i in range(401):
+			f_1007[i] = f[i] * nd10_1nm[i] * nd07_1nm[i]
+		f_1008 = np.empty(401)
+		for i in range(401):
+			f_1008[i] = f[i] * nd10_1nm[i] * nd08_1nm[i]
+		f_1009 = np.empty(401)
+		for i in range(401):
+			f_1009[i] = f[i] * nd10_1nm[i] * nd09_1nm[i]
 		# 2.0
-		f_20 = np.empty(41)
-		for i in range(41):
-			f_20[i] = f[i] * nd20t[i]
-		f_2001 = np.empty(41)
-		for i in range(41):
-			f_2001[i] = f[i] * nd20t[i] * nd01t[i]
-		f_2002 = np.empty(41)
-		for i in range(41):
-			f_2002[i] = f[i] * nd20t[i] * nd02t[i]
-		f_2003 = np.empty(41)
-		for i in range(41):
-			f_2003[i] = f[i] * nd20t[i] * nd03t[i]
-		f_2004 = np.empty(41)
-		for i in range(41):
-			f_2004[i] = f[i] * nd20t[i] * nd04t[i]
-		f_2005 = np.empty(41)
-		for i in range(41):
-			f_2005[i] = f[i] * nd20t[i] * nd05t[i]
-		f_2006 = np.empty(41)
-		for i in range(41):
-			f_2006[i] = f[i] * nd20t[i] * nd06t[i]
-		f_2007 = np.empty(41)
-		for i in range(41):
-			f_2007[i] = f[i] * nd20t[i] * nd07t[i]
-		f_2008 = np.empty(41)
-		for i in range(41):
-			f_2008[i] = f[i] * nd20t[i] * nd08t[i]
-		f_2009 = np.empty(41)
-		for i in range(41):
-			f_2009[i] = f[i] * nd20t[i] * nd09t[i]
+		f_20 = np.empty(401)
+		for i in range(401):
+			f_20[i] = f[i] * nd20_1nm[i]
+		f_2001 = np.empty(401)
+		for i in range(401):
+			f_2001[i] = f[i] * nd20_1nm[i] * nd01_1nm[i]
+		f_2002 = np.empty(401)
+		for i in range(401):
+			f_2002[i] = f[i] * nd20_1nm[i] * nd02_1nm[i]
+		f_2003 = np.empty(401)
+		for i in range(401):
+			f_2003[i] = f[i] * nd20_1nm[i] * nd03_1nm[i]
+		f_2004 = np.empty(401)
+		for i in range(401):
+			f_2004[i] = f[i] * nd20_1nm[i] * nd04_1nm[i]
+		f_2005 = np.empty(401)
+		for i in range(401):
+			f_2005[i] = f[i] * nd20_1nm[i] * nd05_1nm[i]
+		f_2006 = np.empty(401)
+		for i in range(401):
+			f_2006[i] = f[i] * nd20_1nm[i] * nd06_1nm[i]
+		f_2007 = np.empty(401)
+		for i in range(401):
+			f_2007[i] = f[i] * nd20_1nm[i] * nd07_1nm[i]
+		f_2008 = np.empty(401)
+		for i in range(401):
+			f_2008[i] = f[i] * nd20_1nm[i] * nd08_1nm[i]
+		f_2009 = np.empty(401)
+		for i in range(401):
+			f_2009[i] = f[i] * nd20_1nm[i] * nd09_1nm[i]
 		# 3.0
-		f_30 = np.empty(41)
-		for i in range(41):
-			f_30[i] = f[i] * nd30t[i]
-		f_3001 = np.empty(41)
-		for i in range(41):
-			f_3001[i] = f[i] * nd30t[i] * nd01t[i]
-		f_3002 = np.empty(41)
-		for i in range(41):
-			f_3002[i] = f[i] * nd30t[i] * nd02t[i]
-		f_3003 = np.empty(41)
-		for i in range(41):
-			f_3003[i] = f[i] * nd30t[i] * nd03t[i]
-		f_3004 = np.empty(41)
-		for i in range(41):
-			f_3004[i] = f[i] * nd30t[i] * nd04t[i]
-		f_3005 = np.empty(41)
-		for i in range(41):
-			f_3005[i] = f[i] * nd30t[i] * nd05t[i]
-		f_3006 = np.empty(41)
-		for i in range(41):
-			f_3006[i] = f[i] * nd30t[i] * nd06t[i]
-		f_3007 = np.empty(41)
-		for i in range(41):
-			f_3007[i] = f[i] * nd30t[i] * nd07t[i]
-		f_3008 = np.empty(41)
-		for i in range(41):
-			f_3008[i] = f[i] * nd30t[i] * nd08t[i]
-		f_3009 = np.empty(41)
-		for i in range(41):
-			f_3009[i] = f[i] * nd30t[i] * nd09t[i]
+		f_30 = np.empty(401)
+		for i in range(401):
+			f_30[i] = f[i] * nd30_1nm[i]
+		f_3001 = np.empty(401)
+		for i in range(401):
+			f_3001[i] = f[i] * nd30_1nm[i] * nd01_1nm[i]
+		f_3002 = np.empty(401)
+		for i in range(401):
+			f_3002[i] = f[i] * nd30_1nm[i] * nd02_1nm[i]
+		f_3003 = np.empty(401)
+		for i in range(401):
+			f_3003[i] = f[i] * nd30_1nm[i] * nd03_1nm[i]
+		f_3004 = np.empty(401)
+		for i in range(401):
+			f_3004[i] = f[i] * nd30_1nm[i] * nd04_1nm[i]
+		f_3005 = np.empty(401)
+		for i in range(401):
+			f_3005[i] = f[i] * nd30_1nm[i] * nd05_1nm[i]
+		f_3006 = np.empty(401)
+		for i in range(401):
+			f_3006[i] = f[i] * nd30_1nm[i] * nd06_1nm[i]
+		f_3007 = np.empty(401)
+		for i in range(401):
+			f_3007[i] = f[i] * nd30_1nm[i] * nd07_1nm[i]
+		f_3008 = np.empty(401)
+		for i in range(401):
+			f_3008[i] = f[i] * nd30_1nm[i] * nd08_1nm[i]
+		f_3009 = np.empty(401)
+		for i in range(401):
+			f_3009[i] = f[i] * nd30_1nm[i] * nd09_1nm[i]
 		# 4.0
-		f_40 = np.empty(41)
-		for i in range(41):
-			f_40[i] = f[i] * nd40t[i]
-		f_4001 = np.empty(41)
-		for i in range(41):
-			f_4001[i] = f[i] * nd40t[i] * nd01t[i]
-		f_4002 = np.empty(41)
-		for i in range(41):
-			f_4002[i] = f[i] * nd40t[i] * nd02t[i]
-		f_4003 = np.empty(41)
-		for i in range(41):
-			f_4003[i] = f[i] * nd40t[i] * nd03t[i]
-		f_4004 = np.empty(41)
-		for i in range(41):
-			f_4004[i] = f[i] * nd40t[i] * nd04t[i]
-		f_4005 = np.empty(41)
-		for i in range(41):
-			f_4005[i] = f[i] * nd40t[i] * nd05t[i]
-		f_4006 = np.empty(41)
-		for i in range(41):
-			f_4006[i] = f[i] * nd40t[i] * nd06t[i]
-		f_4007 = np.empty(41)
-		for i in range(41):
-			f_4007[i] = f[i] * nd40t[i] * nd07t[i]
-		f_4008 = np.empty(41)
-		for i in range(41):
-			f_4008[i] = f[i] * nd40t[i] * nd08t[i]
-		f_4009 = np.empty(41)
-		for i in range(41):
-			f_4009[i] = f[i] * nd40t[i] * nd09t[i]
+		f_40 = np.empty(401)
+		for i in range(401):
+			f_40[i] = f[i] * nd40_1nm[i]
+		f_4001 = np.empty(401)
+		for i in range(401):
+			f_4001[i] = f[i] * nd40_1nm[i] * nd01_1nm[i]
+		f_4002 = np.empty(401)
+		for i in range(401):
+			f_4002[i] = f[i] * nd40_1nm[i] * nd02_1nm[i]
+		f_4003 = np.empty(401)
+		for i in range(401):
+			f_4003[i] = f[i] * nd40_1nm[i] * nd03_1nm[i]
+		f_4004 = np.empty(401)
+		for i in range(401):
+			f_4004[i] = f[i] * nd40_1nm[i] * nd04_1nm[i]
+		f_4005 = np.empty(401)
+		for i in range(401):
+			f_4005[i] = f[i] * nd40_1nm[i] * nd05_1nm[i]
+		f_4006 = np.empty(401)
+		for i in range(401):
+			f_4006[i] = f[i] * nd40_1nm[i] * nd06_1nm[i]
+		f_4007 = np.empty(401)
+		for i in range(401):
+			f_4007[i] = f[i] * nd40_1nm[i] * nd07_1nm[i]
+		f_4008 = np.empty(401)
+		for i in range(401):
+			f_4008[i] = f[i] * nd40_1nm[i] * nd08_1nm[i]
+		f_4009 = np.empty(401)
+		for i in range(401):
+			f_4009[i] = f[i] * nd40_1nm[i] * nd09_1nm[i]
 		
 		print("Brightness contrast with blue:")
-		print("0.1: " + str(brightness_contrast(f_01, blue47t)))
-		print("0.2: " + str(brightness_contrast(f_02, blue47t)))
-		print("0.3: " + str(brightness_contrast(f_03, blue47t)))
-		print("0.4: " + str(brightness_contrast(f_04, blue47t)))
-		print("0.5: " + str(brightness_contrast(f_05, blue47t)))
-		print("0.6: " + str(brightness_contrast(f_06, blue47t)))
-		print("0.7: " + str(brightness_contrast(f_07, blue47t)))
-		print("0.8: " + str(brightness_contrast(f_08, blue47t)))
-		print("0.9: " + str(brightness_contrast(f_09, blue47t)))
-		print("1.0: " + str(brightness_contrast(f_10, blue47t)))
-		print("1.0 + 0.1: " + str(brightness_contrast(f_1001, blue47t)))
-		print("1.0 + 0.2: " + str(brightness_contrast(f_1002, blue47t)))
-		print("1.0 + 0.3: " + str(brightness_contrast(f_1003, blue47t)))
-		print("1.0 + 0.4: " + str(brightness_contrast(f_1004, blue47t)))
-		print("1.0 + 0.5: " + str(brightness_contrast(f_1005, blue47t)))
-		print("1.0 + 0.6: " + str(brightness_contrast(f_1006, blue47t)))
-		print("1.0 + 0.7: " + str(brightness_contrast(f_1007, blue47t)))
-		print("1.0 + 0.8: " + str(brightness_contrast(f_1008, blue47t)))
-		print("1.0 + 0.9: " + str(brightness_contrast(f_1009, blue47t)))
-		print("2.0: " + str(brightness_contrast(f_20, blue47t)))
-		print("2.0 + 0.1: " + str(brightness_contrast(f_2001, blue47t)))
-		print("2.0 + 0.2: " + str(brightness_contrast(f_2002, blue47t)))
-		print("2.0 + 0.3: " + str(brightness_contrast(f_2003, blue47t)))
-		print("2.0 + 0.4: " + str(brightness_contrast(f_2004, blue47t)))
-		print("2.0 + 0.5: " + str(brightness_contrast(f_2005, blue47t)))
-		print("2.0 + 0.6: " + str(brightness_contrast(f_2006, blue47t)))
-		print("2.0 + 0.7: " + str(brightness_contrast(f_2007, blue47t)))
-		print("2.0 + 0.8: " + str(brightness_contrast(f_2008, blue47t)))
-		print("2.0 + 0.9: " + str(brightness_contrast(f_2009, blue47t)))
-		print("3.0: " + str(brightness_contrast(f_30, blue47t)))
-		print("3.0 + 0.1: " + str(brightness_contrast(f_3001, blue47t)))
-		print("3.0 + 0.2: " + str(brightness_contrast(f_3002, blue47t)))
-		print("3.0 + 0.3: " + str(brightness_contrast(f_3003, blue47t)))
-		print("3.0 + 0.4: " + str(brightness_contrast(f_3004, blue47t)))
-		print("3.0 + 0.5: " + str(brightness_contrast(f_3005, blue47t)))
-		print("3.0 + 0.6: " + str(brightness_contrast(f_3006, blue47t)))
-		print("3.0 + 0.7: " + str(brightness_contrast(f_3007, blue47t)))
-		print("3.0 + 0.8: " + str(brightness_contrast(f_3008, blue47t)))
-		print("3.0 + 0.9: " + str(brightness_contrast(f_3009, blue47t)))
-		print("4.0: " + str(brightness_contrast(f_40, blue47t)))
-		print("4.0 + 0.1: " + str(brightness_contrast(f_4001, blue47t)))
-		print("4.0 + 0.2: " + str(brightness_contrast(f_4002, blue47t)))
-		print("4.0 + 0.3: " + str(brightness_contrast(f_4003, blue47t)))
-		print("4.0 + 0.4: " + str(brightness_contrast(f_4004, blue47t)))
-		print("4.0 + 0.5: " + str(brightness_contrast(f_4005, blue47t)))
-		print("4.0 + 0.6: " + str(brightness_contrast(f_4006, blue47t)))
-		print("4.0 + 0.7: " + str(brightness_contrast(f_4007, blue47t)))
-		print("4.0 + 0.8: " + str(brightness_contrast(f_4008, blue47t)))
-		print("4.0 + 0.9: " + str(brightness_contrast(f_4009, blue47t)))
+		print("0.1: " + str(brightness_contrast(f_01, blue47_1nm)))
+		print("0.2: " + str(brightness_contrast(f_02, blue47_1nm)))
+		print("0.3: " + str(brightness_contrast(f_03, blue47_1nm)))
+		print("0.4: " + str(brightness_contrast(f_04, blue47_1nm)))
+		print("0.5: " + str(brightness_contrast(f_05, blue47_1nm)))
+		print("0.6: " + str(brightness_contrast(f_06, blue47_1nm)))
+		print("0.7: " + str(brightness_contrast(f_07, blue47_1nm)))
+		print("0.8: " + str(brightness_contrast(f_08, blue47_1nm)))
+		print("0.9: " + str(brightness_contrast(f_09, blue47_1nm)))
+		print("1.0: " + str(brightness_contrast(f_10, blue47_1nm)))
+		print("1.0 + 0.1: " + str(brightness_contrast(f_1001, blue47_1nm)))
+		print("1.0 + 0.2: " + str(brightness_contrast(f_1002, blue47_1nm)))
+		print("1.0 + 0.3: " + str(brightness_contrast(f_1003, blue47_1nm)))
+		print("1.0 + 0.4: " + str(brightness_contrast(f_1004, blue47_1nm)))
+		print("1.0 + 0.5: " + str(brightness_contrast(f_1005, blue47_1nm)))
+		print("1.0 + 0.6: " + str(brightness_contrast(f_1006, blue47_1nm)))
+		print("1.0 + 0.7: " + str(brightness_contrast(f_1007, blue47_1nm)))
+		print("1.0 + 0.8: " + str(brightness_contrast(f_1008, blue47_1nm)))
+		print("1.0 + 0.9: " + str(brightness_contrast(f_1009, blue47_1nm)))
+		print("2.0: " + str(brightness_contrast(f_20, blue47_1nm)))
+		print("2.0 + 0.1: " + str(brightness_contrast(f_2001, blue47_1nm)))
+		print("2.0 + 0.2: " + str(brightness_contrast(f_2002, blue47_1nm)))
+		print("2.0 + 0.3: " + str(brightness_contrast(f_2003, blue47_1nm)))
+		print("2.0 + 0.4: " + str(brightness_contrast(f_2004, blue47_1nm)))
+		print("2.0 + 0.5: " + str(brightness_contrast(f_2005, blue47_1nm)))
+		print("2.0 + 0.6: " + str(brightness_contrast(f_2006, blue47_1nm)))
+		print("2.0 + 0.7: " + str(brightness_contrast(f_2007, blue47_1nm)))
+		print("2.0 + 0.8: " + str(brightness_contrast(f_2008, blue47_1nm)))
+		print("2.0 + 0.9: " + str(brightness_contrast(f_2009, blue47_1nm)))
+		print("3.0: " + str(brightness_contrast(f_30, blue47_1nm)))
+		print("3.0 + 0.1: " + str(brightness_contrast(f_3001, blue47_1nm)))
+		print("3.0 + 0.2: " + str(brightness_contrast(f_3002, blue47_1nm)))
+		print("3.0 + 0.3: " + str(brightness_contrast(f_3003, blue47_1nm)))
+		print("3.0 + 0.4: " + str(brightness_contrast(f_3004, blue47_1nm)))
+		print("3.0 + 0.5: " + str(brightness_contrast(f_3005, blue47_1nm)))
+		print("3.0 + 0.6: " + str(brightness_contrast(f_3006, blue47_1nm)))
+		print("3.0 + 0.7: " + str(brightness_contrast(f_3007, blue47_1nm)))
+		print("3.0 + 0.8: " + str(brightness_contrast(f_3008, blue47_1nm)))
+		print("3.0 + 0.9: " + str(brightness_contrast(f_3009, blue47_1nm)))
+		print("4.0: " + str(brightness_contrast(f_40, blue47_1nm)))
+		print("4.0 + 0.1: " + str(brightness_contrast(f_4001, blue47_1nm)))
+		print("4.0 + 0.2: " + str(brightness_contrast(f_4002, blue47_1nm)))
+		print("4.0 + 0.3: " + str(brightness_contrast(f_4003, blue47_1nm)))
+		print("4.0 + 0.4: " + str(brightness_contrast(f_4004, blue47_1nm)))
+		print("4.0 + 0.5: " + str(brightness_contrast(f_4005, blue47_1nm)))
+		print("4.0 + 0.6: " + str(brightness_contrast(f_4006, blue47_1nm)))
+		print("4.0 + 0.7: " + str(brightness_contrast(f_4007, blue47_1nm)))
+		print("4.0 + 0.8: " + str(brightness_contrast(f_4008, blue47_1nm)))
+		print("4.0 + 0.9: " + str(brightness_contrast(f_4009, blue47_1nm)))
 	
 	# red
 	print("Red 25")
-	brightness_tests(red25t)
+	brightness_tests(red25_1nm)
 	
 	# yellow
 	print("")
 	print("Yellow 15")
-	brightness_tests(yellow15t)
+	brightness_tests(yellow15_1nm)
 	
 	# green
 	print("")
 	print("Green 58")
-	brightness_tests(green58t)
+	brightness_tests(green58_1nm)
 	
 	# gray
 	print("")
@@ -6608,72 +8899,76 @@ if (args.kcheck):
 
 # These are used by both --blackbody and --kodak, so we keep them out here.
 # red 25
-red25_0 = np.empty(41)
-for i in range(41):
-	red25_0[i] = red25t[i] * nd10t[i] * nd05t[i]
-red25_03 = np.empty(41)
-for i in range(41):
-	red25_03[i] = red25_0[i] * nd03t[i]
-red25_07 = np.empty(41)
-for i in range(41):
-	red25_07[i] = red25_0[i] * nd07t[i]
-red25_10 = np.empty(41)
-for i in range(41):
-	red25_10[i] = red25_0[i] * nd10t[i]
+red25_0 = np.empty(401)
+for i in range(401):
+	if (args.kv2): red25_0[i] = red25_1nm[i] * nd10_1nm[i] * nd03_1nm[i]
+	else: red25_0[i] = red25_1nm[i] * nd10_1nm[i] * nd05_1nm[i]
+red25_03 = np.empty(401)
+for i in range(401):
+	red25_03[i] = red25_0[i] * nd03_1nm[i]
+red25_07 = np.empty(401)
+for i in range(401):
+	red25_07[i] = red25_0[i] * nd07_1nm[i]
+red25_10 = np.empty(401)
+for i in range(401):
+	red25_10[i] = red25_0[i] * nd10_1nm[i]
 
 # yellow 15
-yellow15_0 = np.empty(41)
-for i in range(41):
-	yellow15_0[i] = yellow15t[i] * nd20t[i]
-yellow15_03 = np.empty(41)
-for i in range(41):
-	yellow15_03[i] = yellow15_0[i] * nd03t[i]
-yellow15_07 = np.empty(41)
-for i in range(41):
-	yellow15_07[i] = yellow15_0[i] * nd07t[i]
-yellow15_10 = np.empty(41)
-for i in range(41):
-	yellow15_10[i] = yellow15_0[i] * nd10t[i]
+yellow15_0 = np.empty(401)
+for i in range(401):
+	if (args.kv2): yellow15_0[i] = yellow15_1nm[i] * nd10_1nm[i] * nd09_1nm[i]
+	else: yellow15_0[i] = yellow15_1nm[i] * nd20_1nm[i]
+yellow15_03 = np.empty(401)
+for i in range(401):
+	yellow15_03[i] = yellow15_0[i] * nd03_1nm[i]
+yellow15_07 = np.empty(401)
+for i in range(401):
+	yellow15_07[i] = yellow15_0[i] * nd07_1nm[i]
+yellow15_10 = np.empty(401)
+for i in range(401):
+	yellow15_10[i] = yellow15_0[i] * nd10_1nm[i]
 
 # green 58
-green58_0 = np.empty(41)
-for i in range(41):
-	green58_0[i] = green58t[i] * nd10t[i] * nd03t[i]
-green58_03 = np.empty(41)
-for i in range(41):
-	green58_03[i] = green58_0[i] * nd03t[i]
-green58_07 = np.empty(41)
-for i in range(41):
-	green58_07[i] = green58_0[i] * nd07t[i]
-green58_10 = np.empty(41)
-for i in range(41):
-	green58_10[i] = green58_0[i] * nd10t[i]
+green58_0 = np.empty(401)
+for i in range(401):
+	if (args.kv2): green58_0[i] = green58_1nm[i] * nd10_1nm[i] * nd02_1nm[i]
+	else: green58_0[i] = green58_1nm[i] * nd10_1nm[i] * nd03_1nm[i]
+green58_03 = np.empty(401)
+for i in range(401):
+	green58_03[i] = green58_0[i] * nd03_1nm[i]
+green58_07 = np.empty(401)
+for i in range(401):
+	green58_07[i] = green58_0[i] * nd07_1nm[i]
+green58_10 = np.empty(401)
+for i in range(401):
+	green58_10[i] = green58_0[i] * nd10_1nm[i]
 
 # blue 47
-blue47_0 = blue47t # keep this name for convenience
-blue47_03 = np.empty(41)
-for i in range(41):
-	blue47_03[i] = blue47_0[i] * nd03t[i]
-blue47_07 = np.empty(41)
-for i in range(41):
-	blue47_07[i] = blue47_0[i] * nd07t[i]
-blue47_10 = np.empty(41)
-for i in range(41):
-	blue47_10[i] = blue47_0[i] * nd10t[i]
+blue47_0 = blue47_1nm # keep this name for convenience
+blue47_03 = np.empty(401)
+for i in range(401):
+	blue47_03[i] = blue47_0[i] * nd03_1nm[i]
+blue47_07 = np.empty(401)
+for i in range(401):
+	blue47_07[i] = blue47_0[i] * nd07_1nm[i]
+blue47_10 = np.empty(401)
+for i in range(401):
+	blue47_10[i] = blue47_0[i] * nd10_1nm[i]
 
 # gray
-gray_0 = np.empty(41)
-for i in range(41):
-	gray_0[i] = nd20t[i] * nd01t[i]
-gray_03 = np.empty(41)
-for i in range(41):
-	gray_03[i] = gray_0[i] * nd03t[i]
-gray_07 = np.empty(41)
-for i in range(41):
-	gray_07[i] = gray_0[i] * nd07t[i]
-gray_10 = np.empty(41)
-for i in range(41):
-	gray_10[i] = gray_0[i] * nd10t[i]
+gray_0 = np.empty(401)
+for i in range(401):
+	if (args.kv2): gray_0[i] = nd20_1nm[i]
+	else: gray_0[i] = nd20_1nm[i] * nd01_1nm[i]
+gray_03 = np.empty(401)
+for i in range(401):
+	gray_03[i] = gray_0[i] * nd03_1nm[i]
+gray_07 = np.empty(401)
+for i in range(401):
+	gray_07[i] = gray_0[i] * nd07_1nm[i]
+gray_10 = np.empty(401)
+for i in range(401):
+	gray_10[i] = gray_0[i] * nd10_1nm[i]
 
 # used by both --kodak and --munsell
 # This outputs a probability for both success (defined as at least the criterion) and failure (less
@@ -6753,9 +9048,9 @@ def color_disc(f0, f1, f2, f3, s0, s1, s2, s3, correct=35, trials=40, order=0, a
 if (args.kodak):
 	
 	# plot
-	xvalues = np.empty(41)
-	for i in range(41):
-		xvalues[i] = i*10 + 300
+	xvalues = np.empty(401)
+	for i in range(401):
+		xvalues[i] = i + 300
 	plt.subplot(3, 2, 1)
 	plt.plot(xvalues, red25_0*100, 'r')
 	plt.plot(xvalues, red25_03*100, 'r')
@@ -7007,7 +9302,8 @@ if (args.kodak):
 	plt.plot(x, blue47l, 'ob', mec='k', label="blue 47")
 	plt.plot(x, grayl, marker='v', linestyle='', color='gray', mec='k', label="gray")
 	plt.xlabel("Filter optical density")
-	plt.ylabel("Perceived brightness")
+	plt.ylabel("Relative quantum catch")
+	plt.yscale('log')
 	plt.legend()
 	plt.show()
 	
@@ -7135,33 +9431,6 @@ if (args.blackbody != 0):
 	print("Energy produced by blackbody model (W): " + str(energy * surface_area / 10000))
 	print("W/m^2 scaling factor: " + str(scale))
 	
-	# integral approximations
-	#integral = 0
-	#for i in range(30, 90):
-	#	integral += blackbody(10*i, args.blackbody)
-	#print("Integral using 10-nm bins from 300 to 900: " + str(integral) + " (" + str(100*integral / (energy)) + "% of actual value)")
-	#integral = 0
-	#for i in range(38, 73):
-	#	integral += blackbody(10*i, args.blackbody)
-	#print("Integral using 10-nm bins from 380 to 730: " + str(integral) + " (" + str(100*integral / (energy)) + "% of actual value)")
-	#for i in range(1, 100000):
-	#	integral += blackbody(10*i, args.blackbody)
-	#print("Integral using 10-nm bins from 10 to 1000000: " + str(integral) + " (" + str(100*integral / (energy)) + "% of actual value)")
-	#integral = 0
-	#for i in range(1, 100000):
-	#	integral += blackbody(i, args.blackbody)
-	#print("Integral using 1-nm bins from 1 to 100000: " + str(integral) + " (" + str(100*integral / (energy)) + "% of actual value)")
-	
-	# integral approximations with SciPy
-	#integral = quad(blackbody, 0, 100000, args=args.blackbody)
-	#print("SciPy integral from 0 to 100000: " + str(integral[0]) + " (" + str(100*integral[0] / (energy)) + "% of actual value)")
-	#integral = quad(blackbody, 300, 900, args=args.blackbody)
-	#print("SciPy integral from 300 to 900: " + str(integral[0]) + " (" + str(100*integral[0] / (energy)) + "% of actual value)")
-	#integral = quad(blackbody, 340, 830, args=args.blackbody)
-	#print("SciPy integral from 340 to 830: " + str(integral[0]) + " (" + str(100*integral[0] / (energy)) + "% of actual value)")
-	#integral = quad(blackbody, 380, 730, args=args.blackbody)
-	#print("SciPy integral from 380 to 730: " + str(integral[0]) + " (" + str(100*integral[0] / (energy)) + "% of actual value)")
-	
 	# how much energy is produced between 300-800 nm when paired with blue 47
 	# Fix this -- should use the "full" integral with 1-nm steps. As written, the values
 	# produced are about 1/10 what they should be. Also try to convert it to cd/m^2 so
@@ -7207,132 +9476,89 @@ if (args.blackbody != 0):
 	# (assuming cd/m^2) and the opossums' behavior, though R-Y is apparently a very
 	# difficult discrimination.
 	
-	# calculate the "underestimation factor"
-	# No, forget this. We can do better.
-	radiance_full = quad(blackbody, 300, 700, args=args.blackbody)
-#	radiance_10nm = 0
-#	for i in range(30, 81):
-#		radiance_10nm += blackbody(i*10, args.blackbody)
-#	luminance_full = 0
-#	for i in range(300, 801):
-#		luminance_full += blackbody(i, args.blackbody) * (0.68990272*vpt(i, 565) + 0.34832189*vpt(i, 535))*human_filter(i) * 683.002
-#	luminance_10nm = 0
-#	for i in range(30, 81):
-#		luminance_10nm += blackbody(i*10, args.blackbody) * (0.68990272*vpt(i*10, 565) + 0.34832189*vpt(i*10, 535))*human_filter(i*10) * 683.002
-	#visible_total = 0
-	#visible = np.empty(41)
-	#for i in range(41):
-	#	visible[i] = blackbody(i+300, args.blackbody) * watts_m2 / (energy)
-	#	visible_total += visible[i]
-	visible = radiance_full[0]
+	radiance = quad(blackbody, 300, 700, args=args.blackbody)
+	visible = radiance[0]
 	x10nm = np.empty(41)
 	for i in range(41):
 		x10nm[i] = i*10 + 300
 	x1nm = np.empty(501)
 	for i in range(501):
 		x1nm[i] = i + 300
-	# interpolate
-	red25_0i = np.interp(x1nm, x10nm, red25_0)
-	red25_03i = np.interp(x1nm, x10nm, red25_03)
-	red25_07i = np.interp(x1nm, x10nm, red25_07)
-	red25_10i = np.interp(x1nm, x10nm, red25_10)
-	yellow15_0i = np.interp(x1nm, x10nm, yellow15_0)
-	yellow15_03i = np.interp(x1nm, x10nm, yellow15_03)
-	yellow15_07i = np.interp(x1nm, x10nm, yellow15_07)
-	yellow15_10i = np.interp(x1nm, x10nm, yellow15_10)
-	green58_0i = np.interp(x1nm, x10nm, green58_0)
-	green58_03i = np.interp(x1nm, x10nm, green58_03)
-	green58_07i = np.interp(x1nm, x10nm, green58_07)
-	green58_10i = np.interp(x1nm, x10nm, green58_10)
-	blue47_0i = np.interp(x1nm, x10nm, blue47_0)
-	blue47_03i = np.interp(x1nm, x10nm, blue47_03)
-	blue47_07i = np.interp(x1nm, x10nm, blue47_07)
-	blue47_10i = np.interp(x1nm, x10nm, blue47_10)
-	gray_0i = np.interp(x1nm, x10nm, gray_0)
-	gray_03i = np.interp(x1nm, x10nm, gray_03)
-	gray_07i = np.interp(x1nm, x10nm, gray_07)
-	gray_10i = np.interp(x1nm, x10nm, gray_10)
+	
 	visible_r0 = 0
 	for i in range(300, 701):
-		visible_r0 += blackbody(i, args.blackbody) * red25_0i[i-300]
+		visible_r0 += blackbody(i, args.blackbody) * red25_0[i-300]
 	visible_r03 = 0
 	for i in range(300, 701):
-		visible_r03 += blackbody(i, args.blackbody) * red25_03i[i-300]
+		visible_r03 += blackbody(i, args.blackbody) * red25_03[i-300]
 	visible_r07 = 0
 	for i in range(300, 701):
-		visible_r07 += blackbody(i, args.blackbody) * red25_07i[i-300]
+		visible_r07 += blackbody(i, args.blackbody) * red25_07[i-300]
 	visible_r10 = 0
 	for i in range(300, 701):
-		visible_r10 += blackbody(i, args.blackbody) * red25_10i[i-300]
+		visible_r10 += blackbody(i, args.blackbody) * red25_10[i-300]
 	visible_y0 = 0
 	for i in range(300, 701):
-		visible_y0 += blackbody(i, args.blackbody) * yellow15_0i[i-300]
+		visible_y0 += blackbody(i, args.blackbody) * yellow15_0[i-300]
 	visible_y03 = 0
 	for i in range(300, 701):
-		visible_y03 += blackbody(i, args.blackbody) * yellow15_03i[i-300]
+		visible_y03 += blackbody(i, args.blackbody) * yellow15_03[i-300]
 	visible_y07 = 0
 	for i in range(300, 701):
-		visible_y07 += blackbody(i, args.blackbody) * yellow15_07i[i-300]
+		visible_y07 += blackbody(i, args.blackbody) * yellow15_07[i-300]
 	visible_y10 = 0
 	for i in range(300, 701):
-		visible_y10 += blackbody(i, args.blackbody) * yellow15_10i[i-300]
+		visible_y10 += blackbody(i, args.blackbody) * yellow15_10[i-300]
 	visible_g0 = 0
 	for i in range(300, 701):
-		visible_g0 += blackbody(i, args.blackbody) * green58_0i[i-300]
+		visible_g0 += blackbody(i, args.blackbody) * green58_0[i-300]
 	visible_g03 = 0
 	for i in range(300, 701):
-		visible_g03 += blackbody(i, args.blackbody) * green58_03i[i-300]
+		visible_g03 += blackbody(i, args.blackbody) * green58_03[i-300]
 	visible_g07 = 0
 	for i in range(300, 701):
-		visible_g07 += blackbody(i, args.blackbody) * green58_07i[i-300]
+		visible_g07 += blackbody(i, args.blackbody) * green58_07[i-300]
 	visible_g10 = 0
 	for i in range(300, 701):
-		visible_g10 += blackbody(i, args.blackbody) * green58_10i[i-300]
+		visible_g10 += blackbody(i, args.blackbody) * green58_10[i-300]
 	visible_b0 = 0
 	for i in range(300, 701):
-		visible_b0 += blackbody(i, args.blackbody) * blue47_0i[i-300]
+		visible_b0 += blackbody(i, args.blackbody) * blue47_0[i-300]
 	visible_b03 = 0
 	for i in range(300, 701):
-		visible_b03 += blackbody(i, args.blackbody) * blue47_03i[i-300]
+		visible_b03 += blackbody(i, args.blackbody) * blue47_03[i-300]
 	visible_b07 = 0
 	for i in range(300, 701):
-		visible_b07 += blackbody(i, args.blackbody) * blue47_07i[i-300]
+		visible_b07 += blackbody(i, args.blackbody) * blue47_07[i-300]
 	visible_b10 = 0
 	for i in range(300, 701):
-		visible_b10 += blackbody(i, args.blackbody) * blue47_10i[i-300]
+		visible_b10 += blackbody(i, args.blackbody) * blue47_10[i-300]
 	visible_gray0 = 0
 	for i in range(300, 701):
-		visible_gray0 += blackbody(i, args.blackbody) * gray_0i[i-300]
+		visible_gray0 += blackbody(i, args.blackbody) * gray_0[i-300]
 	visible_gray03 = 0
 	for i in range(300, 701):
-		visible_gray03 += blackbody(i, args.blackbody) * gray_03i[i-300]
+		visible_gray03 += blackbody(i, args.blackbody) * gray_03[i-300]
 	visible_gray07 = 0
 	for i in range(300, 701):
-		visible_gray07 += blackbody(i, args.blackbody) * gray_07i[i-300]
+		visible_gray07 += blackbody(i, args.blackbody) * gray_07[i-300]
 	visible_gray10 = 0
 	for i in range(300, 701):
-		visible_gray10 += blackbody(i, args.blackbody) * gray_10i[i-300]
-	# scale
-	#visible_filtered *= luminance_full / luminance_10nm
-	#print(luminance_full / luminance_10nm)
-	
-	# As above, this is radiance, so we multiply by the sr value we found earlier to get W/m^2
-	#visible_total = visible_total * sr
-	#visible_filtered_total = visible_filtered_total * sr
+		visible_gray10 += blackbody(i, args.blackbody) * gray_10[i-300]
 	
 	# lx/cd
 	visible_bcd0 = 0
-	for i in range(300, 801):
-		visible_bcd0 += blackbody(i, args.blackbody) * blue47_0i[i-300] *  luminosity[i-300] * 683.002
+	for i in range(300, 701):
+		visible_bcd0 += blackbody(i, args.blackbody) * blue47_0[i-300] *  luminosity[i-300] * 683.002
 	visible_bcd03 = 0
-	for i in range(300, 801):
-		visible_bcd03 += blackbody(i, args.blackbody) * blue47_03i[i-300] *  luminosity[i-300] * 683.002
+	for i in range(300, 701):
+		visible_bcd03 += blackbody(i, args.blackbody) * blue47_03[i-300] *  luminosity[i-300] * 683.002
 	visible_bcd07 = 0
-	for i in range(300, 801):
-		visible_bcd07 += blackbody(i, args.blackbody) * blue47_07i[i-300] *  luminosity[i-300] * 683.002
+	for i in range(300, 701):
+		visible_bcd07 += blackbody(i, args.blackbody) * blue47_07[i-300] *  luminosity[i-300] * 683.002
 	visible_bcd10 = 0
-	for i in range(300, 801):
-		visible_bcd10 += blackbody(i, args.blackbody) * blue47_10i[i-300] *  luminosity[i-300] * 683.002
+	for i in range(300, 701):
+		visible_bcd10 += blackbody(i, args.blackbody) * blue47_10[i-300] *  luminosity[i-300] * 683.002
 	#visible_filtered_cd *= luminance_full / luminance_10nm
 	visible_lx0 = visible_bcd0 * math.pi
 	visible_lx03 = visible_bcd03 * math.pi
@@ -7341,142 +9567,140 @@ if (args.blackbody != 0):
 	# other colors
 	# red
 	visible_rcd0 = 0
-	for i in range(300, 801):
-		visible_rcd0 += blackbody(i, args.blackbody) * red25_0i[i-300] *  luminosity[i-300] * 683.002
+	for i in range(300, 701):
+		visible_rcd0 += blackbody(i, args.blackbody) * red25_0[i-300] *  luminosity[i-300] * 683.002
 	visible_rcd03 = 0
-	for i in range(300, 801):
-		visible_rcd03 += blackbody(i, args.blackbody) * red25_03i[i-300] *  luminosity[i-300] * 683.002
+	for i in range(300, 701):
+		visible_rcd03 += blackbody(i, args.blackbody) * red25_03[i-300] *  luminosity[i-300] * 683.002
 	visible_rcd07 = 0
-	for i in range(300, 801):
-		visible_rcd07 += blackbody(i, args.blackbody) * red25_07i[i-300] *  luminosity[i-300] * 683.002
+	for i in range(300, 701):
+		visible_rcd07 += blackbody(i, args.blackbody) * red25_07[i-300] *  luminosity[i-300] * 683.002
 	visible_rcd10 = 0
-	for i in range(300, 801):
-		visible_rcd10 += blackbody(i, args.blackbody) * red25_10i[i-300] *  luminosity[i-300] * 683.002
+	for i in range(300, 701):
+		visible_rcd10 += blackbody(i, args.blackbody) * red25_10[i-300] *  luminosity[i-300] * 683.002
 	# yellow
 	visible_ycd0 = 0
-	for i in range(300, 801):
-		visible_ycd0 += blackbody(i, args.blackbody) * yellow15_0i[i-300] *  luminosity[i-300] * 683.002
+	for i in range(300, 701):
+		visible_ycd0 += blackbody(i, args.blackbody) * yellow15_0[i-300] *  luminosity[i-300] * 683.002
 	visible_ycd03 = 0
-	for i in range(300, 801):
-		visible_ycd03 += blackbody(i, args.blackbody) * yellow15_03i[i-300] *  luminosity[i-300] * 683.002
+	for i in range(300, 701):
+		visible_ycd03 += blackbody(i, args.blackbody) * yellow15_03[i-300] *  luminosity[i-300] * 683.002
 	visible_ycd07 = 0
-	for i in range(300, 801):
-		visible_ycd07 += blackbody(i, args.blackbody) * yellow15_07i[i-300] *  luminosity[i-300] * 683.002
+	for i in range(300, 701):
+		visible_ycd07 += blackbody(i, args.blackbody) * yellow15_07[i-300] *  luminosity[i-300] * 683.002
 	visible_ycd10 = 0
-	for i in range(300, 801):
-		visible_ycd10 += blackbody(i, args.blackbody) * yellow15_10i[i-300] *  luminosity[i-300] * 683.002
+	for i in range(300, 701):
+		visible_ycd10 += blackbody(i, args.blackbody) * yellow15_10[i-300] *  luminosity[i-300] * 683.002
 	# green
 	visible_gcd0 = 0
-	for i in range(300, 801):
-		visible_gcd0 += blackbody(i, args.blackbody) * green58_0i[i-300] *  luminosity[i-300] * 683.002
+	for i in range(300, 701):
+		visible_gcd0 += blackbody(i, args.blackbody) * green58_0[i-300] *  luminosity[i-300] * 683.002
 	visible_gcd03 = 0
-	for i in range(300, 801):
-		visible_gcd03 += blackbody(i, args.blackbody) * green58_03i[i-300] *  luminosity[i-300] * 683.002
+	for i in range(300, 701):
+		visible_gcd03 += blackbody(i, args.blackbody) * green58_03[i-300] *  luminosity[i-300] * 683.002
 	visible_gcd07 = 0
-	for i in range(300, 801):
-		visible_gcd07 += blackbody(i, args.blackbody) * green58_07i[i-300] *  luminosity[i-300] * 683.002
+	for i in range(300, 701):
+		visible_gcd07 += blackbody(i, args.blackbody) * green58_07[i-300] *  luminosity[i-300] * 683.002
 	visible_gcd10 = 0
-	for i in range(300, 801):
-		visible_gcd10 += blackbody(i, args.blackbody) * green58_10i[i-300] *  luminosity[i-300] * 683.002
+	for i in range(300, 701):
+		visible_gcd10 += blackbody(i, args.blackbody) * green58_10[i-300] *  luminosity[i-300] * 683.002
 	# gray
 	visible_graycd0 = 0
-	for i in range(300, 801):
-		visible_graycd0 += blackbody(i, args.blackbody) * gray_0i[i-300] *  luminosity[i-300] * 683.002
+	for i in range(300, 701):
+		visible_graycd0 += blackbody(i, args.blackbody) * gray_0[i-300] *  luminosity[i-300] * 683.002
 	visible_graycd03 = 0
-	for i in range(300, 801):
-		visible_graycd03 += blackbody(i, args.blackbody) * gray_03i[i-300] *  luminosity[i-300] * 683.002
+	for i in range(300, 701):
+		visible_graycd03 += blackbody(i, args.blackbody) * gray_03[i-300] *  luminosity[i-300] * 683.002
 	visible_graycd07 = 0
-	for i in range(300, 801):
-		visible_graycd07 += blackbody(i, args.blackbody) * gray_07i[i-300] *  luminosity[i-300] * 683.002
+	for i in range(300, 701):
+		visible_graycd07 += blackbody(i, args.blackbody) * gray_07[i-300] *  luminosity[i-300] * 683.002
 	visible_graycd10 = 0
-	for i in range(300, 801):
-		visible_graycd10 += blackbody(i, args.blackbody) * gray_10i[i-300] *  luminosity[i-300] * 683.002
+	for i in range(300, 701):
+		visible_graycd10 += blackbody(i, args.blackbody) * gray_10[i-300] *  luminosity[i-300] * 683.002
 	
 	# candela equivalents weighted by a custom luminosity function in place of CIE
 	# to compare brightness for another species
+	# This is probably not very useful because we're already quantifying species-specific
+	# luminosity in more standard ways, but see also https://pmc.ncbi.nlm.nih.gov/articles/PMC11562817/
 	
 	# blue
 	visible_bcde0 = 0
-	for i in range(300, 801):
-		visible_bcde0 += blackbody(i, args.blackbody) * blue47_0i[i-300] *  sensitivity(i) * 683.002
+	for i in range(300, 701):
+		visible_bcde0 += blackbody(i, args.blackbody) * blue47_0[i-300] *  sensitivity(i) * 683.002
 	visible_bcde03 = 0
-	for i in range(300, 801):
-		visible_bcde03 += blackbody(i, args.blackbody) * blue47_03i[i-300] * sensitivity(i) * 683.002
+	for i in range(300, 701):
+		visible_bcde03 += blackbody(i, args.blackbody) * blue47_03[i-300] * sensitivity(i) * 683.002
 	visible_bcde07 = 0
-	for i in range(300, 801):
-		visible_bcde07 += blackbody(i, args.blackbody) * blue47_07i[i-300] * sensitivity(i) * 683.002
+	for i in range(300, 701):
+		visible_bcde07 += blackbody(i, args.blackbody) * blue47_07[i-300] * sensitivity(i) * 683.002
 	visible_bcde10 = 0
-	for i in range(300, 801):
-		visible_bcde10 += blackbody(i, args.blackbody) * blue47_10i[i-300] * sensitivity(i) * 683.002
+	for i in range(300, 701):
+		visible_bcde10 += blackbody(i, args.blackbody) * blue47_10[i-300] * sensitivity(i) * 683.002
 	# red
 	visible_rcde0 = 0
-	for i in range(300, 801):
-		visible_rcde0 += blackbody(i, args.blackbody) * red25_0i[i-300] * sensitivity(i) * 683.002
+	for i in range(300, 701):
+		visible_rcde0 += blackbody(i, args.blackbody) * red25_0[i-300] * sensitivity(i) * 683.002
 	visible_rcde03 = 0
-	for i in range(300, 801):
-		visible_rcde03 += blackbody(i, args.blackbody) * red25_03i[i-300] * sensitivity(i) * 683.002
+	for i in range(300, 701):
+		visible_rcde03 += blackbody(i, args.blackbody) * red25_03[i-300] * sensitivity(i) * 683.002
 	visible_rcde07 = 0
-	for i in range(300, 801):
-		visible_rcde07 += blackbody(i, args.blackbody) * red25_07i[i-300] * sensitivity(i) * 683.002
+	for i in range(300, 701):
+		visible_rcde07 += blackbody(i, args.blackbody) * red25_07[i-300] * sensitivity(i) * 683.002
 	visible_rcde10 = 0
-	for i in range(300, 801):
-		visible_rcde10 += blackbody(i, args.blackbody) * red25_10i[i-300] * sensitivity(i) * 683.002
+	for i in range(300, 701):
+		visible_rcde10 += blackbody(i, args.blackbody) * red25_10[i-300] * sensitivity(i) * 683.002
 	# yellow
 	visible_ycde0 = 0
-	for i in range(300, 801):
-		visible_ycde0 += blackbody(i, args.blackbody) * yellow15_0i[i-300] * sensitivity(i) * 683.002
+	for i in range(300, 701):
+		visible_ycde0 += blackbody(i, args.blackbody) * yellow15_0[i-300] * sensitivity(i) * 683.002
 	visible_ycde03 = 0
-	for i in range(300, 801):
-		visible_ycde03 += blackbody(i, args.blackbody) * yellow15_03i[i-300] * sensitivity(i) * 683.002
+	for i in range(300, 701):
+		visible_ycde03 += blackbody(i, args.blackbody) * yellow15_03[i-300] * sensitivity(i) * 683.002
 	visible_ycde07 = 0
-	for i in range(300, 801):
-		visible_ycde07 += blackbody(i, args.blackbody) * yellow15_07i[i-300] * sensitivity(i) * 683.002
+	for i in range(300, 701):
+		visible_ycde07 += blackbody(i, args.blackbody) * yellow15_07[i-300] * sensitivity(i) * 683.002
 	visible_ycde10 = 0
-	for i in range(300, 801):
-		visible_ycde10 += blackbody(i, args.blackbody) * yellow15_10i[i-300] * sensitivity(i) * 683.002
+	for i in range(300, 701):
+		visible_ycde10 += blackbody(i, args.blackbody) * yellow15_10[i-300] * sensitivity(i) * 683.002
 	# green
 	visible_gcde0 = 0
-	for i in range(300, 801):
-		visible_gcde0 += blackbody(i, args.blackbody) * green58_0i[i-300] * sensitivity(i) * 683.002
+	for i in range(300, 701):
+		visible_gcde0 += blackbody(i, args.blackbody) * green58_0[i-300] * sensitivity(i) * 683.002
 	visible_gcde03 = 0
-	for i in range(300, 801):
-		visible_gcde03 += blackbody(i, args.blackbody) * green58_03i[i-300] * sensitivity(i) * 683.002
+	for i in range(300, 701):
+		visible_gcde03 += blackbody(i, args.blackbody) * green58_03[i-300] * sensitivity(i) * 683.002
 	visible_gcde07 = 0
-	for i in range(300, 801):
-		visible_gcde07 += blackbody(i, args.blackbody) * green58_07i[i-300] * sensitivity(i) * 683.002
+	for i in range(300, 701):
+		visible_gcde07 += blackbody(i, args.blackbody) * green58_07[i-300] * sensitivity(i) * 683.002
 	visible_gcde10 = 0
-	for i in range(300, 801):
-		visible_gcde10 += blackbody(i, args.blackbody) * green58_10i[i-300] * sensitivity(i) * 683.002
+	for i in range(300, 701):
+		visible_gcde10 += blackbody(i, args.blackbody) * green58_10[i-300] * sensitivity(i) * 683.002
 	# gray
 	visible_graycde0 = 0
-	for i in range(300, 801):
-		visible_graycde0 += blackbody(i, args.blackbody) * gray_0i[i-300] * sensitivity(i) * 683.002
+	for i in range(300, 701):
+		visible_graycde0 += blackbody(i, args.blackbody) * gray_0[i-300] * sensitivity(i) * 683.002
 	visible_graycde03 = 0
-	for i in range(300, 801):
-		visible_graycde03 += blackbody(i, args.blackbody) * gray_03i[i-300] * sensitivity(i) * 683.002
+	for i in range(300, 701):
+		visible_graycde03 += blackbody(i, args.blackbody) * gray_03[i-300] * sensitivity(i) * 683.002
 	visible_graycde07 = 0
-	for i in range(300, 801):
-		visible_graycde07 += blackbody(i, args.blackbody) * gray_07i[i-300] * sensitivity(i) * 683.002
+	for i in range(300, 701):
+		visible_graycde07 += blackbody(i, args.blackbody) * gray_07[i-300] * sensitivity(i) * 683.002
 	visible_graycde10 = 0
-	for i in range(300, 801):
-		visible_graycde10 += blackbody(i, args.blackbody) * gray_10i[i-300] * sensitivity(i) * 683.002
+	for i in range(300, 701):
+		visible_graycde10 += blackbody(i, args.blackbody) * gray_10[i-300] * sensitivity(i) * 683.002
 	
-	print("Radiance from 300-800 nm (W/m^2/sr): " + str(visible))
-	print("Irradiance from 300-800 nm (W/m^2): " + str(visible*sr))
-	print("Irradiance from 300-800 nm (uW/cm^2): " + str(visible*sr*1000000/100**2))
-#	print("Irradiance from 300-800 nm filtered through blue 47 (W/m^2): " + str(visible_filtered*sr))
-#	print("Irradiance from 300-800 nm filtered through blue 47 (uW/cm^2): " + str(visible_filtered*sr*1000000/100**2))
-	#print("Luminance from 300-800 nm (cd/m^2): " + str(visible_filtered_cd))
-	#print("Illuminance from 300-800 nm (lx): " + str(visible_filtered_lx))
+	print("Radiance from 300-700 nm (W/m^2/sr): " + str(visible))
+	print("Irradiance from 300-700 nm (W/m^2): " + str(visible*sr))
+	print("Irradiance from 300-700 nm (uW/cm^2): " + str(visible*sr*1000000/100**2))
 	
 	# scaled to specified watt number
 	print("")
 	print("Scaled radiance/irradiance:")
-	print("Radiance from 300-800 nm (W/m^2/sr): " + str(scale*visible))
+	print("Radiance from 300-700 nm (W/m^2/sr): " + str(scale*visible))
 	radiance = 0
 	for i in range(501):
 		radiance += ia[i]
-	print("Radiance from 300-800 nm (photons/sec/sr): " + str(radiance))
+	print("Radiance from 300-700 nm (photons/sec/sr): " + str(radiance))
 	print("Irradiance (W/m^2): " + str(scale*visible*sr))
 	print("Irradiance (uW/cm^2): " + str(scale*visible*sr*1000000/100**2))
 	# just multiply this by 100 to get uW/cm^2
@@ -7505,50 +9729,36 @@ if (args.blackbody != 0):
 	print("0.3: " + str(scale*visible_gray03*sr*100))
 	print("0.7: " + str(scale*visible_gray07*sr*100))
 	print("1.0: " + str(scale*visible_gray10*sr*100))
-	#print("Irradiance from 300-800 nm filtered through blue 47 (uW/cm^2): " + str(scale*visible_filtered*sr*1000000/100**2))
-	print("Luminance from 300-800 nm for blue 47 (cd/m^2):")
+	print("Luminance from 300-700 nm for blue 47 (cd/m^2):")
 	print("0: " + str(scale*visible_bcd0))
 	print("0.3: " + str(scale*visible_bcd03))
 	print("0.7: " + str(scale*visible_bcd07))
 	print("1.0: " + str(scale*visible_bcd10))
-	print("Luminance from 300-800 nm for red 25 (cd/m^2):")
+	print("Luminance from 300-700 nm for red 25 (cd/m^2):")
 	print("0: " + str(scale*visible_rcd0))
 	print("0.3: " + str(scale*visible_rcd03))
 	print("0.7: " + str(scale*visible_rcd07))
 	print("1.0: " + str(scale*visible_rcd10))
-	print("Luminance from 300-800 nm for yellow 15 (cd/m^2):")
+	print("Luminance from 300-700 nm for yellow 15 (cd/m^2):")
 	print("0: " + str(scale*visible_ycd0))
 	print("0.3: " + str(scale*visible_ycd03))
 	print("0.7: " + str(scale*visible_ycd07))
 	print("1.0: " + str(scale*visible_ycd10))
-	print("Luminance from 300-800 nm for green 58 (cd/m^2):")
+	print("Luminance from 300-700 nm for green 58 (cd/m^2):")
 	print("0: " + str(scale*visible_gcd0))
 	print("0.3: " + str(scale*visible_gcd03))
 	print("0.7: " + str(scale*visible_gcd07))
 	print("1.0: " + str(scale*visible_gcd10))
-	print("Luminance from 300-800 nm for gray (cd/m^2):")
+	print("Luminance from 300-700 nm for gray (cd/m^2):")
 	print("0: " + str(scale*visible_graycd0))
 	print("0.3: " + str(scale*visible_graycd03))
 	print("0.7: " + str(scale*visible_graycd07))
 	print("1.0: " + str(scale*visible_graycd10))
-	print("Illuminance (lx):")
+	print("Illuminance for blue 47 (lx):")
 	print("0: " + str(scale*visible_lx0))
 	print("0.3: " + str(scale*visible_lx03))
 	print("0.7: " + str(scale*visible_lx07))
 	print("1.0: " + str(scale*visible_lx10))
-	# alternatively it may depend on the size of the circle depending on what a
-	# foot lambert is
-	#print("Luminance/illuminance scaled to size of circle:")
-	#print("Luminance (lx/sr):")
-	#print("0: " + str(scale*visible_filtered_lx0/sr))
-	#print("0.3: " + str(scale*visible_filtered_lx03/sr))
-	#print("0.7: " + str(scale*visible_filtered_lx07/sr))
-	#print("1.0: " + str(scale*visible_filtered_lx10/sr))
-	#print("Illuminance (cd*sr/m^2):")
-	#print("0: " + str(scale*visible_filtered_cd0*sr))
-	#print("0.3: " + str(scale*visible_filtered_cd03*sr))
-	#print("0.7: " + str(scale*visible_filtered_cd07*sr))
-	#print("1.0: " + str(scale*visible_filtered_cd10*sr))
 	# "candela equivalent" brightness
 	print("Luminance in candela equivalents (cde/m^2)")
 	print("Blue 47:")
@@ -7595,12 +9805,14 @@ if (args.blackbody != 0):
 	plt.plot([0, 0.3, 0.7, 1.0], [scale*visible_gcd0, scale*visible_gcd03, scale*visible_gcd07, scale*visible_gcd10], '^g', mec='k')
 	plt.plot([0, 0.3, 0.7, 1.0], [scale*visible_bcd0, scale*visible_bcd03, scale*visible_bcd07, scale*visible_bcd10], 'ob', mec='k')
 	plt.plot([0, 0.3, 0.7, 1.0], [scale*visible_graycd0, scale*visible_graycd03, scale*visible_graycd07, scale*visible_graycd10], marker='v', linestyle='', color='gray', mec='k')
+	plt.yscale('log')
 	plt.subplot(1, 2, 2)
 	plt.plot([0, 0.3, 0.7, 1.0], [scale*visible_rcde0, scale*visible_rcde03, scale*visible_rcde07, scale*visible_rcde10], 'sr', mec='k')
 	plt.plot([0, 0.3, 0.7, 1.0], [scale*visible_ycde0, scale*visible_ycde03, scale*visible_ycde07, scale*visible_ycde10], 'Dy', mec='k')
 	plt.plot([0, 0.3, 0.7, 1.0], [scale*visible_gcde0, scale*visible_gcde03, scale*visible_gcde07, scale*visible_gcde10], '^g', mec='k')
 	plt.plot([0, 0.3, 0.7, 1.0], [scale*visible_bcde0, scale*visible_bcde03, scale*visible_bcde07, scale*visible_bcde10], 'ob', mec='k')
 	plt.plot([0, 0.3, 0.7, 1.0], [scale*visible_graycde0, scale*visible_graycde03, scale*visible_graycde07, scale*visible_graycde10], marker='v', linestyle='', color='gray', mec='k')
+	plt.yscale('log')
 	plt.show()
 
 """ Munsell color cards: 5B, 7.5B, 10YR, 5GY
