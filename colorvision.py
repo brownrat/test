@@ -2933,14 +2933,17 @@ if (l1 != m1 != s1):
 		rw += matrix_m[0][i] * wp_1nm[i]#/watts
 		gw += matrix_m[1][i] * wp_1nm[i]#/watts
 		bw += matrix_m[2][i] * wp_1nm[i]#/watts
+	matrix_w = [
+		[1/rw, 0, 0],
+		[0, 1/gw, 0],
+		[0, 0, 1/bw]
+	]
 
 	# final color match matrix
-	matrix_cmf = np.empty((3, 401))
-	matrix_cmf[0] = matrix_m[0] / rw
-	matrix_cmf[1] = matrix_m[1] / gw
-	matrix_cmf[2] = matrix_m[2] / bw
+	matrix_cmf = np.matmul(matrix_w, matrix_m)
 
 if (args.cmf):
+	print("LMS->RGB matrix: " + str(np.matmul(matrix_w, np.linalg.inv(matrix_a))))
 	print("White units: r=" + str(rw) + ", g=" + str(gw) + ", b=" + str(bw))
 	# maxima, minima, intersections and negative numbers
 	maxrx = 0
