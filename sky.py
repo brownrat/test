@@ -11,12 +11,10 @@ See also twilight and night skies:
 The D65 illuminant peaks in the blue wavelengths (about 480 nm), but this
 represents direct sunlight (sunlight is ~5800 K blackbody radiation) rather
 than the color of a blue sky produced by Rayleigh scattering. Blue sky peaks
-in or near the UV and is similar to the D75 illuminant. But this raises the
-question of what the twilight spectra I found represent, since they peak near
-450 nm. Direct sunlight doesn't exist during twilight, so I'm guessing "direct"
-twilight illumination comes from the horizon or something after passing through
-a part of the atmosphere you can't see from that angle. An overcast twilight sky
-is still blue even though there's no visible sky to scatter it.
+in or near the UV. The twilight spectra above that peak near 450 nm presumably
+represent sunlight that passes through the atmosphere without being scattered,
+since the blueness of twilight has another cause:
+https://en.wikipedia.org/wiki/Chappuis_absorption
 """
 
 import central as c
