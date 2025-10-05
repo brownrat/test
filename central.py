@@ -77,6 +77,7 @@ parser.add_argument("--white", default="e", help="reference white")
 parser.add_argument("--wratten", help="Kodak Wratten camera filters", action="store_true")
 parser.add_argument("--wv2", help="use tabulated Kodak Wratten data from Kodak Photographic Filters Handbook (1990)", action="store_true")
 parser.add_argument("--wcheck", help="check camera filter brightness matches", action="store_true")
+parser.add_argument("--wopt1", help="test varying rod spectral sensitivity", action="store_true")
 parser.add_argument("--render", help="show colormath spectral rendering for comparison", action="store_true")
 parser.add_argument("--qcheck", help="show absolute quantum catches", action="store_true")
 parser.add_argument("--vpt", help="plot visual pigment templates", action="store_true")
@@ -3717,7 +3718,8 @@ def color_contrast(table1, table2, quantum_noise=args.qn, lw = args.lw, mw = arg
 	return math.sqrt(delta_s)
 
 # brightness contrast based on https://journals.biologists.com/jeb/article/207/14/2471/14748/Interspecific-and-intraspecific-views-of-color
-def brightness_contrast(table1, table2):
+# I've changed it to a signed value because we care about the direction.
+def brightness_contrast(table1, table2, lw=args.lw):
 	# interpolate 1-nm intervals if we're provided with 10-nm
 	if (len(table1) < 401):
 		x10nm = np.empty(41)
@@ -3751,14 +3753,14 @@ def brightness_contrast(table1, table2):
 	q2 = 0
 	for i in range(table1.shape[0]):
 		w = i + 300
-		wpt += sensitivity(w, l1) * wp_1nm[i]
-		q1 += sensitivity(w) * table1[i] * wp_1nm[i]
+		wpt += sensitivity(w, lw) * wp_1nm[i]
+		q1 += sensitivity(w, lw) * table1[i] * wp_1nm[i]
 	for i in range(table2.shape[0]):
 		w = i + 300
-		q2 += sensitivity(w) * table2[i] * wp_1nm[i]
+		q2 += sensitivity(w, lw) * table2[i] * wp_1nm[i]
 	
 	df = math.log(q1 / q2)
-	delta_s = abs(df / args.weberb)
+	delta_s = df / args.weberb # not an absolute value
 	return delta_s
 
 # print specified information
@@ -3997,7 +3999,7 @@ like color_disc except for brightness
 We want to know both the direction and the strength of the difference
 to judge whether it could be reliably used as a cue.
 """
-def brightness_disc(f0, f1, f2, f3, fl, s0, s1, s2, s3, sl, correct=35, trials=40): 
+def brightness_disc(f0, f1, f2, f3, s0, s1, s2, s3, correct=35, trials=40, lw=args.lw, output=True): 
 	fb = 0 # first brighter
 	sb = 0 # second brighter
 	equal = 0
@@ -4021,21 +4023,20 @@ def brightness_disc(f0, f1, f2, f3, fl, s0, s1, s2, s3, sl, correct=35, trials=4
 				slevel = s2
 			elif (j == 3):
 				slevel = s3
-			diff = fl[i] - sl[j]
-			contrast = brightness_contrast(flevel, slevel)
-			if (contrast >= 1):
-				if (diff > 0):
-					fb += 1
-				elif (diff < 0):
-					sb += 1
-			else:
-				equal += 1
-	print("First brighter: " + str(fb))
-	print("Second brighter: " + str(sb))
-	print("Equal: " + str(equal))
-	print("Expected % correct: " + str(100*(max(fb, sb) + equal/2) / 16) + "% (" + str(100*max(fb, sb) / 16) + "-" + str(100*(max(fb, sb) + equal) / 16) + "%)")
+			contrast = brightness_contrast(flevel, slevel, lw=lw)
+			if (contrast >= 1): fb += 1
+			elif (contrast <= -1): sb += 1
+			else: equal += 1
+	
 	binomial = binomtest(correct, trials, (max(fb, sb) + equal/2) / 16, alternative='greater')
 	binomial2 = binomtest(correct-1, trials, (max(fb, sb) + equal/2) / 16, alternative='less')
-	print("P-value (success): " + str(binomial.pvalue))
-	print("P-value (failure): " + str(binomial2.pvalue))
-	print("")
+	if (output):
+		print("First brighter: " + str(fb))
+		print("Second brighter: " + str(sb))
+		print("Equal: " + str(equal))
+		print("Expected % correct: " + str(100*(max(fb, sb) + equal/2) / 16) + "% (" + str(100*max(fb, sb) / 16) + "-" + str(100*(max(fb, sb) + equal) / 16) + "%)")
+		print("P-value (success): " + str(binomial.pvalue))
+		print("P-value (failure): " + str(binomial2.pvalue))
+		print("")
+
+	return [binomial.pvalue, binomial2.pvalue]
