@@ -4421,165 +4421,164 @@ gray_10 = np.empty(401)
 for i in range(401):
 	gray_10[i] = gray_0[i] * nd10_1nm[i]
 
-if (args.wratten):
-	
-	# plot
-	xvalues = np.empty(401)
-	for i in range(401):
-		xvalues[i] = i + 300
-	plt.subplot(3, 2, 1)
-	plt.plot(xvalues, red25_0*100, 'r')
-	plt.plot(xvalues, red25_03*100, 'r')
-	plt.plot(xvalues, red25_07*100, 'r')
-	plt.plot(xvalues, red25_10*100, 'r')
-	plt.title("Red 25")
-	plt.subplot(3, 2, 2)
-	plt.plot(xvalues, yellow15_0*100, 'y')
-	plt.plot(xvalues, yellow15_03*100, 'y')
-	plt.plot(xvalues, yellow15_07*100, 'y')
-	plt.plot(xvalues, yellow15_10*100, 'y')
-	plt.title("Yellow 15")
-	plt.subplot(3, 2, 3)
-	plt.plot(xvalues, green58_0*100, 'g')
-	plt.plot(xvalues, green58_03*100, 'g')
-	plt.plot(xvalues, green58_07*100, 'g')
-	plt.plot(xvalues, green58_10*100, 'g')
-	plt.title("Green 58")
-	plt.subplot(3, 2, 4)
-	plt.plot(xvalues, blue47_0*100, 'b')
-	plt.plot(xvalues, blue47_03*100, 'b')
-	plt.plot(xvalues, blue47_07*100, 'b')
-	plt.plot(xvalues, blue47_10*100, 'b')
-	plt.title("Blue 47")
-	plt.subplot(3, 2, 5)
-	plt.plot(xvalues, gray_0*100, color='gray')
-	plt.plot(xvalues, gray_03*100, color='gray')
-	plt.plot(xvalues, gray_07*100, color='gray')
-	plt.plot(xvalues, gray_10*100, color='gray')
-	plt.title("Gray")
-	plt.show()
-	
-	# brightness levels and color space coordinates
-	red25l = np.empty(4)
-	red25cs = np.empty(4)
-	red25cs1 = np.empty(4)
-	print("Red 25 (+ 1.0 + 0.1)")
-	red25data = c.spectral_rendering(red25_0)
-	red25l[0] = red25data[0]
-	red25cs[0] = red25data[1]
-	red25cs1[0] = red25data[2]
-	print("+ 0.3")
-	red25data = c.spectral_rendering(red25_03)
-	red25l[1] = red25data[0]
-	red25cs[1] = red25data[1]
-	red25cs1[1] = red25data[2]
-	print("+ 0.7")
-	red25data = c.spectral_rendering(red25_07)
-	red25l[2] = red25data[0]
-	red25cs[2] = red25data[1]
-	red25cs1[2] = red25data[2]
-	print("+ 1.0")
-	red25data = c.spectral_rendering(red25_10)
-	red25l[3] = red25data[0]
-	red25cs[3] = red25data[1]
-	red25cs1[3] = red25data[2]
-	
-	yellow15l = np.empty(4)
-	yellow15cs = np.empty(4)
-	yellow15cs1 = np.empty(4)
-	print("Yellow 15 (+ 2.0 + 0.5)")
-	yellow15data = c.spectral_rendering(yellow15_0)
-	yellow15l[0] = yellow15data[0]
-	yellow15cs[0] = yellow15data[1]
-	yellow15cs1[0] = yellow15data[2]
-	print("+ 0.3")
-	yellow15data = c.spectral_rendering(yellow15_03)
-	yellow15l[1] = yellow15data[0]
-	yellow15cs[1] = yellow15data[1]
-	yellow15cs1[1] = yellow15data[2]
-	print("+ 0.7")
-	yellow15data = c.spectral_rendering(yellow15_07)
-	yellow15l[2] = yellow15data[0]
-	yellow15cs[2] = yellow15data[1]
-	yellow15cs1[2] = yellow15data[2]
-	print("+ 1.0")
-	yellow15data = c.spectral_rendering(yellow15_10)
-	yellow15l[3] = yellow15data[0]
-	yellow15cs[3] = yellow15data[1]
-	yellow15cs1[3] = yellow15data[2]
-	
-	green58l = np.empty(4)
-	green58cs = np.empty(4)
-	green58cs1 = np.empty(4)
-	print("Green 58 (+ 1.0 + 0.3)")
-	green58data = c.spectral_rendering(green58_0)
-	green58l[0] = green58data[0]
-	green58cs[0] = green58data[1]
-	green58cs1[0] = green58data[2]
-	print("+ 0.3")
-	green58data = c.spectral_rendering(green58_03)
-	green58l[1] = green58data[0]
-	green58cs[1] = green58data[1]
-	green58cs1[1] = green58data[2]
-	print("+ 0.7")
-	green58data = c.spectral_rendering(green58_07)
-	green58l[2] = green58data[0]
-	green58cs[2] = green58data[1]
-	green58cs1[2] = green58data[2]
-	print("+ 1.0")
-	green58data = c.spectral_rendering(green58_10)
-	green58l[3] = green58data[0]
-	green58cs[3] = green58data[1]
-	green58cs1[3] = green58data[2]
-	
-	blue47l = np.empty(4)
-	blue47cs = np.empty(4)
-	blue47cs1 = np.empty(4)
-	print("Blue 47")
-	blue47data = c.spectral_rendering(blue47_0)
-	blue47l[0] = blue47data[0]
-	blue47cs[0] = blue47data[1]
-	blue47cs1[0] = blue47data[2]
-	print("+ 0.3")
-	blue47data = c.spectral_rendering(blue47_03)
-	blue47l[1] = blue47data[0]
-	blue47cs[1] = blue47data[1]
-	blue47cs1[1] = blue47data[2]
-	print("+ 0.7")
-	blue47data = c.spectral_rendering(blue47_07)
-	blue47l[2] = blue47data[0]
-	blue47cs[2] = blue47data[1]
-	blue47cs1[2] = blue47data[2]
-	print("+ 1.0")
-	blue47data = c.spectral_rendering(blue47_10)
-	blue47l[3] = blue47data[0]
-	blue47cs[3] = blue47data[1]
-	blue47cs1[3] = blue47data[2]
-	
-	grayl = np.empty(4)
-	graycs = np.empty(4)
-	graycs1 = np.empty(4)
-	print("Gray")
-	graydata = c.spectral_rendering(gray_0)
-	grayl[0] = graydata[0]
-	graycs[0] = graydata[1]
-	graycs1[0] = graydata[2]
-	print("+ 0.3")
-	graydata = c.spectral_rendering(gray_03)
-	grayl[1] = graydata[0]
-	graycs[1] = graydata[1]
-	graycs1[1] = graydata[2]
-	print("+ 0.7")
-	graydata = c.spectral_rendering(gray_07)
-	grayl[2] = graydata[0]
-	graycs[2] = graydata[1]
-	graycs1[2] = graydata[2]
-	print("+ 1.0")
-	graydata = c.spectral_rendering(gray_10)
-	grayl[3] = graydata[0]
-	graycs[3] = graydata[1]
-	graycs1[3] = graydata[2]
+# plot
+xvalues = np.empty(401)
+for i in range(401):
+        xvalues[i] = i + 300
+plt.subplot(3, 2, 1)
+plt.plot(xvalues, red25_0*100, 'r')
+plt.plot(xvalues, red25_03*100, 'r')
+plt.plot(xvalues, red25_07*100, 'r')
+plt.plot(xvalues, red25_10*100, 'r')
+plt.title("Red 25")
+plt.subplot(3, 2, 2)
+plt.plot(xvalues, yellow15_0*100, 'y')
+plt.plot(xvalues, yellow15_03*100, 'y')
+plt.plot(xvalues, yellow15_07*100, 'y')
+plt.plot(xvalues, yellow15_10*100, 'y')
+plt.title("Yellow 15")
+plt.subplot(3, 2, 3)
+plt.plot(xvalues, green58_0*100, 'g')
+plt.plot(xvalues, green58_03*100, 'g')
+plt.plot(xvalues, green58_07*100, 'g')
+plt.plot(xvalues, green58_10*100, 'g')
+plt.title("Green 58")
+plt.subplot(3, 2, 4)
+plt.plot(xvalues, blue47_0*100, 'b')
+plt.plot(xvalues, blue47_03*100, 'b')
+plt.plot(xvalues, blue47_07*100, 'b')
+plt.plot(xvalues, blue47_10*100, 'b')
+plt.title("Blue 47")
+plt.subplot(3, 2, 5)
+plt.plot(xvalues, gray_0*100, color='gray')
+plt.plot(xvalues, gray_03*100, color='gray')
+plt.plot(xvalues, gray_07*100, color='gray')
+plt.plot(xvalues, gray_10*100, color='gray')
+plt.title("Gray")
+plt.show()
 
+# brightness levels and color space coordinates
+red25l = np.empty(4)
+red25cs = np.empty(4)
+red25cs1 = np.empty(4)
+print("Red 25 (+ 1.0 + 0.1)")
+red25data = c.spectral_rendering(red25_0)
+red25l[0] = red25data[0]
+red25cs[0] = red25data[1]
+red25cs1[0] = red25data[2]
+print("+ 0.3")
+red25data = c.spectral_rendering(red25_03)
+red25l[1] = red25data[0]
+red25cs[1] = red25data[1]
+red25cs1[1] = red25data[2]
+print("+ 0.7")
+red25data = c.spectral_rendering(red25_07)
+red25l[2] = red25data[0]
+red25cs[2] = red25data[1]
+red25cs1[2] = red25data[2]
+print("+ 1.0")
+red25data = c.spectral_rendering(red25_10)
+red25l[3] = red25data[0]
+red25cs[3] = red25data[1]
+red25cs1[3] = red25data[2]
+
+yellow15l = np.empty(4)
+yellow15cs = np.empty(4)
+yellow15cs1 = np.empty(4)
+print("Yellow 15 (+ 2.0 + 0.5)")
+yellow15data = c.spectral_rendering(yellow15_0)
+yellow15l[0] = yellow15data[0]
+yellow15cs[0] = yellow15data[1]
+yellow15cs1[0] = yellow15data[2]
+print("+ 0.3")
+yellow15data = c.spectral_rendering(yellow15_03)
+yellow15l[1] = yellow15data[0]
+yellow15cs[1] = yellow15data[1]
+yellow15cs1[1] = yellow15data[2]
+print("+ 0.7")
+yellow15data = c.spectral_rendering(yellow15_07)
+yellow15l[2] = yellow15data[0]
+yellow15cs[2] = yellow15data[1]
+yellow15cs1[2] = yellow15data[2]
+print("+ 1.0")
+yellow15data = c.spectral_rendering(yellow15_10)
+yellow15l[3] = yellow15data[0]
+yellow15cs[3] = yellow15data[1]
+yellow15cs1[3] = yellow15data[2]
+
+green58l = np.empty(4)
+green58cs = np.empty(4)
+green58cs1 = np.empty(4)
+print("Green 58 (+ 1.0 + 0.3)")
+green58data = c.spectral_rendering(green58_0)
+green58l[0] = green58data[0]
+green58cs[0] = green58data[1]
+green58cs1[0] = green58data[2]
+print("+ 0.3")
+green58data = c.spectral_rendering(green58_03)
+green58l[1] = green58data[0]
+green58cs[1] = green58data[1]
+green58cs1[1] = green58data[2]
+print("+ 0.7")
+green58data = c.spectral_rendering(green58_07)
+green58l[2] = green58data[0]
+green58cs[2] = green58data[1]
+green58cs1[2] = green58data[2]
+print("+ 1.0")
+green58data = c.spectral_rendering(green58_10)
+green58l[3] = green58data[0]
+green58cs[3] = green58data[1]
+green58cs1[3] = green58data[2]
+
+blue47l = np.empty(4)
+blue47cs = np.empty(4)
+blue47cs1 = np.empty(4)
+print("Blue 47")
+blue47data = c.spectral_rendering(blue47_0)
+blue47l[0] = blue47data[0]
+blue47cs[0] = blue47data[1]
+blue47cs1[0] = blue47data[2]
+print("+ 0.3")
+blue47data = c.spectral_rendering(blue47_03)
+blue47l[1] = blue47data[0]
+blue47cs[1] = blue47data[1]
+blue47cs1[1] = blue47data[2]
+print("+ 0.7")
+blue47data = c.spectral_rendering(blue47_07)
+blue47l[2] = blue47data[0]
+blue47cs[2] = blue47data[1]
+blue47cs1[2] = blue47data[2]
+print("+ 1.0")
+blue47data = c.spectral_rendering(blue47_10)
+blue47l[3] = blue47data[0]
+blue47cs[3] = blue47data[1]
+blue47cs1[3] = blue47data[2]
+
+grayl = np.empty(4)
+graycs = np.empty(4)
+graycs1 = np.empty(4)
+print("Gray")
+graydata = c.spectral_rendering(gray_0)
+grayl[0] = graydata[0]
+graycs[0] = graydata[1]
+graycs1[0] = graydata[2]
+print("+ 0.3")
+graydata = c.spectral_rendering(gray_03)
+grayl[1] = graydata[0]
+graycs[1] = graydata[1]
+graycs1[1] = graydata[2]
+print("+ 0.7")
+graydata = c.spectral_rendering(gray_07)
+grayl[2] = graydata[0]
+graycs[2] = graydata[1]
+graycs1[2] = graydata[2]
+print("+ 1.0")
+graydata = c.spectral_rendering(gray_10)
+grayl[3] = graydata[0]
+graycs[3] = graydata[1]
+graycs1[3] = graydata[2]
+
+if (args.wratten):
 	# red-yellow
 	print("R-Y")
 	c.brightness_disc(red25_0, red25_03, red25_07, red25_10, red25l, yellow15_0, yellow15_03, yellow15_07, yellow15_10, yellow15l)
@@ -5137,3 +5136,66 @@ if (args.blackbody != 0):
 	plt.plot([0, 0.3, 0.7, 1.0], [scale*visible_graycde0, scale*visible_graycde03, scale*visible_graycde07, scale*visible_graycde10], marker='v', linestyle='', color='gray', mec='k')
 	plt.yscale('log')
 	plt.show()
+
+w_range = args.lw - args.sw
+# test different values for rod pigment
+if (args.wopt1):
+        print("optimizing rod contrast")
+        xvalues = np.empty(w_range)
+        rod_ry = np.empty(w_range)
+        rod_rg = np.empty(w_range)
+        rod_rb = np.empty(w_range)
+        rod_yg = np.empty(w_range)
+        rod_yb = np.empty(w_range)
+        rod_gb = np.empty(w_range)
+        rod_rgray = np.empty(w_range)
+        rod_ygray = np.empty(w_range)
+        rod_ggray = np.empty(w_range)
+        rod_bgray = np.empty(w_range)
+        
+        for i in range(w_range):
+                w = args.sw + i
+                print(w)
+                xvalues[i] = w
+                rod_ry[i] = c.brightness_disc(red25_0, red25_03, red25_07, red25_10, yellow15_0, yellow15_03, yellow15_07, yellow15_10, lw=w, output=False)[0]
+                print("RY: " + str(rod_ry[i]))
+                rod_rg[i] = c.brightness_disc(red25_0, red25_03, red25_07, red25_10, green58_0, green58_03, green58_07, green58_10, lw=w, output=False)[0]
+                print("RG: " + str(rod_rg[i]))
+                rod_rb[i] = c.brightness_disc(red25_0, red25_03, red25_07, red25_10, blue47_0, blue47_03, blue47_07, blue47_10, lw=w, output=False)[0]
+                print("RB: " + str(rod_rb[i]))
+                rod_yg[i] = c.brightness_disc(yellow15_0, yellow15_03, yellow15_07, yellow15_10, green58_0, green58_03, green58_07, green58_10, lw=w, output=False)[0]
+                print("YG: " + str(rod_yg[i]))
+                rod_yb[i] = c.brightness_disc(yellow15_0, yellow15_03, yellow15_07, yellow15_10, blue47_0, blue47_03, blue47_07, blue47_10, lw=w, output=False)[0]
+                print("YB: " + str(rod_yb[i]))
+                rod_gb[i] = c.brightness_disc(green58_0, green58_03, green58_07, green58_10, blue47_0, blue47_03, blue47_07, blue47_10, lw=w, output=False)[0]
+                print("GB: " + str(rod_gb[i]))
+                rod_rgray[i] = c.brightness_disc(red25_0, red25_03, red25_07, red25_10, gray_0, gray_03, gray_07, gray_10, correct=68, trials=80, lw=w, output=False)[0]
+                print("R-gray: " + str(rod_rgray[i]))
+                rod_ygray[i] = c.brightness_disc(yellow15_0, yellow15_03, yellow15_07, yellow15_10, gray_0, gray_03, gray_07, gray_10, correct=68, trials=80, lw=w, output=False)[0]
+                print("Y-gray: " + str(rod_ygray[i]))
+                rod_ggray[i] = c.brightness_disc(green58_0, green58_03, green58_07, green58_10, gray_0, gray_03, gray_07, gray_10, correct=68, trials=80, lw=w, output=False)[0]
+                print("G-gray: " + str(rod_ggray[i]))
+                rod_bgray[i] = c.brightness_disc(blue47_0, blue47_03, blue47_07, blue47_10, gray_0, gray_03, gray_07, gray_10, correct=68, trials=80, lw=w, output=False)[0]
+                print("B-gray: " + str(rod_bgray[i]))
+                
+        plt.plot(xvalues, rod_ry, 'r', label="RY")
+        plt.plot(xvalues, rod_rg, '--r', label="RG")
+        plt.plot(xvalues, rod_rb, ':r', label="RB")
+        plt.plot(xvalues, rod_yg, 'k', label="YG")
+        plt.plot(xvalues, rod_yb, '--k', label="YB")
+        plt.plot(xvalues, rod_gb, ':k', label="GB")
+        plt.plot([args.sw, args.lw], [0.05, 0.05], ':k')
+        plt.xlabel("λmax (nm)")
+        plt.ylabel("Probability of success")
+        plt.legend()
+        plt.show()
+        
+        plt.plot(xvalues, rod_rgray, color='gray', label="R-gray")
+        plt.plot(xvalues, rod_ygray, '--', color='gray', label="Y-gray")
+        plt.plot(xvalues, rod_ggray, '-.', color='gray', label="G-gray")
+        plt.plot(xvalues, rod_bgray, ':', color='gray', label="B-gray")
+        plt.plot([args.sw, args.lw], [0.05, 0.05], ':k')
+        plt.xlabel("λmax (nm)")
+        plt.ylabel("Probability of success")
+        plt.legend()
+        plt.show()
