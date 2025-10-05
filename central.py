@@ -12,7 +12,7 @@ This file contains the following:
 
 Other stuff has been spun off to the following files, which import this one. I'd like to add additional arguments to those but
 don't see how to do that.
-* erg.py: analysis of ERG data from Jacobs & Williams (2009)
+* erg.py: analysis of ERG data from Jacobs & Williams (2010)
 * illuminants.py: test illuminants
 * step.py: step function spectra
 * peak.py: Gaussian peak spectra
@@ -4039,3 +4039,4 @@ def brightness_disc(f0, f1, f2, f3, fl, s0, s1, s2, s3, sl, correct=35, trials=4
 	print("P-value (success): " + str(binomial.pvalue))
 	print("P-value (failure): " + str(binomial2.pvalue))
 	print("")
+
