@@ -1,5 +1,5 @@
 """
-This file analyzes the ERG data from Jacobs & Williams (2009) to test their conclusion that they recorded signals
+This file analyzes the ERG data from Jacobs & Williams (2010) to test their conclusion that they recorded signals
 from only one visual pigment with peak sensitivity of 562 nm. First we show how the graphs could differ if
 ocular media transmission were known, and then we reconstruct the effects of chromatic adaptation by
 combining their fig. 3 with fig. 1 or fig. 2. Which species' ocular media we use is specified by the --media
@@ -500,3 +500,4 @@ plt.plot(x_1nm, curve, 'k')
 plt.plot(x_1nm, lws, '--k')
 plt.plot(x_1nm, mws, '-.k')
 plt.show()
+
