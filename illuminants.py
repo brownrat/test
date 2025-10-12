@@ -1,22 +1,23 @@
 # example illuminants
 
 import central as c
-e = c.e
-d65 = c.d65
-a = c.a
-incandescent = c.incandescent
+import numpy as np
+import colormath
+from colormath import spectral_constants
+e = c.e_10nm
+d65 = c.d65_10nm
+a = np.zeros(41)
+for i in range(4, 41):
+	a[i] = spectral_constants.REF_ILLUM_TABLE["a"][i-4]
+incandescent = c.incandescent_10nm
 
-print("White (E, equal-energy)")
-c.spectral_rendering(e, reflect=False)
-
-print("White (D65)")
-c.spectral_rendering(d65, reflect=False)
-
-print("Incandescent lighting (A)")
-c.spectral_rendering(a, reflect=False)
-
-print("Incandescent lighting (approximated with 2856 K blackbody spectrum)")
-c.spectral_rendering(incandescent, reflect=False)
+c.triangle(
+	[e, d65, a, incandescent],
+	markers=['o', 's', 'D', 'v'],
+	colors=[c.spec2rgb(e), c.spec2rgb(d65), c.spec2rgb(a), c.spec2rgb(incandescent)],
+	text=['E', 'D65', 'A', 'incandescent'],
+	legend=True,
+	reflect=False)
 
 # color/brightness contrast test
 print("Color contrast between E and E: " + str(c.color_contrast(e, e)))
