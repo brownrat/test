@@ -20,6 +20,9 @@ don't see how to do that.
 * sky.py: sky/daylight spectra
 * wratten.py: Kodak Wratten filters
 * munsell.py: Munsell color cards
+* image_processing.py: tool for creating false-color images
+** This one can't be part of the main file because OpenCV and matplotlib don't like each other. That's
+why the main file has the part for generating and plotting the source->target curves.
 
 wratten.py and munsell.py just produce plots by default. To see the color rendering and trial modeling, you have to use
 --wratten/--munsell. This is because they also contain other features that are accessed with other arguments (see the list).
@@ -124,8 +127,11 @@ parser.add_argument("--cmf", help="color-matching functions", action="store_true
 parser.add_argument("--primaries", nargs="+", type=int, default=[700, 546.1, 435.8, 0, 0], help="primary wavelengths for color-matching functions")
 parser.add_argument("-p", "--preset", help="use specified preset vision system", default="none")
 parser.add_argument("-v", "--verbose", help="", action="store_true")
-parser.add_argument("-i", "--image", help="path to input image")
-parser.add_argument("--source", default="camera", help="source phenotype")
+parser.add_argument("-i", "--image", default="none", help="path to input image")
+parser.add_argument("--spreset", default="none", help="preset source phenotype")
+parser.add_argument("--source", nargs="+", type=int, help="custom source phenotype")
+parser.add_argument("--stplot", help="source->target transform plot", action="store_true")
+parser.add_argument("--bound", default=-np.inf, type=float, help="lower bound for source->target coefficients")
 args = parser.parse_args()
 
 # X values representing wavelengths 300-700 nm, used by multiple functions
@@ -234,13 +240,27 @@ mouse_10nm = mouse_lens
 mouse_10nm[0] = 0 # remove nan
 
 # choose media type
-if (args.media == "none"):
-	media_1nm = np.ones(401)
-	media_10nm = np.ones(41)
-elif (args.media == "mouse"):
+media_1nm = np.ones(401)
+media_10nm = np.ones(41)
+if (args.media == "mouse"):
 	media_1nm = mouse_1nm
 	media_10nm = mouse_10nm
-else:
+elif (args.media == "human"):
+	for i in range(401):
+		w = i + 300
+		try:
+			density = 1.1*math.exp((400 - w) / 15) + 0.11*math.exp((500 - w) / 80)
+			media_1nm[i] = 10**(-density)
+		except OverflowError:
+			media_1nm[i] = 0
+	for i in range(41):
+		w = i*10 + 300
+		try:
+			density = 1.1*math.exp((400 - w) / 15) + 0.11*math.exp((500 - w) / 80)
+			media_10nm[i] = 10**(-density)
+		except OverflowError:
+			media_10nm[i] = 0
+elif (args.media != "none"):
 	wl, values = csv2spec(args.media)
 
 	media_10nm = np.interp(x_10nm, wl, values)
@@ -2353,7 +2373,7 @@ def vpt(w, lmax):
 		alpha = 1 / (math.exp(A*(a - lmax/w)) + math.exp(B*(b - lmax/w)) + math.exp(C*(c - lmax/w)) + D)
 		beta = Abeta * math.exp(-((w - lmbeta) / b1)**2)
 	except OverflowError:
-		if (args.warnings): print("Warning (vpt): math overflow, clipping to 2.2250738585072014e-308")
+		if (args.warnings): print("Warning (vpt): OverflowError, clipping to 2.2250738585072014e-308")
 		return 2.2250738585072014e-308
 	
 	# self-screening (see The Optics of Life equation 4.12 and https://pmc.ncbi.nlm.nih.gov/articles/PMC3269789/)
@@ -2381,6 +2401,44 @@ def vpt(w, lmax):
 	
 	return value
 
+# presets
+
+# CIE 2-deg fundamentals
+cie2_l = np.zeros(401)
+cie2_m = np.zeros(401)
+cie2_s = np.zeros(401)
+for i in range(390, 701):
+	cie2_l[i-300] = 10**(hcf2deg[int(round(i))-390][1])
+	cie2_m[i-300] = 10**(hcf2deg[int(round(i))-390][2])
+	cie2_s[i-300] = 10**(hcf2deg[int(round(i))-390][3])
+
+# CIE 10-deg fundamentals
+cie10_l = np.zeros(401)
+cie10_m = np.zeros(401)
+cie10_s = np.zeros(401)
+cie10_luminosity = np.zeros(401)
+for i in range(390, 701):
+	cie10_l[i-300] = 10**(hcf10deg[int(round(i))-390][1])
+	cie10_m[i-300] = 10**(hcf10deg[int(round(i))-390][2])
+	cie10_s[i-300] = 10**(hcf10deg[int(round(i))-390][3])
+	cie10_luminosity = cie_luminosity[i-300] # just so it's the right length
+
+# data for typical camera channels (Kolláth et al. 2020 https://doi.org/10.1016/j.jqsrt.2020.107162)
+# digitized with WebPlotDigitizer
+# I tried to pick a single curve that runs close to the middle, but they overlap a lot. Oh well.
+red_xy = csv2spec('red.csv')
+green_xy = csv2spec('green2.csv')
+blue_xy = csv2spec('blue.csv')
+red = np.interp(x_1nm, *red_xy)
+green = np.interp(x_1nm, *green_xy)
+blue = np.interp(x_1nm, *blue_xy)
+
+# remove extrapolation below ~400 nm
+for i in range(99):
+	red[i] = 0
+	green[i] = 0
+	blue[i] = 0
+
 # set receptors and luminosity
 rlist = []
 r1_1nm = np.zeros(401)
@@ -2390,100 +2448,36 @@ r4_1nm = np.zeros(401)
 r5_1nm = np.zeros(401)
 luminosity = np.empty(401)
 
-# CIE 2-deg fundamentals
 if (args.preset == "cie2"):
 	dimension = 3
 	receptors = [566, 541, 441]
-	for i in range(401):
-		w = i+300
-		if (w < 390):
-			r1_1nm[i] = 0
-			r2_1nm[i] = 0
-			r3_1nm[i] = 0
-		else:
-			r1_1nm[i] = 10**(hcf2deg[int(round(w))-390][1])
-			r2_1nm[i] = 10**(hcf2deg[int(round(w))-390][2])
-			r3_1nm[i] = 10**(hcf2deg[int(round(w))-390][3])
-		luminosity[i] = cie_luminosity[i]
+	r1_1nm = cie2_l
+	r2_1nm = cie2_m
+	r3_1nm = cie2_s
+	luminosity = cie10_luminosity
 		
-		rlist.append(r1_1nm)
-		rlist.append(r2_1nm)
-		rlist.append(r3_1nm)
+	rlist.append(r1_1nm)
+	rlist.append(r2_1nm)
+	rlist.append(r3_1nm)
 # CIE 10-deg fundamentals
 elif (args.preset == "cie10"):
 	dimension = 3
 	receptors = [565, 540, 447]
-	for i in range(401):
-		w = i+300
-		if (w < 390):
-			r1_1nm[i] = 0
-			r2_1nm[i] = 0
-			r3_1nm[i] = 0
-		else:
-			r1_1nm[i] = 10**(hcf10deg[int(round(w))-390][1])
-			r2_1nm[i] = 10**(hcf10deg[int(round(w))-390][2])
-			r3_1nm[i] = 10**(hcf10deg[int(round(w))-390][3])
-		luminosity[i] = cie_luminosity[i]
-		
-		rlist.append(r1_1nm)
-		rlist.append(r2_1nm)
-		rlist.append(r3_1nm)
-# House mouse. Source: https://pmc.ncbi.nlm.nih.gov/articles/PMC11562817/
-elif (args.preset == "mouse"):
-	dimension = 2
-	rod = 498
-	receptors = [508, 358]
-	for i in range(401):
-		w = i+300
-		r1_1nm[i] = vpt(w, 508)
-		r2_1nm[i] = vpt(w, 358)
-		luminosity[i] = (args.r1s*vpt(w, 508) + args.rs*vpt(w, 498)) * media_1nm[i]
-		
-		rlist.append(r1_1nm)
-		rlist.append(r2_1nm)
-# honeybee https://www.facetsjournal.com/doi/10.1139/facets-2017-0116
-elif (args.preset == "honeybee"):
-	dimension = 3
-	receptors = [544, 434, 344]
-	for i in range(401):
-		w = i+300
-		r1_1nm[i] = vpt(w, 544)
-		r2_1nm[i] = vpt(w, 434)
-		r3_1nm[i] = vpt(w, 344)
-	luminosity = r1_1nm
-	
+	r1_1nm = cie10_l
+	r2_1nm = cie10_m
+	r3_1nm = cie10_s
+	luminosity = cie10_luminosity
+
 	rlist.append(r1_1nm)
 	rlist.append(r2_1nm)
 	rlist.append(r3_1nm)
-elif (args.preset == "didelphis1"):
-	dimension = 1
-	receptors = [562]
-	for i in range(401):
-		w = i+300
-		r1_1nm[i] = vpt(w, 562)
-		luminosity[i] = (args.r1s*vpt(w, 562) + args.rs*vpt(w, args.rod)) * media_1nm[i]
-	
-	rlist.append(r1_1nm)
-elif (args.preset == "didelphis2"):
-	dimension = 2
-	receptors = [562, 362]
-	for i in range(401):
-		w = i+300
-		r1_1nm[i] = vpt(w, 562)
-		r2_1nm[i] = vpt(w, 362)
-		luminosity[i] = (args.r1s*vpt(w, 562) + args.rs*vpt(w, args.rod)) * media_1nm[i]
-	
-	rlist.append(r1_1nm)
-	rlist.append(r2_1nm)
-elif (args.preset == "didelphis3"):
+# digital camera
+elif (args.preset == "camera"):
 	dimension = 3
-	receptors = [562, 504, 362]
-	for i in range(401):
-		w = i+300
-		r1_1nm[i] = vpt(w, 562)
-		r2_1nm[i] = vpt(w, 504)
-		r3_1nm[i] = vpt(w, 362)
-		luminosity[i] = (args.r1s*vpt(w, 562) + args.rs*vpt(w, args.rod)) * media_1nm[i]
+	receptors = [595, 532, 450]
+	r1_1nm = red
+	r2_1nm = green
+	r3_1nm = blue
 
 	rlist.append(r1_1nm)
 	rlist.append(r2_1nm)
@@ -2492,7 +2486,10 @@ else:
 	rod = args.rod
 	for i in range(401):
 		w = i+300
-		luminosity[i] = (args.r1s*vpt(w, receptors[0]) + args.rs*vpt(w, rod)) * media_1nm[w-300]
+		if (args.rod > 0):
+			luminosity[i] = (args.r1s*vpt(w, receptors[0]) + args.rs*vpt(w, rod)) * media_1nm[w-300]
+		else:
+			luminosity[i] = (args.r1s*vpt(w, receptors[0])) * media_1nm[w-300]
 
 	for i in range(dimension):
 		# whole list
@@ -2707,13 +2704,133 @@ if (args.cmf):
 	if (dimension < 2):
 		print("CMFs are not meaningful for monochromacy.")
 	else:
-		matrix_cmf = cmf()
+		matrix_cmf = cmf()[0]
 		# plot curves
 		plt.plot(x_1nm, matrix_cmf[0], color=colorcode(p1))
 		if (dimension > 1): plt.plot(x_1nm, matrix_cmf[1], color=colorcode(p2))
 		if (dimension > 2): plt.plot(x_1nm, matrix_cmf[2], color=colorcode(p3))
 		if (dimension > 3): plt.plot(x_1nm, matrix_cmf[3], color=colorcode(p4))
 		if (dimension > 4): plt.plot(x_1nm, matrix_cmf[4], color=colorcode(p5))
+		plt.show()
+
+# set source receptors (for image processing)
+if (args.image != "none" or args.stplot):
+	srlist = []
+	sr1 = np.zeros(401)
+	sr2 = np.zeros(401)
+	sr3 = np.zeros(401)
+	sluminosity = np.ones(401) # to be implemented
+
+	if (args.spreset == "cie2"):
+		sr1 = cie2_l
+		sr2 = cie2_m
+		sr3 = cie2_s
+		sluminosity = cie10_luminosity
+			
+		srlist.append(r1_1nm)
+		srlist.append(r2_1nm)
+		srlist.append(r3_1nm)
+	# CIE 10-deg fundamentals
+	elif (args.spreset == "cie10"):
+		sr1 = cie10_l
+		sr2 = cie10_m
+		sr3 = cie10_s
+
+		rlist.append(r1_1nm)
+		rlist.append(r2_1nm)
+		rlist.append(r3_1nm)
+	# digital camera
+	elif (args.spreset == "camera"):
+		sr1 = red
+		sr2 = green
+		sr3 = blue
+
+		srlist.append(r1_1nm)
+		srlist.append(r2_1nm)
+		srlist.append(r3_1nm)
+	else:
+		for i in range(3):
+			# whole list
+			yvalues = np.empty(401)
+			peak = args.source[i] # peak sensitivity
+			for j in range(401):
+				yvalues[j] = vpt(j+300, peak)
+			srlist.append(yvalues)
+
+		sr1 = srlist[0]
+		sr2 = srlist[1]
+		sr3 = srlist[2]
+	
+	# multiply by illuminant
+	sr1 *= wp_1nm
+	sr2 *= wp_1nm
+	sr3 *= wp_1nm
+
+	# find best fit to target
+	def camera2target(xdata, rscale, gscale, bscale):
+		ydata = np.empty(xdata.shape[0])
+		for i in range(xdata.shape[0]):
+			ydata[i] = rscale*sr1[i] + gscale*sr2[i] + bscale*sr3[i]
+		return(ydata)
+
+	wptr1 = 1
+	wptr2 = 1
+	wptr3 = 1
+
+	tr1 = np.zeros(401)
+	tr2 = np.zeros(401)
+	tr3 = np.zeros(401)
+
+	#if (args.fcmode == 'cmf'):
+	#	matrix_cmf = cmf()
+	#	r1 = matrix_cmf[0]
+	#	if (dimension > 1): r2 = matrix_cmf[1]
+	#	if (dimension > 2): r3 = matrix_cmf[2]
+	#else:
+	tr1 = r1_1nm * media_1nm * wp_1nm
+	tr2 = r2_1nm * media_1nm * wp_1nm
+	tr3 = r3_1nm * media_1nm * wp_1nm
+
+	# von Kries transform
+	wpsr1 = sum(sr1)
+	wpsr2 = sum(sr2)
+	wpsr3 = sum(sr3)
+	wptr1 = sum(tr1)
+	wptr2 = sum(tr2)
+	wptr3 = sum(tr3)
+	sr1 /= wpsr1
+	sr2 /= wpsr2
+	sr3 /= wpsr3
+	tr1 /= wptr1
+	if (wptr2 > 0): tr2 /= wptr2
+	if (wptr3 > 0): tr3 /= wptr3
+
+	# set lower bound to 0 because weird stuff happens if I let it choose negative numbers
+	popt, pcov = scipy.optimize.curve_fit(camera2target, x_1nm, tr1, p0=[1, 0, 0], bounds=[args.bound,np.inf])
+	print(popt)
+	red_r1 = popt[0]
+	green_r1 = popt[1]
+	blue_r1 = popt[2]
+	popt, pcov = scipy.optimize.curve_fit(camera2target, x_1nm, tr2, p0=[0, 1, 0], bounds=[args.bound,np.inf])
+	print(popt)
+	red_r2 = popt[0]
+	green_r2 = popt[1]
+	blue_r2 = popt[2]
+	popt, pcov = scipy.optimize.curve_fit(camera2target, x_1nm, tr3, p0=[0, 0, 1], bounds=[args.bound,np.inf])
+	print(popt)
+	red_r3 = popt[0]
+	green_r3 = popt[1]
+	blue_r3 = popt[2]
+
+	if (args.stplot):
+		plt.plot(x_1nm, tr1, color=colorcode(receptors[0]))
+		plt.plot(x_1nm, red_r1*sr1 + green_r1*sr2 + blue_r1*sr3, '--', color=colorcode(receptors[0]))
+		if (dimension > 1):
+			plt.plot(x_1nm, tr2, color=colorcode(receptors[1]))
+			plt.plot(x_1nm, red_r2*sr1 + green_r2*sr2 + blue_r2*sr3, '--', color=colorcode(receptors[1]))
+		if (dimension > 2):
+			plt.plot(x_1nm, tr3, color=colorcode(receptors[2]))
+			plt.plot(x_1nm, red_r3*sr1 + green_r3*sr2 + blue_r3*sr3, '--', color=colorcode(receptors[2]))
 		plt.show()
 
 # gamma correction (see color_conversions.py from the colormath module)
