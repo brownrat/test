@@ -1,8 +1,8 @@
 # Background
 
-This set of scripts began as an attempt to reverse-engineer a program called Color Vision Simulator developed for altering photographs to mimic various forms of primate color vision. The method used by CVS is described in the paper where it was introduced (Melin et al. 2013), but the software itself has not been published. I later added other functions for analyzing animal color vision more generally, and the image processing code is now contained in its own file (image_processing.py) because it relies on OpenCV while the main file uses matplotlib -- see (https://github.com/opencv/opencv-python/issues/386)[this bug report].
+This set of scripts began as an attempt to reverse-engineer a program called Color Vision Simulator developed for altering photographs to mimic various forms of primate color vision. The method used by CVS is described in the paper where it was introduced (Melin et al. 2013), but the software itself has not been published. I later added other functions for analyzing animal color vision more generally, and the image processing code is now contained in its own file (image_processing.py) because it relies on OpenCV while the main file uses matplotlib -- see [this bug report](https://github.com/opencv/opencv-python/issues/386).
 
-I have no formal background in biology or neuroscience, and these tools are meant more for artistic purposes than rigorous analysis. Professional-quality software with some similar functions includes (https://www.empiricalimaging.com/)[micaToolbox] and (https://pavo.colrverse.com/)[pavo] (both free to download).
+I have no formal background in biology or neuroscience, and these tools are meant more for artistic purposes than rigorous analysis. Professional-quality software with some similar functions includes [micaToolbox](https://www.empiricalimaging.com/) and [pavo](https://pavo.colrverse.com/) (both free to download).
 
 # References
 
