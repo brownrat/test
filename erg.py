@@ -13,6 +13,9 @@ import argparse
 import scipy
 import central as c
 args = c.args
+lw = args.receptors[0]
+if (len(args.receptors) > 1): mw = args.receptors[1]
+if (len(args.receptors) > 2): sw = args.receptors[2]
 
 # simplify printing and interpreting curve_fit output
 def opt_nm(popt, pcov, i=0):
@@ -168,9 +171,7 @@ y_fig23 = np.empty(29)
 for i in range(29): y_fig23[i] = 10**(fig2[i+2][1] + fig3[i][1])
 
 # choose ocular media
-if (args.filter == "mouse"): media_10nm = c.mouse_10nm
-elif (args.filter == "thylamys"): media_10nm = c.thylamys_10nm
-elif (args.filter == "brushtail"): media_10nm = c.brushtail_10nm
+media_10nm = c.media_10nm
 
 # remove unnecessary parameters from fitting functions -- we "needed" these because of the
 # log->linear issue. You should (I think) never need to shift the whole thing up and
@@ -205,7 +206,7 @@ def vpt_fit3(xdata, t1, t2, t3, scalet1, scalet2, scalet3):
 def vpt_fit2_fixs(xdata, t1, scalet1, scalet2):
         ydata = np.empty(xdata.shape[0])
         for i in range(xdata.shape[0]):
-                value = scalet1*c.vpt(xdata[i], t1) + scalet2*c.vpt(xdata[i], args.sw)
+                value = scalet1*c.vpt(xdata[i], t1) + scalet2*c.vpt(xdata[i], sw)
                 if (value >= 0): ydata[i] = value
                 else: ydata[i] = 0
         return(ydata)
@@ -215,7 +216,7 @@ def vpt_fit2_fixs(xdata, t1, scalet1, scalet2):
 def vpt_fit2_fixl(xdata, t2, scalet1, scalet2):
         ydata = np.empty(xdata.shape[0])
         for i in range(xdata.shape[0]):
-                value = scalet1*c.vpt(xdata[i], args.lw) + scalet2*c.vpt(xdata[i], t2)
+                value = scalet1*c.vpt(xdata[i], lw) + scalet2*c.vpt(xdata[i], t2)
                 if (value >= 0): ydata[i] = value
                 else: ydata[i] = 0
         return(ydata)
@@ -223,7 +224,7 @@ def vpt_fit2_fixl(xdata, t2, scalet1, scalet2):
 def vpt_fit3_fixls(xdata, t2, scalet1, scalet2, scalet3):
         ydata = np.empty(xdata.shape[0])
         for i in range(xdata.shape[0]):
-                value = scalet1*c.vpt(xdata[i], args.lw) + scalet2*c.vpt(xdata[i], t2) + scalet3*c.vpt(xdata[i], args.sw)
+                value = scalet1*c.vpt(xdata[i], lw) + scalet2*c.vpt(xdata[i], t2) + scalet3*c.vpt(xdata[i], sw)
                 if (value >= 0): ydata[i] = value
                 else: ydata[i] = 0
         return(ydata)
@@ -231,7 +232,7 @@ def vpt_fit3_fixls(xdata, t2, scalet1, scalet2, scalet3):
 def vpt_fit3_fixall(xdata, scalet1, scalet2, scalet3):
         ydata = np.empty(xdata.shape[0])
         for i in range(xdata.shape[0]):
-                value = scalet1*c.vpt(xdata[i], args.lw) + scalet2*c.vpt(xdata[i], args.mw) + scalet3*c.vpt(xdata[i], args.sw)
+                value = scalet1*c.vpt(xdata[i], lw) + scalet2*c.vpt(xdata[i], mw) + scalet3*c.vpt(xdata[i], sw)
                 if (value >= 0): ydata[i] = value
                 else: ydata[i] = 0
         return(ydata)
@@ -240,7 +241,7 @@ def vpt_fit3_fixall(xdata, scalet1, scalet2, scalet3):
 def vpt_fit2_fixall(xdata, scalet1, scalet2):
         ydata = np.empty(xdata.shape[0])
         for i in range(xdata.shape[0]):
-                value = scalet1*c.vpt(xdata[i], args.lw) + scalet2*c.vpt(xdata[i], args.mw)
+                value = scalet1*c.vpt(xdata[i], lw) + scalet2*c.vpt(xdata[i], mw)
                 if (value >= 0): ydata[i] = value
                 else: ydata[i] = 0
         return(ydata)
@@ -289,7 +290,7 @@ print("Custom ocular media (fig. 2)")
 media_fig2 = np.empty(31)
 for i in range(31):
         media_fig2[i] = y_fig2[i] / media_10nm[i+7]
-popt, pcov, infodict, mesg, ier = scipy.optimize.curve_fit(vpt_fit2, x_fig2, media_fig2, p0=[args.lw, 360, 1, 0.1], full_output=True)
+popt, pcov, infodict, mesg, ier = scipy.optimize.curve_fit(vpt_fit2, x_fig2, media_fig2, p0=[lw, 360, 1, 0.1], full_output=True)
 opt_raw()
 total = popt[2] + popt[3]
 print("LWS: " + opt_nm(popt, pcov) + " (" + opt_percent(popt, pcov, 2) + ")")
@@ -316,7 +317,7 @@ plt.show()
 # really visible in the residual plot where the errors in this region are smaller than
 # at longer wavelengths.
 # Further reading: https://statisticsbyjim.com/regression/check-residual-plots-regression-analysis/
-popt, pcov = scipy.optimize.curve_fit(vpt_fit1, x_fig2, media_fig2, p0=[args.lw, 1])
+popt, pcov = scipy.optimize.curve_fit(vpt_fit1, x_fig2, media_fig2, p0=[lw, 1])
 opt_raw()
 print("LWS: " + opt_nm(popt, pcov))
 curve = vpt_fit1(x_1nm, *popt)
@@ -348,7 +349,7 @@ print("fig. 2 + 3")
 media_fig23 = np.empty(29)
 for i in range(29):
         media_fig23[i] = y_fig23[i] / media_10nm[i+9]
-popt, pcov = scipy.optimize.curve_fit(vpt_fit2, x_fig23, media_fig23, p0=[args.lw, 360, 1, 0.1])
+popt, pcov = scipy.optimize.curve_fit(vpt_fit2, x_fig23, media_fig23, p0=[lw, 360, 1, 0.1])
 opt_raw()
 total = popt[2] + popt[3]
 print("LWS: " + opt_nm(popt, pcov) + " (" + opt_percent(popt, pcov, 2) + ")")
@@ -377,17 +378,17 @@ plt.ylabel("Residuals")
 plt.show()
 
 # fixed S
-popt, pcov = scipy.optimize.curve_fit(vpt_fit2_fixs, x_fig23, media_fig23, p0=[args.lw, 1, 0.1])
+popt, pcov = scipy.optimize.curve_fit(vpt_fit2_fixs, x_fig23, media_fig23, p0=[lw, 1, 0.1])
 opt_raw()
 total = popt[1] + popt[2]
 print("LWS: " + opt_nm(popt, pcov) + " (" + opt_percent(popt, pcov, 1) + ")")
-print("SWS: " + str(args.sw) + " nm (fixed) (" + opt_percent(popt, pcov, 2) + ")")
+print("SWS: " + str(sw) + " nm (fixed) (" + opt_percent(popt, pcov, 2) + ")")
 curve = vpt_fit2_fixs(x_1nm, *popt)
 lws = np.empty(401)
 sws = np.empty(401)
 for i in range(401):
         lws[i] = c.vpt(i + 300, popt[0]) * popt[1]
-        sws[i] = c.vpt(i + 300, args.sw) * popt[2]
+        sws[i] = c.vpt(i + 300, sw) * popt[2]
 plt.xlabel("Wavelength (nm)")
 plt.ylabel("Relative sensitivity")
 plt.yscale("log")
@@ -399,10 +400,10 @@ plt.plot(x_1nm, sws, ':k')
 plt.show()
 
 # fixed L, second variable (S doesn't work well so we're just doing L and M)
-popt, pcov = scipy.optimize.curve_fit(vpt_fit2_fixl, x_fig23, media_fig23, p0=[args.mw, 1, 0.1])
+popt, pcov = scipy.optimize.curve_fit(vpt_fit2_fixl, x_fig23, media_fig23, p0=[mw, 1, 0.1])
 opt_raw()
 total = popt[1] + popt[2]
-print("LWS: " + str(args.lw) + " nm (fixed) (" + opt_percent(popt, pcov, 1) + ")")
+print("LWS: " + str(lw) + " nm (fixed) (" + opt_percent(popt, pcov, 1) + ")")
 print("MWS: " + opt_nm(popt, pcov) + " (" + opt_percent(popt, pcov, 2) + ")")
 
 curve = vpt_fit2_fixl(x_1nm, *popt)
@@ -410,7 +411,7 @@ lws = np.empty(401)
 mws = np.empty(401)
 sws = np.empty(401)
 for i in range(401):
-        lws[i] = c.vpt(i + 300, args.lw) * popt[1]
+        lws[i] = c.vpt(i + 300, lw) * popt[1]
         mws[i] = c.vpt(i + 300, popt[0]) * popt[2]
 plt.xlabel("Wavelength (nm)")
 plt.ylabel("Relative sensitivity")
@@ -426,15 +427,15 @@ plt.show()
 popt, pcov = scipy.optimize.curve_fit(vpt_fit2_fixall, x_fig23, media_fig23, p0=[1, 0.1])
 opt_raw()
 total = popt[0] + popt[1]
-print("LWS: " + str(args.lw) + " nm (fixed) (" + opt_percent(popt, pcov) + ")")
-print("MWS: " + str(args.mw) + " nm (fixed) (" + opt_percent(popt, pcov, 1) + ")")
+print("LWS: " + str(lw) + " nm (fixed) (" + opt_percent(popt, pcov) + ")")
+print("MWS: " + str(mw) + " nm (fixed) (" + opt_percent(popt, pcov, 1) + ")")
 curve = vpt_fit2_fixall(x_1nm, *popt)
 lws = np.empty(401)
 mws = np.empty(401)
 sws = np.empty(401)
 for i in range(401):
-        lws[i] = c.vpt(i + 300, args.lw) * popt[0]
-        mws[i] = c.vpt(i + 300, args.mw) * popt[1]
+        lws[i] = c.vpt(i + 300, lw) * popt[0]
+        mws[i] = c.vpt(i + 300, mw) * popt[1]
 plt.xlabel("Wavelength (nm)")
 plt.ylabel("Relative sensitivity")
 plt.yscale("log")
@@ -450,7 +451,7 @@ print("fig. 1")
 media_fig1 = np.empty(20)
 for i in range(20):
         media_fig1[i] = y_fig1[i] / media_10nm[i+16]
-popt, pcov = scipy.optimize.curve_fit(vpt_fit1, x_fig1, media_fig1, p0=[args.lw, 1])
+popt, pcov = scipy.optimize.curve_fit(vpt_fit1, x_fig1, media_fig1, p0=[lw, 1])
 opt_raw()
 print("LWS: " + opt_nm(popt, pcov))
 curve = vpt_fit1(x_1nm, *popt)
@@ -467,7 +468,7 @@ print("fig. 1 + 3")
 media_fig13 = np.empty(20)
 for i in range(20):
         media_fig13[i] = y_fig13[i] / media_10nm[i+16]
-popt, pcov = scipy.optimize.curve_fit(vpt_fit1, x_fig1, media_fig13, p0=[args.lw, 1])
+popt, pcov = scipy.optimize.curve_fit(vpt_fit1, x_fig1, media_fig13, p0=[lw, 1])
 opt_raw()
 print("LWS: " + opt_nm(popt, pcov))
 curve = vpt_fit1(x_1nm, *popt)
@@ -480,16 +481,16 @@ plt.plot(x_1nm, curve, 'k')
 plt.show()
 
 # 2 templates, L fixed
-popt, pcov = scipy.optimize.curve_fit(vpt_fit2_fixl, x_fig1, media_fig13, p0=[args.mw, 1, 0.1])
+popt, pcov = scipy.optimize.curve_fit(vpt_fit2_fixl, x_fig1, media_fig13, p0=[mw, 1, 0.1])
 opt_raw()
 total = popt[1] + popt[2]
-print("LWS: " + str(args.lw) + " nm (fixed) (" + opt_percent(popt, pcov, 1) + ")")
+print("LWS: " + str(lw) + " nm (fixed) (" + opt_percent(popt, pcov, 1) + ")")
 print("MWS: " + opt_nm(popt, pcov) + " (" + opt_percent(popt, pcov, 2) + ")")
 curve = vpt_fit2_fixl(x_1nm, *popt)
 lws = np.empty(401)
 mws = np.empty(401)
 for i in range(401):
-        lws[i] = c.vpt(i + 300, args.lw) * popt[1]
+        lws[i] = c.vpt(i + 300, lw) * popt[1]
         mws[i] = c.vpt(i + 300, popt[0]) * popt[2]
 plt.xlabel("Wavelength (nm)")
 plt.ylabel("Relative sensitivity")
