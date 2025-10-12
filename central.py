@@ -4,17 +4,17 @@ This file contains the following:
 * visual pigments: standard visual pigment template (vpt()) and human cone fundamentals
 * ocular media transmittance for various species
 * blackbody: blackbody()
-* color/brightness analysis: color_contrast(), brightness_contrast() and spectral_rendering()
-* illuminants: D65, E, A, custom incandescent similar to A
+* color/brightness analysis: color_contrast(), brightness_contrast() and spec2rgb()
+* illuminants: D65, E, incandescent (identical to CIE A by default but can be customized)
 * color matching functions
-* Maxwell triangle color space plots
-* color discrimination: color_disc()
+* Maxwell triangle color space plots: triangle()
+* color and brightness discrimination: color_disc() and brightness_disc()
 
 Other stuff has been spun off to the following files, which import this one. I'd like to add additional arguments to those but
 don't see how to do that.
 * erg.py: analysis of ERG data from Jacobs & Williams (2010)
 * illuminants.py: test illuminants
-* step.py: step function spectra
+* optimal.py: optimal colors
 * peak.py: Gaussian peak spectra
 * ramp.py: ramp function spectra
 * sky.py: sky/daylight spectra
@@ -23,6 +23,9 @@ don't see how to do that.
 
 wratten.py and munsell.py just produce plots by default. To see the color rendering and trial modeling, you have to use
 --wratten/--munsell. This is because they also contain other features that are accessed with other arguments (see the list).
+
+The image processing functions that used to be here have also been moved into another file because they
+didn't get along with matplotlib.
 """
 
 # this list doesn't recursively import
@@ -41,6 +44,11 @@ import scipy
 from scipy.stats import binomtest
 import statistics
 from scipy.integrate import quad
+import time
+import csv
+
+# execution time
+start_time = time.time()
 
 # arguments
 # 07/03/2025 -- replaced some default values:
@@ -53,36 +61,41 @@ from scipy.integrate import quad
 # luminosity function, we don't need this.
 # Earlier I also changed the chromatic Weber fraction from the human value of 0.018 to the semi-standard estimate of 0.05
 # because we're not trying to model human color vision with RNL and we're not set up properly for that anyway.
+# 05/10/2025: changed default for lp/mp again based on figures for maximum total cone density of 8000/mm^2
+# (D. virginiana) and S-cone density of 250/mm^2 (D. aurita).
 parser = argparse.ArgumentParser()
-parser.add_argument("-l", "--lw", type=int, default=0, help="longwave cone sensitivity")
-parser.add_argument("-m", "--mw", type=int, default=0, help="mediumwave cone sensitivity")
-parser.add_argument("-s", "--sw", type=int, default=0, help="shortwave cone sensitivity")
-parser.add_argument("--rod", type=int, default=0, help="rod sensitivity")
-parser.add_argument("--weber", type=float, default=0.05, help="Weber fraction for L cones") # formerly 0.018
-parser.add_argument("--weberm", type=float, default=0, help="override Weber fraction for M cones")
-parser.add_argument("--webers", type=float, default=0, help="override Weber fraction for S cones")
-parser.add_argument("--weberb", type=float, default=0.11, help="Weber fraction for brightness")
-parser.add_argument("--lp", type=float, default=10, help="number of L cones per receptive field")
-parser.add_argument("--mp", type=float, default=5, help="number of M cones per receptive field")
-parser.add_argument("--sp", type=float, default=1, help="number of S cones per receptive field")
-parser.add_argument("--media", type=str, default="none", help="ocular media transmittance")
+parser.add_argument("-r", "--receptors", "--target", nargs="+", type=int, default=[562], help="receptor peak sensitivities")
+parser.add_argument("--rod", type=int, default=0, help="rod peak sensitivity")
+parser.add_argument("--weber", type=float, default=0.05, help="base Weber fraction") # formerly 0.018
+parser.add_argument("--weberr2", type=float, default=0, help="override Weber fraction for receptor 2")
+parser.add_argument("--weberr3", type=float, default=0, help="override Weber fraction for receptor 3")
+parser.add_argument("--weberr4", type=float, default=0, help="override Weber fraction for receptor 4")
+parser.add_argument("--weberb", type=float, default=0.11, help="achromatic Weber fraction")
+parser.add_argument("--r1p", type=float, default=31, help="number of receptor 1 per receptive field")
+parser.add_argument("--r2p", type=float, default=1, help="number of receptor 2 per receptive field")
+parser.add_argument("--r3p", type=float, default=1, help="number of receptor 3 per receptive field")
+parser.add_argument("--r4p", type=float, default=1, help="number of receptor 4 per receptive field")
+parser.add_argument("--media", "--filter", type=str, default="none", help="ocular media transmittance")
 parser.add_argument("--qn", help="use quantum noise in color differences", action="store_true")
-parser.add_argument("--ls", type=float, default=1, help="contribution of L cones to spectral sensitivity") # formerly 0.68990272
-parser.add_argument("--ms", type=float, default=0, help="contribution of M cones to spectral sensitivity")
-parser.add_argument("--ss", type=float, default=0, help="contribution of S cones to spectral sensitivity")
-parser.add_argument("--rb", type=float, default=0, help="contribution of rods to spectral sensitivity")
-parser.add_argument("--novk", help="disable von Kries transform", action="store_true")
-parser.add_argument("--luminosity", help="show wavelength with maximum sensitivity", action="store_true")
-parser.add_argument("--white", default="e", help="reference white")
+parser.add_argument("--r1s", type=float, default=1, help="contribution of receptor 1 to spectral sensitivity") # formerly 0.68990272
+parser.add_argument("--rs", type=float, default=0, help="contribution of rods to spectral sensitivity")
+parser.add_argument("--vonkries", help="enable von Kries transform", action="store_true")
+parser.add_argument("--luminosity", help="show spectral sensitivity function", action="store_true")
+parser.add_argument("--white", default="d65", help="set illuminant")
 parser.add_argument("--wratten", help="Kodak Wratten camera filters", action="store_true")
 parser.add_argument("--wv2", help="use tabulated Kodak Wratten data from Kodak Photographic Filters Handbook (1990)", action="store_true")
 parser.add_argument("--wcheck", help="check camera filter brightness matches", action="store_true")
-parser.add_argument("--wopt1", help="test varying rod spectral sensitivity", action="store_true")
-parser.add_argument("--render", help="show colormath spectral rendering for comparison", action="store_true")
+parser.add_argument("--wopt1", help="test varying spectral sensitivity (probability)", action="store_true")
+parser.add_argument("--wopt2", help="test varying spectral sensitivity (order)", action="store_true")
+parser.add_argument("--wopt3", help="test varying spectral sensitivity (contrast)", action="store_true")
 parser.add_argument("--qcheck", help="show absolute quantum catches", action="store_true")
 parser.add_argument("--vpt", help="plot visual pigment templates", action="store_true")
-parser.add_argument("--triangle", help="plot color triangle", action="store_true")
-parser.add_argument("--blackbody", type=int, default=0, help="plot black body curve for a given temperature in Kelvin")
+parser.add_argument("--csplot", "--triangle", nargs="*", help="create a Maxwell-style color space plot")
+parser.add_argument("--r1name", default='L', help="name of receptor 1 (used in triangle/line plots)")
+parser.add_argument("--r2name", default='M', help="name of receptor 2 (used in triangle/line plots)")
+parser.add_argument("--r3name", default='S', help="name of receptor 3 (used in triangle/line plots)")
+parser.add_argument("--fcmode", help="switch default false color mode", default="none")
+parser.add_argument("--blackbody", type=int, default=0, help="test Wratten filters with a specified blackbody temperature")
 parser.add_argument("--munsell", help="Munsell color cards", action="store_true")
 parser.add_argument("--mv2", help="use alternative Munsell spectra", action="store_true")
 parser.add_argument("--mv3", help="use alternative Munsell spectra for <420nm only", action="store_true")
@@ -108,65 +121,64 @@ parser.add_argument("--selfscreen", help="enable pigment self-screening (varying
 parser.add_argument("--selfscreen1", help="enable pigment self-screening (simple version)", action="store_true")
 parser.add_argument("--warnings", help="show warnings", action="store_true")
 parser.add_argument("--cmf", help="color-matching functions", action="store_true")
-parser.add_argument("-r", "--red", type=float, default=700, help="'red' primary")
-parser.add_argument("-g", "--green", type=float, default=546.1, help="'green' primary")
-parser.add_argument("-b", "--blue", type=float, default=435.8, help="'blue' primary")
-parser.add_argument("--q10deg", help="use 10-degree instead of 2-degree cone fundamentals", action="store_true")
-parser.add_argument("--e2deg", help="use 2-degree energy cone fundamentals", action="store_true")
+parser.add_argument("--primaries", nargs="+", type=int, default=[700, 546.1, 435.8, 0, 0], help="primary wavelengths for color-matching functions")
+parser.add_argument("-p", "--preset", help="use specified preset vision system", default="none")
 parser.add_argument("-v", "--verbose", help="", action="store_true")
+parser.add_argument("-i", "--image", help="path to input image")
+parser.add_argument("--source", default="camera", help="source phenotype")
 args = parser.parse_args()
 
-# cone and rod peak sensitivities
-l1 = args.lw
-m1 = args.mw
-s1 = args.sw
+# X values representing wavelengths 300-700 nm, used by multiple functions
+x_10nm = np.empty(41)
+for i in range(41): x_10nm[i] = i*10 + 300
+x_1nm = np.empty(401)
+for i in range(401): x_1nm[i] = i + 300
+
+# receptor peak sensitivities
+receptors = args.receptors
 rod = args.rod
-if (l1 == 0 and m1 != 0):
-	l1 = m1
-if (m1 == 0 and l1 != 0):
-	m1 = l1
-if (s1 == 0 and m1 != 0):
-	s1 = m1
+dimension = len(args.receptors)
 
 # Weber fractions
-wl = args.weber
-wm = wl * math.sqrt(args.lp) / math.sqrt(args.mp)
-ws = wl * math.sqrt(args.lp) / math.sqrt(args.sp)
-if (args.weberm > 0):
-	wm = args.weberm
-if (args.webers > 0):
-	ws = args.webers
+wr1 = args.weber
+wr2 = wr1 * math.sqrt(args.r1p) / math.sqrt(args.r2p)
+wr3 = wr1 * math.sqrt(args.r1p) / math.sqrt(args.r3p)
+wr4 = wr1 * math.sqrt(args.r1p) / math.sqrt(args.r4p)
+if (args.weberr2 > 0): wr2 = args.weberr2
+if (args.weberr3 > 0): ws = args.weberr3
+if (args.weberr4 > 0): ws = args.weberr4
 
-# LMS to XYZ
-lms_to_xyz = np.array([
-	[1.94735469, -1.41445123, 0.36476327],
-	[0.68990272, 0.34832189, 0],
-	[0, 0, 1.93485343]
-])
+# read CSV files
+def csv2spec(filename):
+	if (args.verbose): print("Reading CSV file: " + filename)
+	with open(filename, newline='') as csvfile:
+		reader = csv.DictReader(csvfile, fieldnames=['wl', 'value'])
+		wl = []
+		values = []
+		# This bit uses an exception (can be either ValueError or TypeError) to
+		# ignore headers and other extra text. This kind of thing is considered bad
+		# coding practice but seems to be the only way to get the behavior I want
+		# when reading PlotDigitizer files.
+		for row in reader:
+			try:
+				wl_float = float(row['wl'])
+				value_float = float(row['value'])
+				wl.append(wl_float)
+				values.append(value_float)
+			except:
+				if (args.warnings):
+					print("The following row of " + filename + " was ignored: "
+					+ str(row))
+	return [wl, values]
 
 # types of ocular media
-
-# human lens approximation (Lamb 1995)
-# 21/03/2025 -- optical density uses 10 not e, again.
-# We don't need this for modeling a standard human because we have the CIE luminosity function
-# and human cone fundamentals. I'm only leaving it in for customization.
-def human_filter(w):
-	try:
-		density = 1.1*math.exp((400 - w) / 15) + 0.11*math.exp((500 - w) / 80)
-	except OverflowError:
-		if (args.warnings): print("Warning (template_filter): math overflow, returning 0")
-		return 0
-	if (density < 0):
-		return 0
-	return 10**(-density)
 
 # mouse (Jacobs & Williams 2007)
 # Transmission below 310 nm is not provided and has been set to 0. This means we're effectively
 # only considering wavelengths >=310, but it's easier to keep track of the numbers if they begin
 # with a multiple of 100.
 mouse_lens = np.array([
-	0, # 300
-	0, #309 (this is here so we don't interpolate 301-309)
+	np.nan, # 300 -- prevent interpolation
 	10.3, # 310
 	33.0, # 320
 	44.9, # 330
@@ -209,262 +221,34 @@ mouse_lens = np.array([
 	100.0 # 700
 ])
 
-# Thylamys elegans lens (Palacios et al. 2010, fig. 7)
-# As with the ERG data this is a dot plot, apparently with intervals of 4 nm (but the
-# text says measurements were made every 20 nm). Relative to the value at 700 nm,
-# the 50% transmission wavelength is between 372 and 376.
-thylamys_lens = np.array([
-	[300,1.99085],
-	[303.883,2.84897],
-	[308.091,3.02060],
-	[311.974,3.36384],
-	[316.181,4.56522],
-	[320.065,5.28604],
-	[324.272,6.00687],
-	[328.155,6.76201],
-	[332.362,7.58581],
-	[336.246,8.64989],
-	[340.129,8.68421],
-	[344.337,9.61098],
-	[348.220,10.0915],
-	[352.104,10.7094],
-	[356.311,11.1899],
-	[360.194,12.1167],
-	[364.078,12.2540],
-	[367.961,12.4600],
-	[372.006,12.9405],
-	[376.133,13.3009],
-	[380.016,13.6098],
-	[383.900,14.1505],
-	[388.026,14.4079],
-	[392.152,14.8970],
-	[396.036,14.9485],
-	[399.919,15.2574],
-	[404.045,15.8238],
-	[407.929,15.8753],
-	[412.055,15.9010],
-	[416.181,16.6476],
-	[420.065,17.2912],
-	[423.948,17.7031],
-	[428.074,17.4199],
-	[432.201,17.8061],
-	[436.084,17.8318],
-	[439.968,18.4239],
-	[444.094,18.7843],
-	[447.977,18.8616],
-	[452.104,18.8358],
-	[455.987,18.6556],
-	[460.113,19.0675],
-	[463.997,18.7071],
-	[467.880,18.8873],
-	[472.006,18.9645],
-	[476.133,19.1705],
-	[480.016,19.2477],
-	[484.142,20.6121],
-	[487.783,20.5606],
-	[491.909,20.2002],
-	[496.036,20.2260],
-	[500.162,19.9943],
-	[504.045,20.1745],
-	[507.929,20.5092],
-	[512.055,20.6894],
-	[516.181,20.9468],
-	[520.065,21.1785],
-	[523.948,21.0498],
-	[528.074,22.2855],
-	[531.958,22.1567],
-	[536.084,21.8993],
-	[540.210,22.5429],
-	[544.094,22.5944],
-	[547.977,22.0023],
-	[552.104,21.9251],
-	[555.987,22.0023],
-	[559.871,21.9508],
-	[564.240,22.5686],
-	[568.123,22.4399],
-	[572.006,22.9548],
-	[575.890,22.9805],
-	[580.016,22.5429],
-	[583.900,22.5429],
-	[588.026,22.9548],
-	[591.909,23.0578],
-	[596.278,23.7786],
-	[599.919,23.3410],
-	[604.045,24.1133],
-	[607.929,24.0875],
-	[612.055,23.8816],
-	[616.181,23.4182],
-	[620.065,23.5984],
-	[624.191,23.9331],
-	[628.074,24.1648],
-	[632.201,24.1133],
-	[636.084,24.3192],
-	[639.968,24.2162],
-	[644.094,24.1905],
-	[647.977,24.3192],
-	[651.618,24.6281],
-	[655.744,24.9113],
-	[659.871,25.4519],
-	[663.754,24.7569],
-	[667.880,24.8341],
-	[672.006,24.9113],
-	[675.890,24.9886],
-	[679.773,25.2975],
-	[683.900,24.8084],
-	[688.026,25.0915],
-	[691.909,25.1430],
-	[696.036,25.7094],
-	[700.162,26.4302],
-])
-
-# brushtail possum whole eye (Vlahos 2012, fig. II.7)
-# This is slightly different from the transmission curve for just the lens. I didn't
-# use that because they overlap in the graph and the whole eye curve (blue) is
-# on top. Since it's a continuous curve rather than a dot plot, I again made the
-# arbitrary choice to sample it at 5-nm intervals. The wavelength of 50% transmission
-# is at about 370, as reported.
-brushtail_eye = np.array([
-	[300.000,0.330716],
-	[305.186,0.800026],
-	[310.084,2.35957],
-	[314.881,6.87857],
-	[319.678,11.0341],
-	[325.246,13.7362],
-	[330.431,15.8151],
-	[334.847,17.7898],
-	[340.223,20.3879],
-	[345.405,24.3359],
-	[349.243,27.3489],
-	[354.615,33.1661],
-	[360.178,39.3988],
-	[365.358,45.4237],
-	[369.960,51.8637],
-	[375.330,59.1347],
-	[380.317,65.1595],
-	[385.304,70.8728],
-	[389.717,75.3397],
-	[394.708,78.5608],
-	[399.892,81.5742],
-	[405.460,83.8609],
-	[410.453,85.4205],
-	[415.062,86.7722],
-	[420.440,88.2281],
-	[425.241,89.3723],
-	[429.659,90.5163],
-	[435.037,91.3491],
-	[439.839,91.7663],
-	[445.410,92.1839],
-	[450.022,91.9780],
-	[455.211,90.8377],
-	[459.631,89.6972],
-	[464.628,88.4530],
-	[470.394,86.7938],
-	[475.390,86.0688],
-	[480.001,85.5514],
-	[484.805,85.1379],
-	[490.186,84.3093],
-	[495.181,83.9997],
-	[499.984,84.5208],
-	[504.978,85.0419],
-	[510.357,85.5632],
-	[515.160,85.8766],
-	[519.770,86.2938],
-	[524.572,87.0226],
-	[529.950,87.8554],
-	[535.136,88.9997],
-	[540.322,90.0401],
-	[544.548,90.8725],
-	[549.925,92.2246],
-	[554.727,92.9533],
-	[559.914,93.6822],
-	[565.292,94.5151],
-	[570.286,95.2439],
-	[574.704,95.9725],
-	[579.699,96.3898],
-	[585.078,96.9111],
-	[590.457,96.7056],
-	[594.876,96.9150],
-	[599.678,97.3322],
-	[604.865,97.6457],
-	[610.244,97.8555],
-	[615.240,97.9613],
-	[620.234,98.1709],
-	[625.229,98.2767],
-	[630.225,98.1748],
-	[635.220,98.3845],
-	[640.407,98.3865],
-	[644.633,98.6997],
-	[650.013,98.7018],
-	[655.007,99.1191],
-	[660.002,99.4325],
-	[665.382,99.1231],
-	[669.801,99.1248],
-	[675.180,99.3346],
-	[680.175,99.3365],
-	[685.170,99.5462],
-	[690.165,99.7558],
-	[695.353,99.5501],
-	[700.156,99.6559],
-])
-
-# separate X and Y values
-thylamys_x = np.empty(thylamys_lens.shape[0])
-thylamys_y = np.empty(thylamys_lens.shape[0])
-for i in range(thylamys_lens.shape[0]):
-	thylamys_x[i] = round(thylamys_lens[i][0]) # again, dot plot
-	thylamys_y[i] = thylamys_lens[i][1]
-brushtail_x = np.empty(brushtail_eye.shape[0])
-brushtail_y = np.empty(brushtail_eye.shape[0])
-for i in range(brushtail_eye.shape[0]):
-	brushtail_x[i] = brushtail_eye[i][0] # not a dot plot
-	brushtail_y[i] = brushtail_eye[i][1]
-# special case for mouse
-mouse_x = np.empty(42)
-mouse_x[0] = 300
-mouse_x[1] = 309
-for i in range(2, 42): mouse_x[i] = (i-1)*10 + 300
-
-# interpolate
-x_10nm = np.empty(41)
-for i in range(41): x_10nm[i] = i*10 + 300
-x_1nm = np.empty(401)
-for i in range(401): x_1nm[i] = i + 300
-
 # divide by 100
 mouse_lens = mouse_lens / 100
-brushtail_y = brushtail_y / 100
-
-# 10-nm intervals
-mouse_10nm = np.empty(41)
-mouse_10nm[0] == 0
-for i in range(1, 41): mouse_10nm[i] = mouse_lens[i+1] # remove the extra 0 at 309
-thylamys_10nm = np.interp(x_10nm, thylamys_x, thylamys_y)
-thylamys_10nm = thylamys_10nm / thylamys_10nm[40] # value at 700 nm
-brushtail_10nm = np.interp(x_10nm, brushtail_x, brushtail_y)
 
 # 1-nm intervals
-mouse_1nm = np.interp(x_1nm, mouse_x, mouse_lens)
-thylamys_1nm = np.interp(x_1nm, thylamys_x, thylamys_y)
-thylamys_1nm = thylamys_1nm / thylamys_1nm[400] # value at 700 nm
-brushtail_1nm = np.interp(x_1nm, brushtail_x, brushtail_y)
+mouse_1nm = np.interp(x_1nm, x_10nm, mouse_lens)
+for i in range(mouse_1nm.shape[0]):
+	if (np.isnan(mouse_1nm[i])): mouse_1nm[i] = 0 # remove nans
 
-def ocular_media(w):
-	if (args.media == "human"): return human_filter(w)
-	elif (args.media == "mouse"):
-		w = round(w)
-		return mouse_1nm[w-300]
-	elif (args.media == "thylamys" or args.media == "opossum"):
-		w = round(w)
-		return thylamys_1nm[w-300]
-	elif (args.media == "brushtail"):
-		w = round(w)
-		return brushtail_1nm[w-300]
-	return 1
+# 10-nm intervals
+mouse_10nm = mouse_lens
+mouse_10nm[0] = 0 # remove nan
 
-# relative wavelength sensitivity
-def sensitivity(w, l=l1, m=m1, s=s1):
-	if (args.media == "human2"): return luminosity[w-300]
-	return (args.ls*vpt(w, l) + args.ms*vpt(w, m) + args.ss*vpt(w, s) + args.rb*vpt(w, rod)) * ocular_media(w)
+# choose media type
+if (args.media == "none"):
+	media_1nm = np.ones(401)
+	media_10nm = np.ones(41)
+elif (args.media == "mouse"):
+	media_1nm = mouse_1nm
+	media_10nm = mouse_10nm
+else:
+	wl, values = csv2spec(args.media)
+
+	media_10nm = np.interp(x_10nm, wl, values)
+	media_1nm = np.interp(x_1nm, wl, values)
+	
+	# set to 1 at 700 nm
+	media_10nm = media_10nm / media_10nm[40]
+	media_1nm = media_1nm / media_1nm[400]
 
 # black body -- SI units, returns energy in joules/m^2/nm/sec/steradian = watts/m^2/nm/steradian
 # The "1e-9" converts from meters to nanometers, as this is not cubic meters but "per
@@ -482,10 +266,6 @@ def blackbody(w, t):
 		if (args.warnings): print("Warning (blackbody): math overflow, returning 1")
 		return 1
 	return value
-
-# normal distribution
-def normal(mu, std_dev, x):
-	return (1 / std_dev*math.sqrt(2*math.pi)) * math.exp((-1/2)*((x - mu)/std_dev)**2)
 
 # illuminants
 
@@ -1024,41 +804,31 @@ d65_1nm = np.array([
 	60.3125
 ])
 
-d65 = np.zeros(41)
-for i in range(0, 41):
-	d65[i] = d65_1nm[i*10]
-	#print(d65[i])
+d65_10nm = np.empty(41)
+for i in range(41): d65_10nm[i] = d65_1nm[i*10]
 
-e = np.empty(41)
-for i in range(0, 41):
-	e[i] = 100
-e_1nm = np.empty(401)
-for i in range(0, 401):
-	e_1nm[i] = 100
-
-a = np.zeros(41)
-for i in range(4, 41):
-	a[i] = spectral_constants.REF_ILLUM_TABLE["a"][i-4]
+e_10nm = np.full(41, 100)
+e_1nm = np.full(401, 100)
 
 # incandescent lighting with specified color temperature
-incandescent = np.empty(41)
-for i in range(0, 41):
+incandescent_10nm = np.empty(41)
+for i in range(41):
 	w = i*10 + 300
-	# normalize to 100% at 560 nm
-	incandescent[i] = 100*blackbody(w, args.ct) / blackbody(560, args.ct)
+	incandescent_10nm[i] = blackbody(w, args.ct)
+incandescent_10nm = 100*incandescent_10nm / max(*incandescent_10nm) # 0-100
 # 1-nm resolution
 incandescent_1nm = np.empty(401)
 for i in range(401):
 	w = i + 300
-	# normalize to 100% at 560 nm
-	incandescent_1nm[i] = 100*blackbody(w, args.ct) / blackbody(560, args.ct)
+	incandescent_1nm[i] = blackbody(w, args.ct)
+incandescent_1nm = 100*incandescent_1nm / max(*incandescent_1nm) # 0-100
 
 # absolute number of photons
 # Since the output of blackbody() is joules/m^3/sec/sr, this should be photons/m^3/sec/sr.
 # I think what we really want is square meters. (No, the meters cancel, see the quantum
 # noise calculations)
 # Changing this to 1-nm intervals because 10-nm isn't very useful.
-ia = np.empty(501)
+incandescent_photons = np.empty(501)
 # scale it down to what amount of energy would be produced by the specified number of
 # watts
 
@@ -1072,10 +842,8 @@ energy = sigma * args.ct**4 #/ math.pi
 # then find the radiance we "should" have in terms of the sphere corresponding to
 # the distance we chose
 sphere_area = 4*math.pi*args.dist**2 # sphere surface area
-if (args.height > 0):
-	area = args.width * args.height
-else:
-	area = math.pi*(args.width/2)**2
+if (args.height > 0): area = args.width * args.height
+else: area = math.pi*(args.width/2)**2
 # steradians -- not divided by the whole sphere surface area, just the square of the radius
 sr = area / args.dist**2
 watts_cm2 = args.watts / (sphere_area)
@@ -1086,8 +854,593 @@ scale = watts_m2 / energy # scaling factor -- units should cancel (W/m^2)
 
 for i in range(501):
 	w = i + 300 # nanometers
-	ia[i] = scale*1e-9*w*blackbody(w, args.ct) / (h*c) # meters * joules/m^2/nm/sec/sr / joule*sec * m/s
-	#print(ia[i])
+	incandescent_photons[i] = scale*1e-9*w*blackbody(w, args.ct) / (h*c) # meters * joules/m^2/nm/sec/sr / joule*sec * m/s
+
+# absolute number of photons, part 2: scaling D65 to a specified value in lux
+# For values not included in Python's D65, we approximate this with a black body with
+# temperature 6504 K. (Never mind, I found the real thing)
+
+# human photopic luminosity function (2019 CIE standard)
+# No values are provided below 360 nm, so we assume 0.
+cie_luminosity = np.array([
+	0, # 300
+	0,
+	0,
+	0,
+	0,
+	0, # 305
+	0,
+	0,
+	0,
+	0,
+	0, # 310
+	0,
+	0,
+	0,
+	0,
+	0, # 315
+	0,
+	0,
+	0,
+	0,
+	0, # 320
+	0,
+	0,
+	0,
+	0,
+	0, # 325
+	0,
+	0,
+	0,
+	0,
+	0, # 330
+	0,
+	0,
+	0,
+	0,
+	0, # 335
+	0,
+	0,
+	0,
+	0,
+	0, # 340
+	0,
+	0,
+	0,
+	0,
+	0, # 345
+	0,
+	0,
+	0,
+	0,
+	0, # 350
+	0,
+	0,
+	0,
+	0,
+	0, # 355
+	0,
+	0,
+	0,
+	0,
+	0.000003917, # 360
+	0.000004393581,
+	0.000004929604,
+	0.000005532136,
+	0.000006208245,
+	0.000006965, # 365
+	0.000007813219,
+	0.000008767336,
+	0.000009839844,
+	0.00001104323,
+	0.00001239, # 370
+	0.00001388641,
+	0.00001555728,
+	0.00001744296,
+	0.00001958375,
+	0.00002202, # 375
+	0.00002483965,
+	0.00002804126,
+	0.00003153104,
+	0.00003521521,
+	0.000039, # 380
+	0.0000428264,
+	0.0000469146,
+	0.0000515896,
+	0.0000571764,
+	0.000064, # 385
+	0.00007234421,
+	0.00008221224,
+	0.00009350816,
+	0.0001061361,
+	0.00012, # 390
+	0.000134984,
+	0.000151492,
+	0.000170208,
+	0.000191816,
+	0.000217, # 395
+	0.0002469067,
+	0.00028124,
+	0.00031852,
+	0.0003572667,
+	0.000396, # 400
+	0.0004337147,
+	0.000473024,
+	0.000517876,
+	0.0005722187,
+	0.00064, # 405
+	0.00072456,
+	0.0008255,
+	0.00094116,
+	0.00106988,
+	0.00121, # 410
+	0.001362091,
+	0.001530752,
+	0.001720368,
+	0.001935323,
+	0.00218, # 415
+	0.0024548,
+	0.002764,
+	0.0031178,
+	0.0035264,
+	0.004, # 420
+	0.00454624,
+	0.00515932,
+	0.00582928,
+	0.00654616,
+	0.0073, # 425
+	0.008086507,
+	0.00890872,
+	0.00976768,
+	0.01066443,
+	0.0116, # 430
+	0.01257317,
+	0.01358272,
+	0.01462968,
+	0.01571509,
+	0.01684, # 435
+	0.01800736,
+	0.01921448,
+	0.02045392,
+	0.02171824,
+	0.023, # 440
+	0.02429461,
+	0.02561024,
+	0.02695857,
+	0.02835125,
+	0.0298, # 445
+	0.03131083,
+	0.03288368,
+	0.03452112,
+	0.03622571,
+	0.038, # 450
+	0.03984667,
+	0.041768,
+	0.043766,
+	0.04584267,
+	0.048, # 455
+	0.05024368,
+	0.05257304,
+	0.05498056,
+	0.05745872,
+	0.06, # 460
+	0.06260197,
+	0.06527752,
+	0.06804208,
+	0.07091109,
+	0.0739, # 465
+	0.077016,
+	0.0802664,
+	0.0836668,
+	0.0872328,
+	0.09098, # 470
+	0.09491755,
+	0.09904584,
+	0.1033674,
+	0.1078846,
+	0.1126, # 475
+	0.117532,
+	0.1226744,
+	0.1279928,
+	0.1334528,
+	0.13902, # 480
+	0.1446764,
+	0.1504693,
+	0.1564619,
+	0.1627177,
+	0.1693, # 485
+	0.1762431,
+	0.1835581,
+	0.1912735,
+	0.199418,
+	0.20802, # 490
+	0.2171199,
+	0.2267345,
+	0.2368571,
+	0.2474812,
+	0.2586, # 495
+	0.2701849,
+	0.2822939,
+	0.2950505,
+	0.308578,
+	0.323, # 500
+	0.3384021,
+	0.3546858,
+	0.3716986,
+	0.3892875,
+	0.4073, # 505
+	0.4256299,
+	0.4443096,
+	0.4633944,
+	0.4829395,
+	0.503, # 510
+	0.5235693,
+	0.544512,
+	0.56569,
+	0.5869653,
+	0.6082, # 515
+	0.6293456,
+	0.6503068,
+	0.6708752,
+	0.6908424,
+	0.71, # 520
+	0.7281852,
+	0.7454636,
+	0.7619694,
+	0.7778368,
+	0.7932, # 525
+	0.8081104,
+	0.8224962,
+	0.8363068,
+	0.8494916,
+	0.862, # 530
+	0.8738108,
+	0.8849624,
+	0.8954936,
+	0.9054432,
+	0.9148501, # 535
+	0.9237348,
+	0.9320924,
+	0.9399226,
+	0.9472252,
+	0.954, # 540
+	0.9602561,
+	0.9660074,
+	0.9712606,
+	0.9760225,
+	0.9803, # 545
+	0.9840924,
+	0.9874182,
+	0.9903128,
+	0.9928116,
+	0.9949501, # 550
+	0.9967108,
+	0.9980983,
+	0.999112,
+	0.9997482,
+	1, # 555
+	0.9998567,
+	0.9993046,
+	0.9983255,
+	0.9968987,
+	0.995, # 560
+	0.9926005,
+	0.9897426,
+	0.9864444,
+	0.9827241,
+	0.9786, # 565
+	0.9740837,
+	0.9691712,
+	0.9638568,
+	0.9581349,
+	0.952, # 570
+	0.9454504,
+	0.9384992,
+	0.9311628,
+	0.9234576,
+	0.9154, # 575
+	0.9070064,
+	0.8982772,
+	0.8892048,
+	0.8797816,
+	0.87, # 580
+	0.8598613,
+	0.849392,
+	0.838622,
+	0.8275813,
+	0.8163, # 585
+	0.8047947,
+	0.793082,
+	0.781192,
+	0.7691547,
+	0.757, # 590
+	0.7447541,
+	0.7324224,
+	0.7200036,
+	0.7074965,
+	0.6949, # 595
+	0.6822192,
+	0.6694716,
+	0.6566744,
+	0.6438448,
+	0.631, # 600
+	0.6181555,
+	0.6053144,
+	0.5924756,
+	0.5796379,
+	0.5668, # 605
+	0.5539611,
+	0.5411372,
+	0.5283528,
+	0.5156323,
+	0.503, # 610
+	0.4904688,
+	0.4780304,
+	0.4656776,
+	0.4534032,
+	0.4412, # 615
+	0.42908,
+	0.417036,
+	0.405032,
+	0.393032,
+	0.381, # 620
+	0.3689184,
+	0.3568272,
+	0.3447768,
+	0.3328176,
+	0.321, # 625
+	0.3093381,
+	0.2978504,
+	0.2865936,
+	0.2756245,
+	0.265, # 630
+	0.2547632,
+	0.2448896,
+	0.2353344,
+	0.2260528,
+	0.217, # 635
+	0.2081616,
+	0.1995488,
+	0.1911552,
+	0.1829744,
+	0.175, # 640
+	0.1672235,
+	0.1596464,
+	0.1522776,
+	0.1451259,
+	0.1382, # 645
+	0.1315003,
+	0.1250248,
+	0.1187792,
+	0.1127691,
+	0.107, # 650
+	0.1014762,
+	0.09618864,
+	0.09112296,
+	0.08626485,
+	0.0816, # 655
+	0.07712064,
+	0.07282552,
+	0.06871008,
+	0.06476976,
+	0.061, # 660
+	0.05739621,
+	0.05395504,
+	0.05067376,
+	0.04754965,
+	0.04458, # 665
+	0.04175872,
+	0.03908496,
+	0.03656384,
+	0.03420048,
+	0.032, # 670
+	0.02996261,
+	0.02807664,
+	0.02632936,
+	0.02470805,
+	0.0232, # 675
+	0.02180077,
+	0.02050112,
+	0.01928108,
+	0.01812069,
+	0.017, # 680
+	0.01590379,
+	0.01483718,
+	0.01381068,
+	0.01283478,
+	0.01192, # 685
+	0.01106831,
+	0.01027339,
+	0.009533311,
+	0.008846157,
+	0.00821, # 690
+	0.007623781,
+	0.007085424,
+	0.006591476,
+	0.006138485,
+	0.005723, # 695
+	0.005343059,
+	0.004995796,
+	0.004676404,
+	0.004380075,
+	0.004102, # 700
+	0.003838453,
+	0.003589099,
+	0.003354219,
+	0.003134093,
+	0.002929, # 705
+	0.002738139,
+	0.002559876,
+	0.002393244,
+	0.002237275,
+	0.002091, # 710
+	0.001953587,
+	0.00182458,
+	0.00170358,
+	0.001590187,
+	0.001484, # 715
+	0.001384496,
+	0.001291268,
+	0.001204092,
+	0.001122744,
+	0.001047, # 720
+	0.0009765896,
+	0.0009111088,
+	0.0008501332,
+	0.0007932384,
+	0.00074, # 725
+	0.0006900827,
+	0.00064331,
+	0.000599496,
+	0.0005584547,
+	0.00052, # 730
+	0.0004839136,
+	0.0004500528,
+	0.0004183452,
+	0.0003887184,
+	0.0003611, # 735
+	0.0003353835,
+	0.0003114404,
+	0.0002891656,
+	0.0002684539,
+	0.0002492, # 740
+	0.0002313019,
+	0.0002146856,
+	0.0001992884,
+	0.0001850475,
+	0.0001719, # 745
+	0.0001597781,
+	0.0001486044,
+	0.0001383016,
+	0.0001287925,
+	0.00012, # 750
+	0.0001118595,
+	0.0001043224,
+	0.0000973356,
+	0.00009084587,
+	0.0000848, # 755
+	0.00007914667,
+	0.000073858,
+	0.000068916,
+	0.00006430267,
+	0.00006, # 760
+	0.00005598187,
+	0.0000522256,
+	0.0000487184,
+	0.00004544747,
+	0.0000424, # 765
+	0.00003956104,
+	0.00003691512,
+	0.00003444868,
+	0.00003214816,
+	0.00003, # 770
+	0.00002799125,
+	0.00002611356,
+	0.00002436024,
+	0.00002272461,
+	0.0000212, # 775
+	0.00001977855,
+	0.00001845285,
+	0.00001721687,
+	0.00001606459,
+	0.00001499, # 780
+	0.00001398728,
+	0.00001305155,
+	0.00001217818,
+	0.00001136254,
+	0.0000106, # 785
+	0.000009885877,
+	0.000009217304,
+	0.000008592362,
+	0.000008009133,
+	0.0000074657, # 790
+	0.000006959567,
+	0.000006487995,
+	0.000006048699,
+	0.000005639396,
+	0.0000052578, # 795
+	0.000004901771,
+	0.00000456972,
+	0.000004260194,
+	0.000003971739,
+	0.0000037029, # 800
+	0.000003452163,
+	0.000003218302,
+	0.0000030003,
+	0.000002797139,
+	0.0000026078, # 805
+	0.00000243122,
+	0.000002266531,
+	0.000002113013,
+	0.000001969943,
+	0.0000018366, # 810
+	0.00000171223,
+	0.000001596228,
+	0.00000148809,
+	0.000001387314,
+	0.0000012934, # 815
+	0.00000120582,
+	0.000001124143,
+	0.000001048009,
+	0.0000009770578,
+	0.00000091093, # 820
+	0.0000008492513,
+	0.0000007917212,
+	0.0000007380904,
+	0.0000006881098,
+	0.00000064153, # 825
+	0.0000005980895,
+	0.0000005575746,
+	0.000000519808,
+	0.0000004846123,
+	0.00000045181 # 830
+])
+
+# integral of D65 x human photopic luminosity function (we hardcode this instead of using
+# sensitivity() because that varies with settings for the specified species)
+# The units we want at the end are W/m^2, so we multiply this by the lux-to-watts scaling
+# factor for 555 nm (683.002 lm/W). This will end up on the bottom.
+integral = sum(d65_1nm * cie_luminosity) * 683.002
+
+# lux scaling factor (units = lx / lx/nm = nm)
+lxscale = args.lux / integral
+#print(lxscale)
+
+# scaled version (W/m^2 * m / joule*sec * m/s * nm = joule/sec/m^2 * m / joule/sec * m/s * nm * sr)
+# Per nm is implied. The values we just found do not include steradians (probably), so we divide
+# by the sr value we found earlier. (No we don't)
+# Also changing this to 1 nm.
+d65_photons = np.empty(531)
+for i in range(d65_photons.shape[0]):
+	w = i + 300
+	d65_photons[i] = lxscale*1e-9*w*d65_1nm[i] / (h*c*math.pi)
+
+e_photons = np.empty(531)
+for i in range(e_photons.shape[0]):
+	w = i + 300
+	e_photons[i] = lxscale*1e-9*w*100 / (h*c*math.pi)
+
+# white point
+# Selecting the absolute number of photons is now done here to avoid going through an if statement
+# every time color_contrast() is run.
+if (args.white == "d65"):
+	wp_10nm = d65_10nm
+	wp_1nm = np.empty(401)
+	for i in range(401): wp_1nm[i] = d65_1nm[i]
+	wp_photons = d65_photons
+elif (args.white == "e"):
+	wp_10nm = e_10nm
+	wp_1nm = e_1nm
+	wp_photons = e_photons
+elif (args.white == "a" or args.white == "i"):
+	wp_10nm = incandescent_10nm
+	wp_1nm = incandescent_1nm
+	wp_photons = incandescent_photons
+# custom illuminant
+else:
+	wl, values = csv2spec(args.white)
+	wp_10nm = np.interp(x_10nm, wl, values)
+	wp_1nm = np.interp(x_1nm, wl, values)
 
 # 2-deg quantal human cone fundamentals -- http://www.cvrl.org/cones.htm
 # Negative infinities (log(0)) were inserted for consistent array length.
@@ -1980,477 +2333,11 @@ hcf10deg = np.array([
 	[830,  -6.22470,  -7.25737,  -float('inf')]
 ])
 
-# 2-deg energy
-hcfe2deg = np.array([
-	[390,  -3.38195,  -3.43374,  -2.02012],
-	[391,  -3.29873,  -3.34871,  -1.94008],
-	[392,  -3.21655,  -3.26443,  -1.86017],
-	[393,  -3.13558,  -3.18113,  -1.78056],
-	[394,  -3.05601,  -3.09902,  -1.70143],
-	[395,  -2.97802,  -3.01834,  -1.62297],
-	[396,  -2.90179,  -2.93929,  -1.54534],
-	[397,  -2.82753,  -2.86212,  -1.46874],
-	[398,  -2.75539,  -2.78703,  -1.39332],
-	[399,  -2.68558,  -2.71424,  -1.31929],
-	[400,  -2.61828,  -2.64399,  -1.24680],
-	[401,  -2.55358,  -2.57641,  -1.17603],
-	[402,  -2.49128,  -2.51129,  -1.10708],
-	[403,  -2.43107,  -2.44836,  -1.04004],
-	[404,  -2.37266,  -2.38732,  -0.97500],
-	[405,  -2.31575,  -2.32789,  -0.91204],
-	[406,  -2.26016,  -2.26988,  -0.85126],
-	[407,  -2.20626,  -2.21342,  -0.79280],
-	[408,  -2.15451,  -2.15877,  -0.73678],
-	[409,  -2.10541,  -2.10616,  -0.68334],
-	[410,  -2.05942,  -2.05583,  -0.63263],
-	[411,  -2.01688,  -2.00795,  -0.58472],
-	[412,  -1.97747,  -1.96240,  -0.53952],
-	[413,  -1.94074,  -1.91898,  -0.49687],
-	[414,  -1.90621,  -1.87751,  -0.45664],
-	[415,  -1.87342,  -1.83780,  -0.41866],
-	[416,  -1.84203,  -1.79970,  -0.38285],
-	[417,  -1.81215,  -1.76322,  -0.34935],
-	[418,  -1.78403,  -1.72844,  -0.31836],
-	[419,  -1.75792,  -1.69543,  -0.29008],
-	[420,  -1.73405,  -1.66424,  -0.26471],
-	[421,  -1.71253,  -1.63489,  -0.24230],
-	[422,  -1.69291,  -1.60706,  -0.22237],
-	[423,  -1.67460,  -1.58040,  -0.20427],
-	[424,  -1.65701,  -1.55454,  -0.18737],
-	[425,  -1.63956,  -1.52913,  -0.17103],
-	[426,  -1.62179,  -1.50385,  -0.15479],
-	[427,  -1.60375,  -1.47866,  -0.13879],
-	[428,  -1.58564,  -1.45359,  -0.12336],
-	[429,  -1.56764,  -1.42866,  -0.10883],
-	[430,  -1.54994,  -1.40388,  -0.09553],
-	[431,  -1.53268,  -1.37930,  -0.08364],
-	[432,  -1.51585,  -1.35503,  -0.07293],
-	[433,  -1.49936,  -1.33121,  -0.06300],
-	[434,  -1.48316,  -1.30799,  -0.05350],
-	[435,  -1.46718,  -1.28550,  -0.04404],
-	[436,  -1.45140,  -1.26389,  -0.03440],
-	[437,  -1.43604,  -1.24326,  -0.02500],
-	[438,  -1.42137,  -1.22376,  -0.01641],
-	[439,  -1.40766,  -1.20549,  -0.00919],
-	[440,  -1.39517,  -1.18857,  -0.00392],
-	[441,  -1.38406,  -1.17306,  -0.00097],
-	[442,  -1.37409,  -1.15874,  -0.00001],
-	[443,  -1.36489,  -1.14529,  -0.00049],
-	[444,  -1.35611,  -1.13244,  -0.00190],
-	[445,  -1.34739,  -1.11987,  -0.00370],
-	[446,  -1.33844,  -1.10736,  -0.00552],
-	[447,  -1.32933,  -1.09499,  -0.00761],
-	[448,  -1.32017,  -1.08292,  -0.01042],
-	[449,  -1.31109,  -1.07127,  -0.01434],
-	[450,  -1.30221,  -1.06022,  -0.01982],
-	[451,  -1.29361,  -1.04981,  -0.02710],
-	[452,  -1.28506,  -1.03976,  -0.03583],
-	[453,  -1.27628,  -1.02968,  -0.04547],
-	[454,  -1.26701,  -1.01919,  -0.05550],
-	[455,  -1.25695,  -1.00792,  -0.06538],
-	[456,  -1.24585,  -0.99554,  -0.07467],
-	[457,  -1.23361,  -0.98201,  -0.08325],
-	[458,  -1.22011,  -0.96732,  -0.09105],
-	[459,  -1.20527,  -0.95149,  -0.09805],
-	[460,  -1.18899,  -0.93452,  -0.10419],
-	[461,  -1.17126,  -0.91648,  -0.10951],
-	[462,  -1.15240,  -0.89766,  -0.11443],
-	[463,  -1.13283,  -0.87841,  -0.11945],
-	[464,  -1.11296,  -0.85907,  -0.12507],
-	[465,  -1.09318,  -0.84001,  -0.13179],
-	[466,  -1.07386,  -0.82152,  -0.14003],
-	[467,  -1.05507,  -0.80370,  -0.14990],
-	[468,  -1.03686,  -0.78660,  -0.16142],
-	[469,  -1.01925,  -0.77026,  -0.17462],
-	[470,  -1.00228,  -0.75475,  -0.18953],
-	[471,  -0.98596,  -0.74008,  -0.20613],
-	[472,  -0.97020,  -0.72614,  -0.22432],
-	[473,  -0.95488,  -0.71280,  -0.24396],
-	[474,  -0.93991,  -0.69993,  -0.26490],
-	[475,  -0.92518,  -0.68740,  -0.28700],
-	[476,  -0.91058,  -0.67510,  -0.31012],
-	[477,  -0.89611,  -0.66297,  -0.33404],
-	[478,  -0.88176,  -0.65102,  -0.35856],
-	[479,  -0.86753,  -0.63921,  -0.38347],
-	[480,  -0.85342,  -0.62754,  -0.40856],
-	[481,  -0.83944,  -0.61599,  -0.43369],
-	[482,  -0.82560,  -0.60459,  -0.45894],
-	[483,  -0.81195,  -0.59340,  -0.48449],
-	[484,  -0.79850,  -0.58244,  -0.51050],
-	[485,  -0.78528,  -0.57176,  -0.53712],
-	[486,  -0.77229,  -0.56136,  -0.56443],
-	[487,  -0.75929,  -0.55102,  -0.59215],
-	[488,  -0.74604,  -0.54046,  -0.61989],
-	[489,  -0.73226,  -0.52943,  -0.64728],
-	[490,  -0.71770,  -0.51766,  -0.67394],
-	[491,  -0.70217,  -0.50494,  -0.69958],
-	[492,  -0.68575,  -0.49138,  -0.72429],
-	[493,  -0.66860,  -0.47714,  -0.74822],
-	[494,  -0.65089,  -0.46238,  -0.77156],
-	[495,  -0.63278,  -0.44726,  -0.79446],
-	[496,  -0.61441,  -0.43192,  -0.81711],
-	[497,  -0.59582,  -0.41640,  -0.83977],
-	[498,  -0.57707,  -0.40070,  -0.86273],
-	[499,  -0.55817,  -0.38483,  -0.88627],
-	[500,  -0.53916,  -0.36880,  -0.91066],
-	[501,  -0.52009,  -0.35262,  -0.93617],
-	[502,  -0.50099,  -0.33635,  -0.96288],
-	[503,  -0.48192,  -0.32006,  -0.99090],
-	[504,  -0.46292,  -0.30382,  -1.02028],
-	[505,  -0.44404,  -0.28770,  -1.05112],
-	[506,  -0.42533,  -0.27175,  -1.08337],
-	[507,  -0.40683,  -0.25604,  -1.11656],
-	[508,  -0.38857,  -0.24060,  -1.15011],
-	[509,  -0.37059,  -0.22549,  -1.18343],
-	[510,  -0.35293,  -0.21076,  -1.21595],
-	[511,  -0.33561,  -0.19643,  -1.24725],
-	[512,  -0.31867,  -0.18252,  -1.27765],
-	[513,  -0.30215,  -0.16901,  -1.30765],
-	[514,  -0.28606,  -0.15590,  -1.33774],
-	[515,  -0.27044,  -0.14318,  -1.36843],
-	[516,  -0.25532,  -0.13086,  -1.40010],
-	[517,  -0.24080,  -0.11905,  -1.43271],
-	[518,  -0.22695,  -0.10788,  -1.46609],
-	[519,  -0.21387,  -0.09749,  -1.50010],
-	[520,  -0.20165,  -0.08799,  -1.53457],
-	[521,  -0.19035,  -0.07947,  -1.56938],
-	[522,  -0.17986,  -0.07183,  -1.60454],
-	[523,  -0.17006,  -0.06494,  -1.64008],
-	[524,  -0.16081,  -0.05864,  -1.67602],
-	[525,  -0.15198,  -0.05279,  -1.71240],
-	[526,  -0.14348,  -0.04727,  -1.74923],
-	[527,  -0.13530,  -0.04209,  -1.78644],
-	[528,  -0.12749,  -0.03727,  -1.82397],
-	[529,  -0.12010,  -0.03286,  -1.86171],
-	[530,  -0.11315,  -0.02887,  -1.89959],
-	[531,  -0.10668,  -0.02532,  -1.93755],
-	[532,  -0.10057,  -0.02214,  -1.97565],
-	[533,  -0.09470,  -0.01921,  -2.01400],
-	[534,  -0.08894,  -0.01644,  -2.05269],
-	[535,  -0.08317,  -0.01374,  -2.09181],
-	[536,  -0.07730,  -0.01103,  -2.13142],
-	[537,  -0.07143,  -0.00840,  -2.17147],
-	[538,  -0.06567,  -0.00595,  -2.21187],
-	[539,  -0.06015,  -0.00381,  -2.25253],
-	[540,  -0.05502,  -0.00208,  -2.29337],
-	[541,  -0.05037,  -0.00087,  -2.33431],
-	[542,  -0.04622,  -0.00018,  -2.37534],
-	[543,  -0.04255,  -0.00001,  -2.41648],
-	[544,  -0.03937,  -0.00036,  -2.45772],
-	[545,  -0.03665,  -0.00122,  -2.49909],
-	[546,  -0.03438,  -0.00257,  -2.54058],
-	[547,  -0.03241,  -0.00428,  -2.58220],
-	[548,  -0.03059,  -0.00619,  -2.62397],
-	[549,  -0.02876,  -0.00815,  -2.66589],
-	[550,  -0.02678,  -0.01002,  -2.70798],
-	[551,  -0.02453,  -0.01169,  -2.75022],
-	[552,  -0.02211,  -0.01328,  -2.79259],
-	[553,  -0.01964,  -0.01496,  -2.83501],
-	[554,  -0.01728,  -0.01690,  -2.87744],
-	[555,  -0.01514,  -0.01928,  -2.91982],
-	[556,  -0.01334,  -0.02220,  -2.96210],
-	[557,  -0.01183,  -0.02559,  -3.00431],
-	[558,  -0.01051,  -0.02932,  -3.04645],
-	[559,  -0.00931,  -0.03326,  -3.08856],
-	[560,  -0.00813,  -0.03728,  -3.13067],
-	[561,  -0.00692,  -0.04127,  -3.17278],
-	[562,  -0.00570,  -0.04533,  -3.21489],
-	[563,  -0.00451,  -0.04954,  -3.25698],
-	[564,  -0.00339,  -0.05402,  -3.29904],
-	[565,  -0.00240,  -0.05888,  -3.34105],
-	[566,  -0.00157,  -0.06421,  -3.38300],
-	[567,  -0.00092,  -0.06998,  -3.42488],
-	[568,  -0.00043,  -0.07617,  -3.46669],
-	[569,  -0.00013,  -0.08273,  -3.50841],
-	[570,   0.00000,  -0.08964,  -3.55006],
-	[571,  -0.00007,  -0.09687,  -3.59162],
-	[572,  -0.00038,  -0.10449,  -3.63308],
-	[573,  -0.00099,  -0.11259,  -3.67445],
-	[574,  -0.00196,  -0.12126,  -3.71571],
-	[575,  -0.00335,  -0.13060,  -3.75687],
-	[576,  -0.00518,  -0.14064,  -3.79790],
-	[577,  -0.00729,  -0.15126,  -3.83881],
-	[578,  -0.00951,  -0.16230,  -3.87960],
-	[579,  -0.01164,  -0.17357,  -3.92025],
-	[580,  -0.01348,  -0.18490,  -3.96077],
-	[581,  -0.01493,  -0.19619,  -4.00115],
-	[582,  -0.01609,  -0.20746,  -4.04138],
-	[583,  -0.01715,  -0.21881,  -4.08146],
-	[584,  -0.01830,  -0.23035,  -4.12139],
-	[585,  -0.01972,  -0.24215,  -4.16116],
-	[586,  -0.02156,  -0.25431,  -4.20077],
-	[587,  -0.02381,  -0.26689,  -4.24021],
-	[588,  -0.02643,  -0.27991,  -4.27948],
-	[589,  -0.02937,  -0.29344,  -4.31859],
-	[590,  -0.03261,  -0.30751,  -4.35751],
-	[591,  -0.03609,  -0.32215,  -4.39626],
-	[592,  -0.03982,  -0.33734,  -4.43482],
-	[593,  -0.04381,  -0.35306,  -4.47320],
-	[594,  -0.04806,  -0.36925,  -4.51140],
-	[595,  -0.05258,  -0.38590,  -4.54940],
-	[596,  -0.05738,  -0.40297,  -4.58721],
-	[597,  -0.06242,  -0.42047,  -4.62482],
-	[598,  -0.06770,  -0.43841,  -4.66224],
-	[599,  -0.07318,  -0.45682,  -4.69945],
-	[600,  -0.07884,  -0.47570,  -4.73646],
-	[601,  -0.08467,  -0.49506,  -4.77327],
-	[602,  -0.09072,  -0.51490,  -4.80987],
-	[603,  -0.09702,  -0.53518,  -4.84626],
-	[604,  -0.10365,  -0.55587,  -4.88244],
-	[605,  -0.11064,  -0.57696,  -4.91841],
-	[606,  -0.11805,  -0.59843,  -4.95417],
-	[607,  -0.12585,  -0.62025,  -4.98970],
-	[608,  -0.13403,  -0.64240,  -5.02503],
-	[609,  -0.14254,  -0.66488,  -5.06013],
-	[610,  -0.15137,  -0.68767,  -5.09502],
-	[611,  -0.16049,  -0.71075,  -5.12969],
-	[612,  -0.16992,  -0.73413,  -5.16413],
-	[613,  -0.17965,  -0.75782,  -5.19835],
-	[614,  -0.18972,  -0.78184,  -5.23235],
-	[615,  -0.20013,  -0.80620,  -5.26613],
-	[616,  -0.21088,  -0.83091,  -float('inf')],
-	[617,  -0.22193,  -0.85596,  -float('inf')],
-	[618,  -0.23322,  -0.88135,  -float('inf')],
-	[619,  -0.24470,  -0.90708,  -float('inf')],
-	[620,  -0.25631,  -0.93315,  -float('inf')],
-	[621,  -0.26803,  -0.95953,  -float('inf')],
-	[622,  -0.27998,  -0.98621,  -float('inf')],
-	[623,  -0.29232,  -1.01314,  -float('inf')],
-	[624,  -0.30521,  -1.04028,  -float('inf')],
-	[625,  -0.31881,  -1.06759,  -float('inf')],
-	[626,  -0.33323,  -1.09505,  -float('inf')],
-	[627,  -0.34839,  -1.12268,  -float('inf')],
-	[628,  -0.36419,  -1.15050,  -float('inf')],
-	[629,  -0.38048,  -1.17854,  -float('inf')],
-	[630,  -0.39717,  -1.20682,  -float('inf')],
-	[631,  -0.41414,  -1.23538,  -float('inf')],
-	[632,  -0.43136,  -1.26418,  -float('inf')],
-	[633,  -0.44880,  -1.29320,  -float('inf')],
-	[634,  -0.46646,  -1.32240,  -float('inf')],
-	[635,  -0.48431,  -1.35176,  -float('inf')],
-	[636,  -0.50232,  -1.38126,  -float('inf')],
-	[637,  -0.52048,  -1.41100,  -float('inf')],
-	[638,  -0.53874,  -1.44107,  -float('inf')],
-	[639,  -0.55708,  -1.47160,  -float('inf')],
-	[640,  -0.57547,  -1.50268,  -float('inf')],
-	[641,  -0.59390,  -1.53436,  -float('inf')],
-	[642,  -0.61251,  -1.56638,  -float('inf')],
-	[643,  -0.63146,  -1.59845,  -float('inf')],
-	[644,  -0.65092,  -1.63025,  -float('inf')],
-	[645,  -0.67104,  -1.66147,  -float('inf')],
-	[646,  -0.69196,  -1.69190,  -float('inf')],
-	[647,  -0.71361,  -1.72175,  -float('inf')],
-	[648,  -0.73592,  -1.75136,  -float('inf')],
-	[649,  -0.75879,  -1.78104,  -float('inf')],
-	[650,  -0.78215,  -1.81113,  -float('inf')],
-	[651,  -0.80589,  -1.84187,  -float('inf')],
-	[652,  -0.82999,  -1.87323,  -float('inf')],
-	[653,  -0.85439,  -1.90513,  -float('inf')],
-	[654,  -0.87906,  -1.93746,  -float('inf')],
-	[655,  -0.90396,  -1.97013,  -float('inf')],
-	[656,  -0.92906,  -2.00305,  -float('inf')],
-	[657,  -0.95436,  -2.03619,  -float('inf')],
-	[658,  -0.97986,  -2.06950,  -float('inf')],
-	[659,  -1.00556,  -2.10295,  -float('inf')],
-	[660,  -1.03148,  -2.13653,  -float('inf')],
-	[661,  -1.05761,  -2.17017,  -float('inf')],
-	[662,  -1.08396,  -2.20379,  -float('inf')],
-	[663,  -1.11051,  -2.23729,  -float('inf')],
-	[664,  -1.13728,  -2.27055,  -float('inf')],
-	[665,  -1.16425,  -2.30349,  -float('inf')],
-	[666,  -1.19142,  -2.33602,  -float('inf')],
-	[667,  -1.21879,  -2.36821,  -float('inf')],
-	[668,  -1.24637,  -2.40018,  -float('inf')],
-	[669,  -1.27417,  -2.43203,  -float('inf')],
-	[670,  -1.30219,  -2.46386,  -float('inf')],
-	[671,  -1.33044,  -2.49577,  -float('inf')],
-	[672,  -1.35892,  -2.52775,  -float('inf')],
-	[673,  -1.38765,  -2.55981,  -float('inf')],
-	[674,  -1.41661,  -2.59194,  -float('inf')],
-	[675,  -1.44584,  -2.62412,  -float('inf')],
-	[676,  -1.47531,  -2.65636,  -float('inf')],
-	[677,  -1.50503,  -2.68865,  -float('inf')],
-	[678,  -1.53499,  -2.72100,  -float('inf')],
-	[679,  -1.56516,  -2.75340,  -float('inf')],
-	[680,  -1.59552,  -2.78586,  -float('inf')],
-	[681,  -1.62609,  -2.81840,  -float('inf')],
-	[682,  -1.65691,  -2.85105,  -float('inf')],
-	[683,  -1.68805,  -2.88388,  -float('inf')],
-	[684,  -1.71957,  -2.91694,  -float('inf')],
-	[685,  -1.75153,  -2.95029,  -float('inf')],
-	[686,  -1.78396,  -2.98395,  -float('inf')],
-	[687,  -1.81670,  -3.01778,  -float('inf')],
-	[688,  -1.84954,  -3.05161,  -float('inf')],
-	[689,  -1.88228,  -3.08527,  -float('inf')],
-	[690,  -1.91471,  -3.11859,  -float('inf')],
-	[691,  -1.94668,  -3.15143,  -float('inf')],
-	[692,  -1.97827,  -3.18384,  -float('inf')],
-	[693,  -2.00960,  -3.21592,  -float('inf')],
-	[694,  -2.04082,  -3.24777,  -float('inf')],
-	[695,  -2.07203,  -3.27946,  -float('inf')],
-	[696,  -2.10335,  -3.31109,  -float('inf')],
-	[697,  -2.13477,  -3.34268,  -float('inf')],
-	[698,  -2.16626,  -3.37424,  -float('inf')],
-	[699,  -2.19779,  -3.40578,  -float('inf')],
-	[700,  -2.22933,  -3.43733,  -float('inf')],
-	[701,  -2.26087,  -3.46889,  -float('inf')],
-	[702,  -2.29245,  -3.50051,  -float('inf')],
-	[703,  -2.32414,  -3.53223,  -float('inf')],
-	[704,  -2.35602,  -3.56410,  -float('inf')],
-	[705,  -2.38814,  -3.59616,  -float('inf')],
-	[706,  -2.42056,  -3.62844,  -float('inf')],
-	[707,  -2.45323,  -3.66088,  -float('inf')],
-	[708,  -2.48609,  -3.69342,  -float('inf')],
-	[709,  -2.51909,  -3.72596,  -float('inf')],
-	[710,  -2.55215,  -3.75845,  -float('inf')],
-	[711,  -2.58522,  -3.79081,  -float('inf')],
-	[712,  -2.61826,  -3.82303,  -float('inf')],
-	[713,  -2.65119,  -3.85508,  -float('inf')],
-	[714,  -2.68398,  -3.88695,  -float('inf')],
-	[715,  -2.71657,  -3.91862,  -float('inf')],
-	[716,  -2.74892,  -3.95010,  -float('inf')],
-	[717,  -2.78110,  -3.98141,  -float('inf')],
-	[718,  -2.81315,  -4.01261,  -float('inf')],
-	[719,  -2.84515,  -4.04373,  -float('inf')],
-	[720,  -2.87717,  -4.07483,  -float('inf')],
-	[721,  -2.90925,  -4.10594,  -float('inf')],
-	[722,  -2.94136,  -4.13702,  -float('inf')],
-	[723,  -2.97344,  -4.16803,  -float('inf')],
-	[724,  -3.00542,  -4.19891,  -float('inf')],
-	[725,  -3.03726,  -4.22963,  -float('inf')],
-	[726,  -3.06892,  -4.26014,  -float('inf')],
-	[727,  -3.10040,  -4.29048,  -float('inf')],
-	[728,  -3.13176,  -4.32069,  -float('inf')],
-	[729,  -3.16303,  -4.35080,  -float('inf')],
-	[730,  -3.19425,  -4.38086,  -float('inf')],
-	[731,  -3.22544,  -4.41089,  -float('inf')],
-	[732,  -3.25665,  -4.44093,  -float('inf')],
-	[733,  -3.28790,  -4.47097,  -float('inf')],
-	[734,  -3.31922,  -4.50104,  -float('inf')],
-	[735,  -3.35063,  -4.53113,  -float('inf')],
-	[736,  -3.38215,  -4.56125,  -float('inf')],
-	[737,  -3.41370,  -4.59131,  -float('inf')],
-	[738,  -3.44516,  -4.62121,  -float('inf')],
-	[739,  -3.47643,  -4.65085,  -float('inf')],
-	[740,  -3.50742,  -4.68015,  -float('inf')],
-	[741,  -3.53805,  -4.70902,  -float('inf')],
-	[742,  -3.56840,  -4.73757,  -float('inf')],
-	[743,  -3.59859,  -4.76593,  -float('inf')],
-	[744,  -3.62872,  -4.79423,  -float('inf')],
-	[745,  -3.65890,  -4.82259,  -float('inf')],
-	[746,  -3.68923,  -4.85111,  -float('inf')],
-	[747,  -3.71967,  -4.87976,  -float('inf')],
-	[748,  -3.75014,  -4.90847,  -float('inf')],
-	[749,  -3.78058,  -4.93716,  -float('inf')],
-	[750,  -3.81093,  -4.96577,  -float('inf')],
-	[751,  -3.84113,  -4.99424,  -float('inf')],
-	[752,  -3.87119,  -5.02257,  -float('inf')],
-	[753,  -3.90110,  -5.05074,  -float('inf')],
-	[754,  -3.93089,  -5.07876,  -float('inf')],
-	[755,  -3.96056,  -5.10664,  -float('inf')],
-	[756,  -3.99013,  -5.13438,  -float('inf')],
-	[757,  -4.01962,  -5.16203,  -float('inf')],
-	[758,  -4.04907,  -5.18961,  -float('inf')],
-	[759,  -4.07851,  -5.21720,  -float('inf')],
-	[760,  -4.10795,  -5.24482,  -float('inf')],
-	[761,  -4.13743,  -5.27251,  -float('inf')],
-	[762,  -4.16690,  -5.30022,  -float('inf')],
-	[763,  -4.19631,  -5.32792,  -float('inf')],
-	[764,  -4.22560,  -5.35553,  -float('inf')],
-	[765,  -4.25472,  -5.38300,  -float('inf')],
-	[766,  -4.28364,  -5.41030,  -float('inf')],
-	[767,  -4.31241,  -5.43749,  -float('inf')],
-	[768,  -4.34113,  -5.46462,  -float('inf')],
-	[769,  -4.36987,  -5.49177,  -float('inf')],
-	[770,  -4.39871,  -5.51901,  -float('inf')],
-	[771,  -4.42770,  -5.54639,  -float('inf')],
-	[772,  -4.45677,  -5.57382,  -float('inf')],
-	[773,  -4.48581,  -5.60121,  -float('inf')],
-	[774,  -4.51472,  -5.62844,  -float('inf')],
-	[775,  -4.54339,  -5.65541,  -float('inf')],
-	[776,  -4.57174,  -5.68205,  -float('inf')],
-	[777,  -4.59983,  -5.70841,  -float('inf')],
-	[778,  -4.62774,  -5.73457,  -float('inf')],
-	[779,  -4.65556,  -5.76063,  -float('inf')],
-	[780,  -4.68336,  -5.78666,  -float('inf')],
-	[781,  -4.71121,  -5.81273,  -float('inf')],
-	[782,  -4.73909,  -5.83884,  -float('inf')],
-	[783,  -4.76698,  -5.86494,  -float('inf')],
-	[784,  -4.79485,  -5.89101,  -float('inf')],
-	[785,  -4.82266,  -5.91702,  -float('inf')],
-	[786,  -4.85039,  -5.94295,  -float('inf')],
-	[787,  -4.87805,  -5.96881,  -float('inf')],
-	[788,  -4.90566,  -5.99462,  -float('inf')],
-	[789,  -4.93323,  -6.02039,  -float('inf')],
-	[790,  -4.96080,  -6.04616,  -float('inf')],
-	[791,  -4.98836,  -6.07192,  -float('inf')],
-	[792,  -5.01591,  -6.09765,  -float('inf')],
-	[793,  -5.04340,  -6.12330,  -float('inf')],
-	[794,  -5.07082,  -6.14883,  -float('inf')],
-	[795,  -5.09813,  -6.17419,  -float('inf')],
-	[796,  -5.12532,  -6.19935,  -float('inf')],
-	[797,  -5.15238,  -6.22431,  -float('inf')],
-	[798,  -5.17931,  -6.24911,  -float('inf')],
-	[799,  -5.20612,  -6.27376,  -float('inf')],
-	[800,  -5.23280,  -6.29827,  -float('inf')],
-	[801,  -5.25937,  -6.32268,  -float('inf')],
-	[802,  -5.28587,  -6.34703,  -float('inf')],
-	[803,  -5.31235,  -6.37136,  -float('inf')],
-	[804,  -5.33885,  -6.39572,  -float('inf')],
-	[805,  -5.36542,  -6.42016,  -float('inf')],
-	[806,  -5.39209,  -6.44472,  -float('inf')],
-	[807,  -5.41883,  -6.46934,  -float('inf')],
-	[808,  -5.44559,  -6.49399,  -float('inf')],
-	[809,  -5.47230,  -6.51861,  -float('inf')],
-	[810,  -5.49893,  -6.54314,  -float('inf')],
-	[811,  -5.52542,  -6.56753,  -float('inf')],
-	[812,  -5.55177,  -6.59179,  -float('inf')],
-	[813,  -5.57797,  -6.61592,  -float('inf')],
-	[814,  -5.60402,  -6.63992,  -float('inf')],
-	[815,  -5.62992,  -6.66378,  -float('inf')],
-	[816,  -5.65566,  -6.68753,  -float('inf')],
-	[817,  -5.68128,  -6.71119,  -float('inf')],
-	[818,  -5.70682,  -6.73482,  -float('inf')],
-	[819,  -5.73231,  -6.75844,  -float('inf')],
-	[820,  -5.75779,  -6.78210,  -float('inf')],
-	[821,  -5.78329,  -6.80584,  -float('inf')],
-	[822,  -5.80881,  -6.82965,  -float('inf')],
-	[823,  -5.83432,  -6.85351,  -float('inf')],
-	[824,  -5.85981,  -6.87741,  -float('inf')],
-	[825,  -5.88525,  -6.90133,  -float('inf')],
-	[826,  -5.91064,  -6.92525,  -float('inf')],
-	[827,  -5.93596,  -6.94917,  -float('inf')],
-	[828,  -5.96119,  -6.97307,  -float('inf')],
-	[829,  -5.98631,  -6.99692,  -float('inf')],
-	[830,  -6.01130,  -7.02072,  -float('inf')]
-])
-
-hcf = hcf2deg
-if (args.q10deg): hcf = hcf10deg
-if (args.e2deg): hcf = hcfe2deg
-
 # find sensitivity of a given photoreceptor type to a wavelength using visual pigment templates
 # from Govardovskii et al. (2000). l is short for lambda. See also https://pmc.ncbi.nlm.nih.gov/articles/PMC2962788/
-# This produces the human cone fundamentals instead if the "lmax" (peak sensitivity) argument
-# is set to -1 (L cone), -2 (M cone) or -3 (S cone), since negative values are not meaningful
-# here. This option should not be used with ocular media filtering because it's already
-# built in. The results are similar to -l 560 -m 530 -s 420 --filter human, but not identical
-# because they include the macular pigment. So far I haven't found any tabulated data for
-# this.
 # Palacios et al. 2010 use a different equation for the beta-band peak (123 + 0.429 * alpha
 # peak).
 def vpt(w, lmax):
-	# use human cone fundamentals for testing
-	if (lmax == -1): # L cone
-		if (w < 390): return 0
-		else: return 10**(hcf[int(round(w))-390][1])
-	if (lmax == -2): # M
-		if (w < 390): return 0
-		else: return 10**(hcf[int(round(w))-390][2])
-	if (lmax == -3): # S
-		if (w < 390): return 0
-		else: return 10**(hcf[int(round(w))-390][3])
-	
 	# coefficients
 	A = 69.7
 	a = 0.8795 + 0.0459*math.exp(-(lmax - 300)**2 / 11940)
@@ -2494,1058 +2381,561 @@ def vpt(w, lmax):
 	
 	return value
 
-# human photopic luminosity function (2019 CIE standard)
-# No values are provided below 360 nm, so we assume 0.
-luminosity = np.array([
-	0, # 300
-	0,
-	0,
-	0,
-	0,
-	0, # 305
-	0,
-	0,
-	0,
-	0,
-	0, # 310
-	0,
-	0,
-	0,
-	0,
-	0, # 315
-	0,
-	0,
-	0,
-	0,
-	0, # 320
-	0,
-	0,
-	0,
-	0,
-	0, # 325
-	0,
-	0,
-	0,
-	0,
-	0, # 330
-	0,
-	0,
-	0,
-	0,
-	0, # 335
-	0,
-	0,
-	0,
-	0,
-	0, # 340
-	0,
-	0,
-	0,
-	0,
-	0, # 345
-	0,
-	0,
-	0,
-	0,
-	0, # 350
-	0,
-	0,
-	0,
-	0,
-	0, # 355
-	0,
-	0,
-	0,
-	0,
-	0.000003917, # 360
-	0.000004393581,
-	0.000004929604,
-	0.000005532136,
-	0.000006208245,
-	0.000006965, # 365
-	0.000007813219,
-	0.000008767336,
-	0.000009839844,
-	0.00001104323,
-	0.00001239, # 370
-	0.00001388641,
-	0.00001555728,
-	0.00001744296,
-	0.00001958375,
-	0.00002202, # 375
-	0.00002483965,
-	0.00002804126,
-	0.00003153104,
-	0.00003521521,
-	0.000039, # 380
-	0.0000428264,
-	0.0000469146,
-	0.0000515896,
-	0.0000571764,
-	0.000064, # 385
-	0.00007234421,
-	0.00008221224,
-	0.00009350816,
-	0.0001061361,
-	0.00012, # 390
-	0.000134984,
-	0.000151492,
-	0.000170208,
-	0.000191816,
-	0.000217, # 395
-	0.0002469067,
-	0.00028124,
-	0.00031852,
-	0.0003572667,
-	0.000396, # 400
-	0.0004337147,
-	0.000473024,
-	0.000517876,
-	0.0005722187,
-	0.00064, # 405
-	0.00072456,
-	0.0008255,
-	0.00094116,
-	0.00106988,
-	0.00121, # 410
-	0.001362091,
-	0.001530752,
-	0.001720368,
-	0.001935323,
-	0.00218, # 415
-	0.0024548,
-	0.002764,
-	0.0031178,
-	0.0035264,
-	0.004, # 420
-	0.00454624,
-	0.00515932,
-	0.00582928,
-	0.00654616,
-	0.0073, # 425
-	0.008086507,
-	0.00890872,
-	0.00976768,
-	0.01066443,
-	0.0116, # 430
-	0.01257317,
-	0.01358272,
-	0.01462968,
-	0.01571509,
-	0.01684, # 435
-	0.01800736,
-	0.01921448,
-	0.02045392,
-	0.02171824,
-	0.023, # 440
-	0.02429461,
-	0.02561024,
-	0.02695857,
-	0.02835125,
-	0.0298, # 445
-	0.03131083,
-	0.03288368,
-	0.03452112,
-	0.03622571,
-	0.038, # 450
-	0.03984667,
-	0.041768,
-	0.043766,
-	0.04584267,
-	0.048, # 455
-	0.05024368,
-	0.05257304,
-	0.05498056,
-	0.05745872,
-	0.06, # 460
-	0.06260197,
-	0.06527752,
-	0.06804208,
-	0.07091109,
-	0.0739, # 465
-	0.077016,
-	0.0802664,
-	0.0836668,
-	0.0872328,
-	0.09098, # 470
-	0.09491755,
-	0.09904584,
-	0.1033674,
-	0.1078846,
-	0.1126, # 475
-	0.117532,
-	0.1226744,
-	0.1279928,
-	0.1334528,
-	0.13902, # 480
-	0.1446764,
-	0.1504693,
-	0.1564619,
-	0.1627177,
-	0.1693, # 485
-	0.1762431,
-	0.1835581,
-	0.1912735,
-	0.199418,
-	0.20802, # 490
-	0.2171199,
-	0.2267345,
-	0.2368571,
-	0.2474812,
-	0.2586, # 495
-	0.2701849,
-	0.2822939,
-	0.2950505,
-	0.308578,
-	0.323, # 500
-	0.3384021,
-	0.3546858,
-	0.3716986,
-	0.3892875,
-	0.4073, # 505
-	0.4256299,
-	0.4443096,
-	0.4633944,
-	0.4829395,
-	0.503, # 510
-	0.5235693,
-	0.544512,
-	0.56569,
-	0.5869653,
-	0.6082, # 515
-	0.6293456,
-	0.6503068,
-	0.6708752,
-	0.6908424,
-	0.71, # 520
-	0.7281852,
-	0.7454636,
-	0.7619694,
-	0.7778368,
-	0.7932, # 525
-	0.8081104,
-	0.8224962,
-	0.8363068,
-	0.8494916,
-	0.862, # 530
-	0.8738108,
-	0.8849624,
-	0.8954936,
-	0.9054432,
-	0.9148501, # 535
-	0.9237348,
-	0.9320924,
-	0.9399226,
-	0.9472252,
-	0.954, # 540
-	0.9602561,
-	0.9660074,
-	0.9712606,
-	0.9760225,
-	0.9803, # 545
-	0.9840924,
-	0.9874182,
-	0.9903128,
-	0.9928116,
-	0.9949501, # 550
-	0.9967108,
-	0.9980983,
-	0.999112,
-	0.9997482,
-	1, # 555
-	0.9998567,
-	0.9993046,
-	0.9983255,
-	0.9968987,
-	0.995, # 560
-	0.9926005,
-	0.9897426,
-	0.9864444,
-	0.9827241,
-	0.9786, # 565
-	0.9740837,
-	0.9691712,
-	0.9638568,
-	0.9581349,
-	0.952, # 570
-	0.9454504,
-	0.9384992,
-	0.9311628,
-	0.9234576,
-	0.9154, # 575
-	0.9070064,
-	0.8982772,
-	0.8892048,
-	0.8797816,
-	0.87, # 580
-	0.8598613,
-	0.849392,
-	0.838622,
-	0.8275813,
-	0.8163, # 585
-	0.8047947,
-	0.793082,
-	0.781192,
-	0.7691547,
-	0.757, # 590
-	0.7447541,
-	0.7324224,
-	0.7200036,
-	0.7074965,
-	0.6949, # 595
-	0.6822192,
-	0.6694716,
-	0.6566744,
-	0.6438448,
-	0.631, # 600
-	0.6181555,
-	0.6053144,
-	0.5924756,
-	0.5796379,
-	0.5668, # 605
-	0.5539611,
-	0.5411372,
-	0.5283528,
-	0.5156323,
-	0.503, # 610
-	0.4904688,
-	0.4780304,
-	0.4656776,
-	0.4534032,
-	0.4412, # 615
-	0.42908,
-	0.417036,
-	0.405032,
-	0.393032,
-	0.381, # 620
-	0.3689184,
-	0.3568272,
-	0.3447768,
-	0.3328176,
-	0.321, # 625
-	0.3093381,
-	0.2978504,
-	0.2865936,
-	0.2756245,
-	0.265, # 630
-	0.2547632,
-	0.2448896,
-	0.2353344,
-	0.2260528,
-	0.217, # 635
-	0.2081616,
-	0.1995488,
-	0.1911552,
-	0.1829744,
-	0.175, # 640
-	0.1672235,
-	0.1596464,
-	0.1522776,
-	0.1451259,
-	0.1382, # 645
-	0.1315003,
-	0.1250248,
-	0.1187792,
-	0.1127691,
-	0.107, # 650
-	0.1014762,
-	0.09618864,
-	0.09112296,
-	0.08626485,
-	0.0816, # 655
-	0.07712064,
-	0.07282552,
-	0.06871008,
-	0.06476976,
-	0.061, # 660
-	0.05739621,
-	0.05395504,
-	0.05067376,
-	0.04754965,
-	0.04458, # 665
-	0.04175872,
-	0.03908496,
-	0.03656384,
-	0.03420048,
-	0.032, # 670
-	0.02996261,
-	0.02807664,
-	0.02632936,
-	0.02470805,
-	0.0232, # 675
-	0.02180077,
-	0.02050112,
-	0.01928108,
-	0.01812069,
-	0.017, # 680
-	0.01590379,
-	0.01483718,
-	0.01381068,
-	0.01283478,
-	0.01192, # 685
-	0.01106831,
-	0.01027339,
-	0.009533311,
-	0.008846157,
-	0.00821, # 690
-	0.007623781,
-	0.007085424,
-	0.006591476,
-	0.006138485,
-	0.005723, # 695
-	0.005343059,
-	0.004995796,
-	0.004676404,
-	0.004380075,
-	0.004102, # 700
-	0.003838453,
-	0.003589099,
-	0.003354219,
-	0.003134093,
-	0.002929, # 705
-	0.002738139,
-	0.002559876,
-	0.002393244,
-	0.002237275,
-	0.002091, # 710
-	0.001953587,
-	0.00182458,
-	0.00170358,
-	0.001590187,
-	0.001484, # 715
-	0.001384496,
-	0.001291268,
-	0.001204092,
-	0.001122744,
-	0.001047, # 720
-	0.0009765896,
-	0.0009111088,
-	0.0008501332,
-	0.0007932384,
-	0.00074, # 725
-	0.0006900827,
-	0.00064331,
-	0.000599496,
-	0.0005584547,
-	0.00052, # 730
-	0.0004839136,
-	0.0004500528,
-	0.0004183452,
-	0.0003887184,
-	0.0003611, # 735
-	0.0003353835,
-	0.0003114404,
-	0.0002891656,
-	0.0002684539,
-	0.0002492, # 740
-	0.0002313019,
-	0.0002146856,
-	0.0001992884,
-	0.0001850475,
-	0.0001719, # 745
-	0.0001597781,
-	0.0001486044,
-	0.0001383016,
-	0.0001287925,
-	0.00012, # 750
-	0.0001118595,
-	0.0001043224,
-	0.0000973356,
-	0.00009084587,
-	0.0000848, # 755
-	0.00007914667,
-	0.000073858,
-	0.000068916,
-	0.00006430267,
-	0.00006, # 760
-	0.00005598187,
-	0.0000522256,
-	0.0000487184,
-	0.00004544747,
-	0.0000424, # 765
-	0.00003956104,
-	0.00003691512,
-	0.00003444868,
-	0.00003214816,
-	0.00003, # 770
-	0.00002799125,
-	0.00002611356,
-	0.00002436024,
-	0.00002272461,
-	0.0000212, # 775
-	0.00001977855,
-	0.00001845285,
-	0.00001721687,
-	0.00001606459,
-	0.00001499, # 780
-	0.00001398728,
-	0.00001305155,
-	0.00001217818,
-	0.00001136254,
-	0.0000106, # 785
-	0.000009885877,
-	0.000009217304,
-	0.000008592362,
-	0.000008009133,
-	0.0000074657, # 790
-	0.000006959567,
-	0.000006487995,
-	0.000006048699,
-	0.000005639396,
-	0.0000052578, # 795
-	0.000004901771,
-	0.00000456972,
-	0.000004260194,
-	0.000003971739,
-	0.0000037029, # 800
-	0.000003452163,
-	0.000003218302,
-	0.0000030003,
-	0.000002797139,
-	0.0000026078, # 805
-	0.00000243122,
-	0.000002266531,
-	0.000002113013,
-	0.000001969943,
-	0.0000018366, # 810
-	0.00000171223,
-	0.000001596228,
-	0.00000148809,
-	0.000001387314,
-	0.0000012934, # 815
-	0.00000120582,
-	0.000001124143,
-	0.000001048009,
-	0.0000009770578,
-	0.00000091093, # 820
-	0.0000008492513,
-	0.0000007917212,
-	0.0000007380904,
-	0.0000006881098,
-	0.00000064153, # 825
-	0.0000005980895,
-	0.0000005575746,
-	0.000000519808,
-	0.0000004846123,
-	0.00000045181 # 830
-])
+# set receptors and luminosity
+rlist = []
+r1_1nm = np.zeros(401)
+r2_1nm = np.zeros(401)
+r3_1nm = np.zeros(401)
+r4_1nm = np.zeros(401)
+r5_1nm = np.zeros(401)
+luminosity = np.empty(401)
 
-# absolute number of photons, part 2: scaling D65 to a specified value in lux
-# For values not included in Python's D65, we approximate this with a black body with
-# temperature 6504 K. (Never mind, I found the real thing)
-
-# integral of D65 x human photopic luminosity function (we hardcode this instead of using
-# sensitivity() because that varies with settings for the specified species)
-# The units we want at the end are W/m^2, so we multiply this by the lux-to-watts scaling
-# factor for 555 nm (683.002 lm/W). This will end up on the bottom.
-integral = 0
-for i in range(531):
-	integral += d65_1nm[i] * luminosity[i] * 683.002
-
-# lux scaling factor (units = lx / lx/nm = nm)
-lxscale = args.lux / integral
-#print(lxscale)
-
-# scaled version (W/m^2 * m / joule*sec * m/s * nm = joule/sec/m^2 * m / joule/sec * m/s * nm * sr)
-# Per nm is implied. The values we just found do not include steradians (probably), so we divide
-# by the sr value we found earlier. (No we don't)
-# Also changing this to 1 nm.
-d65a = np.empty(531)
-for i in range(d65a.shape[0]):
-	w = i + 300
-	d65a[i] = lxscale*1e-9*w*d65_1nm[i] / (h*c*math.pi)
-	#print(d65a[i])
-
-e_abs = np.empty(531)
-for i in range(e_abs.shape[0]):
-	w = i + 300
-	e_abs[i] = lxscale*1e-9*w*100 / (h*c*math.pi)
-
-# white point
-if (args.white == "d65"):
-	wp = d65
-	wp_1nm = d65_1nm
-elif (args.white == "a"):
-	wp = a
-elif (args.white == "i"):
-	wp = incandescent
-	wp_1nm = incandescent_1nm
-else:
-	wp = e
-	wp_1nm = e_1nm
-
-# Reviving the CMF calculation to create a perceptual color space. I kept the names r(ed),
-# g(reen) and b(lue) for convenience even though they have nothing to do with how the chosen
-# wavelengths appear to humans.
-# Note that two of the CIE RGB primary wavelengths (700, 546.1 and 435.8) are not integers.
-# Non-integer values are supported, but when using the human cone fundamentals they're
-# rounded off because we look up the sensitivity in an array rather than calculating it directly.
-# This probably doesn't matter much.
-# This part prevents the script from running if we don't specify all of L, M and S as separate
-# values, so it's been made conditional on this. Determining a set of dichromatic CMFs would
-# follow a different process.
-if (l1 != m1 != s1):
-	# primaries
-	r = args.red
-	g = args.green
-	b = args.blue
-
-	# sensitivity of cones to primaries
-	matrix_a = np.array([
-		[vpt(r, l1)*ocular_media(r), vpt(g, l1)*ocular_media(g), vpt(b, l1)*ocular_media(b)],
-		[vpt(r, m1)*ocular_media(r), vpt(g, m1)*ocular_media(g), vpt(b, m1)*ocular_media(b)],
-		[vpt(r, s1)*ocular_media(r), vpt(g, s1)*ocular_media(g), vpt(b, s1)*ocular_media(b)]
-	])
-
-	# sensitivity of cones to each wavelength from 300 to 800 nm in 1 nm increments
-	matrix_c = np.empty((3, 401)) # 500x3 matrix -- this is height x width, not width x height
-
-	# red row
+# CIE 2-deg fundamentals
+if (args.preset == "cie2"):
+	dimension = 3
+	receptors = [566, 541, 441]
 	for i in range(401):
-		matrix_c[0][i] = vpt(i + 300, l1)*ocular_media(i+300)
-	# green row
-		matrix_c[1][i] = vpt(i + 300, m1)*ocular_media(i+300)
-	# blue row
-		matrix_c[2][i] = vpt(i + 300, s1)*ocular_media(i+300)
+		w = i+300
+		if (w < 390):
+			r1_1nm[i] = 0
+			r2_1nm[i] = 0
+			r3_1nm[i] = 0
+		else:
+			r1_1nm[i] = 10**(hcf2deg[int(round(w))-390][1])
+			r2_1nm[i] = 10**(hcf2deg[int(round(w))-390][2])
+			r3_1nm[i] = 10**(hcf2deg[int(round(w))-390][3])
+		luminosity[i] = cie_luminosity[i]
+		
+		rlist.append(r1_1nm)
+		rlist.append(r2_1nm)
+		rlist.append(r3_1nm)
+# CIE 10-deg fundamentals
+elif (args.preset == "cie10"):
+	dimension = 3
+	receptors = [565, 540, 447]
+	for i in range(401):
+		w = i+300
+		if (w < 390):
+			r1_1nm[i] = 0
+			r2_1nm[i] = 0
+			r3_1nm[i] = 0
+		else:
+			r1_1nm[i] = 10**(hcf10deg[int(round(w))-390][1])
+			r2_1nm[i] = 10**(hcf10deg[int(round(w))-390][2])
+			r3_1nm[i] = 10**(hcf10deg[int(round(w))-390][3])
+		luminosity[i] = cie_luminosity[i]
+		
+		rlist.append(r1_1nm)
+		rlist.append(r2_1nm)
+		rlist.append(r3_1nm)
+# House mouse. Source: https://pmc.ncbi.nlm.nih.gov/articles/PMC11562817/
+elif (args.preset == "mouse"):
+	dimension = 2
+	rod = 498
+	receptors = [508, 358]
+	for i in range(401):
+		w = i+300
+		r1_1nm[i] = vpt(w, 508)
+		r2_1nm[i] = vpt(w, 358)
+		luminosity[i] = (args.r1s*vpt(w, 508) + args.rs*vpt(w, 498)) * media_1nm[i]
+		
+		rlist.append(r1_1nm)
+		rlist.append(r2_1nm)
+# honeybee https://www.facetsjournal.com/doi/10.1139/facets-2017-0116
+elif (args.preset == "honeybee"):
+	dimension = 3
+	receptors = [544, 434, 344]
+	for i in range(401):
+		w = i+300
+		r1_1nm[i] = vpt(w, 544)
+		r2_1nm[i] = vpt(w, 434)
+		r3_1nm[i] = vpt(w, 344)
+	luminosity = r1_1nm
+	
+	rlist.append(r1_1nm)
+	rlist.append(r2_1nm)
+	rlist.append(r3_1nm)
+elif (args.preset == "didelphis1"):
+	dimension = 1
+	receptors = [562]
+	for i in range(401):
+		w = i+300
+		r1_1nm[i] = vpt(w, 562)
+		luminosity[i] = (args.r1s*vpt(w, 562) + args.rs*vpt(w, args.rod)) * media_1nm[i]
+	
+	rlist.append(r1_1nm)
+elif (args.preset == "didelphis2"):
+	dimension = 2
+	receptors = [562, 362]
+	for i in range(401):
+		w = i+300
+		r1_1nm[i] = vpt(w, 562)
+		r2_1nm[i] = vpt(w, 362)
+		luminosity[i] = (args.r1s*vpt(w, 562) + args.rs*vpt(w, args.rod)) * media_1nm[i]
+	
+	rlist.append(r1_1nm)
+	rlist.append(r2_1nm)
+elif (args.preset == "didelphis3"):
+	dimension = 3
+	receptors = [562, 504, 362]
+	for i in range(401):
+		w = i+300
+		r1_1nm[i] = vpt(w, 562)
+		r2_1nm[i] = vpt(w, 504)
+		r3_1nm[i] = vpt(w, 362)
+		luminosity[i] = (args.r1s*vpt(w, 562) + args.rs*vpt(w, args.rod)) * media_1nm[i]
 
-	# initial color match matrix
-	matrix_m = np.matmul(np.linalg.inv(matrix_a), matrix_c) # A x M = C, so M = A^-1 x C
+	rlist.append(r1_1nm)
+	rlist.append(r2_1nm)
+	rlist.append(r3_1nm)
+else:
+	rod = args.rod
+	for i in range(401):
+		w = i+300
+		luminosity[i] = (args.r1s*vpt(w, receptors[0]) + args.rs*vpt(w, rod)) * media_1nm[w-300]
 
-	# adjust to reference white
-	#watts = 0
-	#for i in range(401): watts += wp_1nm[i] # scale to 1 watt
-	rw = 0.0
-	gw = 0.0
-	bw = 0.0
-	for i in range (401):
-		rw += matrix_m[0][i] * wp_1nm[i]#/watts
-		gw += matrix_m[1][i] * wp_1nm[i]#/watts
-		bw += matrix_m[2][i] * wp_1nm[i]#/watts
-	matrix_w = [
-		[1/rw, 0, 0],
-		[0, 1/gw, 0],
-		[0, 0, 1/bw]
-	]
+	for i in range(dimension):
+		# whole list
+		yvalues = np.empty(401)
+		peak = args.receptors[i] # peak sensitivity
+		for j in range(401):
+			yvalues[j] = vpt(j+300, peak)
+		rlist.append(yvalues)
+	
+	if (dimension > 4): r5_1nm = rlist[4]
+	if (dimension > 3): r4_1nm = rlist[3]
+	if (dimension > 2): r3_1nm = rlist[2]
+	if (dimension > 1): r2_1nm = rlist[1]
+	r1_1nm = rlist[0]
 
-	# final color match matrix
-	matrix_cmf = np.matmul(matrix_w, matrix_m)
+"""
+CMFs (color-matching functions)
+
+The names "red", "green" and "blue" for the first 3 primaries have been removed, but the default
+values are still the CIE RGB primaries (700, 546.1 and 435.8). Since the second two are not
+integers, they have to be rounded to 546 and 436 so we can look up array indexes. (It's faster
+that way and probably doesn't matter for precision.)
+
+Other recommended values for trichromatic primaries:
+* marsupials: 620, 450, 360 (Arrese et al. 2006 doi.org/10.1016/j.cub.2006.02.036)
+* humans/primates:
+** 630, 532, 467 (Rec. 2020 https://en.wikipedia.org/wiki/Rec._2020)
+** 610, 550, 465 (approximate dominant wavelengths of sRGB primaries: see https://en.wikipedia.org/wiki/File:SRGB_chromaticity_CIE1931.svg)
+** other color spaces: see https://en.wikipedia.org/wiki/RGB_color_spaces
+
+Dichromatic, trichromatic, tetrachromatic and pentachromatic CMFs are supported.
+"""
+# primaries
+p1 = round(args.primaries[0])
+p2 = round(args.primaries[1])
+if (len(args.primaries) > 2): p3 = round(args.primaries[2])
+if (len(args.primaries) > 3): p4 = round(args.primaries[3])
+if (len(args.primaries) > 4): p5 = round(args.primaries[4])
+
+# color coding
+def colorcode(wl):
+	if (wl >= 560): color = 'r'
+	elif (wl < 560 and wl >= 520): color = 'g'
+	elif (wl < 520 and wl >= 480): color = 'c'
+	elif (wl < 480 and wl >= 450): color = 'b'
+	elif (wl < 450 and wl >= 380): color = 'indigo'
+	else: color = 'violet'
+	
+	return color
+
+def cmf():
+	if (dimension > 4):
+		# sensitivity to primaries
+		matrix_a = np.array([
+			[r1_1nm[p1-300]*media_1nm[p1-300], r1_1nm[p2-300]*media_1nm[p2-300], r1_1nm[p3-300]*media_1nm[p3-300], r1_1nm[p4-300]*media_1nm[p4-300], r1_1nm[p5-300]*media_1nm[p5-300]],
+			[r2_1nm[p1-300]*media_1nm[p1-300], r2_1nm[p2-300]*media_1nm[p2-300], r2_1nm[p3-300]*media_1nm[p3-300], r2_1nm[p4-300]*media_1nm[p4-300], r2_1nm[p5-300]*media_1nm[p5-300]],
+			[r3_1nm[p1-300]*media_1nm[p1-300], r3_1nm[p2-300]*media_1nm[p2-300], r3_1nm[p3-300]*media_1nm[p3-300], r3_1nm[p4-300]*media_1nm[p4-300], r3_1nm[p5-300]*media_1nm[p5-300]],
+			[r4_1nm[p1-300]*media_1nm[p1-300], r4_1nm[p2-300]*media_1nm[p2-300], r4_1nm[p3-300]*media_1nm[p3-300], r4_1nm[p4-300]*media_1nm[p4-300], r4_1nm[p5-300]*media_1nm[p5-300]],
+			[r5_1nm[p1-300]*media_1nm[p1-300], r5_1nm[p2-300]*media_1nm[p2-300], r5_1nm[p3-300]*media_1nm[p3-300], r5_1nm[p4-300]*media_1nm[p4-300], r5_1nm[p5-300]*media_1nm[p5-300]],
+		])
+
+		# sensitivity to each wavelength from 300 to 700 nm in 1 nm increments
+		matrix_c = np.empty((5, 401)) # 400x5 matrix -- this is height x width, not width x height
+
+		for i in range(401):
+		# p1 row
+			matrix_c[0][i] = r1_1nm[i] * media_1nm[i]
+		# p2 row
+			matrix_c[1][i] = r2_1nm[i] * media_1nm[i]
+		# p3 row
+			matrix_c[2][i] = r3_1nm[i] * media_1nm[i]
+		# p4 row
+			matrix_c[3][i] = r4_1nm[i] * media_1nm[i]
+		# p4 row
+			matrix_c[4][i] = r5_1nm[i] * media_1nm[i]
+
+		# initial color match matrix
+		matrix_m = np.matmul(np.linalg.inv(matrix_a), matrix_c) # A x M = C, so M = A^-1 x C
+
+		# adjust to reference white
+		#watts = 0
+		#for i in range(401): watts += wp_1nm[i] # scale to 1 watt
+		p1w = sum(matrix_m[0] * wp_1nm)
+		p2w = sum(matrix_m[1] * wp_1nm)
+		p3w = sum(matrix_m[2] * wp_1nm)
+		p4w = sum(matrix_m[3] * wp_1nm)
+		p5w = sum(matrix_m[4] * wp_1nm)
+		matrix_w = [
+			[1/p1w, 0, 0, 0, 0],
+			[0, 1/p2w, 0, 0, 0],
+			[0, 0, 1/p3w, 0, 0],
+			[0, 0, 0, 1/p4w, 0],
+			[0, 0, 0, 0, 1/p5w],
+		]
+
+		# final color match matrix
+		matrix_cmf = np.matmul(matrix_w, matrix_m)
+	elif (dimension == 4):
+		# sensitivity to primaries
+		matrix_a = np.array([
+			[r1_1nm[p1-300]*media_1nm[p1-300], r1_1nm[p2-300]*media_1nm[p2-300], r1_1nm[p3-300]*media_1nm[p3-300], r1_1nm[p4-300]*media_1nm[p4-300]],
+			[r2_1nm[p1-300]*media_1nm[p1-300], r2_1nm[p2-300]*media_1nm[p2-300], r2_1nm[p3-300]*media_1nm[p3-300], r2_1nm[p4-300]*media_1nm[p4-300]],
+			[r3_1nm[p1-300]*media_1nm[p1-300], r3_1nm[p2-300]*media_1nm[p2-300], r3_1nm[p3-300]*media_1nm[p3-300], r3_1nm[p4-300]*media_1nm[p4-300]],
+			[r4_1nm[p1-300]*media_1nm[p1-300], r4_1nm[p2-300]*media_1nm[p2-300], r4_1nm[p3-300]*media_1nm[p3-300], r4_1nm[p4-300]*media_1nm[p4-300]],
+		])
+
+		# sensitivity to each wavelength from 300 to 700 nm in 1 nm increments
+		matrix_c = np.empty((4, 401)) # 400x4 matrix -- this is height x width, not width x height
+
+		for i in range(401):
+		# p1 row
+			matrix_c[0][i] = r1_1nm[i] * media_1nm[i]
+		# p2 row
+			matrix_c[1][i] = r2_1nm[i] * media_1nm[i]
+		# p3 row
+			matrix_c[2][i] = r3_1nm[i] * media_1nm[i]
+		# p4 row
+			matrix_c[3][i] = r4_1nm[i] * media_1nm[i]
+
+		# initial color match matrix
+		matrix_m = np.matmul(np.linalg.inv(matrix_a), matrix_c) # A x M = C, so M = A^-1 x C
+
+		# adjust to reference white
+		#watts = 0
+		#for i in range(401): watts += wp_1nm[i] # scale to 1 watt
+		p1w = sum(matrix_m[0] * wp_1nm)
+		p2w = sum(matrix_m[1] * wp_1nm)
+		p3w = sum(matrix_m[2] * wp_1nm)
+		p4w = sum(matrix_m[3] * wp_1nm)
+		matrix_w = [
+			[1/p1w, 0, 0, 0],
+			[0, 1/p2w, 0, 0],
+			[0, 0, 1/p3w, 0],
+			[0, 0, 0, 1/p4w],
+		]
+
+		# final color match matrix
+		matrix_cmf = np.matmul(matrix_w, matrix_m)
+	elif (dimension == 3):
+		# sensitivity to primaries
+		matrix_a = np.array([
+			[r1_1nm[p1-300]*media_1nm[p1-300], r1_1nm[p2-300]*media_1nm[p2-300], r1_1nm[p3-300]*media_1nm[p3-300]],
+			[r2_1nm[p1-300]*media_1nm[p1-300], r2_1nm[p2-300]*media_1nm[p2-300], r2_1nm[p3-300]*media_1nm[p3-300]],
+			[r3_1nm[p1-300]*media_1nm[p1-300], r3_1nm[p2-300]*media_1nm[p2-300], r3_1nm[p3-300]*media_1nm[p3-300]],
+		])
+
+		# sensitivity to each wavelength from 300 to 700 nm in 1 nm increments
+		matrix_c = np.empty((3, 401)) # 400x3 matrix -- this is height x width, not width x height
+
+		for i in range(401):
+		# red row
+			matrix_c[0][i] = r1_1nm[i] * media_1nm[i]
+		# green row
+			matrix_c[1][i] = r2_1nm[i] * media_1nm[i]
+		# blue row
+			matrix_c[2][i] = r3_1nm[i] * media_1nm[i]
+
+		# initial color match matrix
+		matrix_m = np.matmul(np.linalg.inv(matrix_a), matrix_c) # A x M = C, so M = A^-1 x C
+
+		# adjust to reference white
+		#watts = 0
+		#for i in range(401): watts += wp_1nm[i] # scale to 1 watt
+		rw = sum(matrix_m[0] * wp_1nm)
+		gw = sum(matrix_m[1] * wp_1nm)
+		bw = sum(matrix_m[2] * wp_1nm)
+		matrix_w = [
+			[1/rw, 0, 0],
+			[0, 1/gw, 0],
+			[0, 0, 1/bw]
+		]
+
+		# final color match matrix
+		matrix_cmf = np.matmul(matrix_w, matrix_m)
+	elif (dimension == 2):
+
+		# sensitivity to primaries
+		matrix_a = np.array([
+			[r1_1nm[p1-300] * media_1nm[p1-300], r1_1nm[p2-300] * media_1nm[p2-300]],
+			[r2_1nm[p1-300] * media_1nm[p1-300], r2_1nm[p2-300] * media_1nm[p2-300]],
+		])
+
+		# sensitivity to each wavelength from 300 to 700 nm in 1 nm increments
+		matrix_c = np.empty((2, 401)) # 400x2 matrix
+
+		for i in range(401):
+		# red row
+			matrix_c[0][i] = r1_1nm[i] * media_1nm[i]
+		# blue row
+			matrix_c[1][i] = r2_1nm[i] * media_1nm[i]
+
+		# initial color match matrix
+		matrix_m = np.matmul(np.linalg.inv(matrix_a), matrix_c) # A x M = C, so M = A^-1 x C
+
+		# adjust to reference white
+		#watts = 0
+		#for i in range(401): watts += wp_1nm[i] # scale to 1 watt
+		rw = sum(matrix_m[0] * wp_1nm)
+		gw = 0
+		bw = sum(matrix_m[1] * wp_1nm)
+		matrix_w = [
+			[1/rw, 0],
+			[0, 1/bw]
+		]
+
+		# final color match matrix
+		matrix_cmf = np.matmul(matrix_w, matrix_m)
+		
+	return matrix_cmf
 
 if (args.cmf):
-	print("LMS->RGB matrix: " + str(np.matmul(matrix_w, np.linalg.inv(matrix_a))))
-	print("White units: r=" + str(rw) + ", g=" + str(gw) + ", b=" + str(bw))
-	# maxima, minima, intersections and negative numbers
-	maxrx = 0
-	maxgx = 0
-	maxbx = 0
-	maxry = 0
-	maxgy = 0
-	maxby = 0
-	minrx = 0
-	mingx = 0
-	minbx = 0
-	minry = 0
-	mingy = 0
-	minby = 0
-	intrg = 0
-	intgb = 0
-	rneg = 0
-	gneg = 0
-	bneg = 0
-	for i in range(401):
-		# find maxima
-		if (matrix_cmf[0][i] > maxry):
-			maxry = matrix_cmf[0][i]
-			maxrx = i+300
-		if (matrix_cmf[1][i] > maxgy):
-			maxgy = matrix_cmf[1][i]
-			maxgx = i+300
-		if (matrix_cmf[2][i] > maxby):
-			maxby = matrix_cmf[2][i]
-			maxbx = i+300
-		# find minima
-		if (matrix_cmf[0][i] < minry):
-			minry = matrix_cmf[0][i]
-			minrx = i+300
-		if (matrix_cmf[1][i] < mingy):
-			mingy = matrix_cmf[1][i]
-			mingx = i+300
-		if (matrix_cmf[2][i] < minby):
-			minby = matrix_cmf[2][i]
-			minbx = i+300
-		# find intersections
-		if ((matrix_cmf[0][i] - matrix_cmf[1][i]) >= 0 and (matrix_cmf[0][i-1] - matrix_cmf[1][i-1]) <= 0): intrg = i+300
-		if ((matrix_cmf[1][i] - matrix_cmf[2][i]) >= 0 and (matrix_cmf[1][i-1] - matrix_cmf[2][i-1]) <= 0): intgb = i+300
-		# find negatives
-		if (matrix_cmf[0][i] < 0): rneg += matrix_cmf[0][i]
-		if (matrix_cmf[1][i] < 0): gneg += matrix_cmf[1][i]
-		if (matrix_cmf[2][i] < 0): bneg += matrix_cmf[2][i]
-	print("Peaks: r=" + str(maxrx) + ", g=" + str(maxgx) + ", b=" + str(maxbx))
-	print("Troughs: r=" + str(minrx) + ", g=" + str(mingx) + ", b=" + str(minbx))
-	print("Intersections: rg=" + str(intrg) + ", gb=" + str(intgb))
-	print("Total negative values: r=" + str(rneg) + ", g=" + str(gneg) + ", b=" + str(bneg) + ", total=" + str(rneg+gneg+bneg))
-	
-	# plot curves
-	xvalues = np.empty(401)
-	for i in range(401): xvalues[i] = i+300
-	plt.plot(xvalues, matrix_m[0], 'r')
-	plt.plot(xvalues, matrix_m[1], 'g')
-	plt.plot(xvalues, matrix_m[2], 'b')
-	plt.show()
-	plt.plot(xvalues, matrix_cmf[0], 'r')
-	plt.plot(xvalues, matrix_cmf[1], 'g')
-	plt.plot(xvalues, matrix_cmf[2], 'b')
-	plt.show()
+	if (dimension < 2):
+		print("CMFs are not meaningful for monochromacy.")
+	else:
+		matrix_cmf = cmf()
+		# plot curves
+		plt.plot(x_1nm, matrix_cmf[0], color=colorcode(p1))
+		if (dimension > 1): plt.plot(x_1nm, matrix_cmf[1], color=colorcode(p2))
+		if (dimension > 2): plt.plot(x_1nm, matrix_cmf[2], color=colorcode(p3))
+		if (dimension > 3): plt.plot(x_1nm, matrix_cmf[3], color=colorcode(p4))
+		if (dimension > 4): plt.plot(x_1nm, matrix_cmf[4], color=colorcode(p5))
+		plt.show()
 
 # gamma correction (see color_conversions.py from the colormath module)
 def gamma(v):
-	if v <= 0.0031308:
-		result = v * 12.92
-	else:
-		result = 1.055 * math.pow(v, 1 / 2.4) - 0.055
-	return result
+	if v <= 0.0031308: return v * 12.92
+	else: return 1.055 * math.pow(v, 1 / 2.4) - 0.055
+	#if (v < 0): return 0
+	#return math.pow(v, 1 / 2.2)
+	#return v
 
-# determine hue, saturation and lightness for a spectral power distribution
-# Lens filtering is now used for colors properly with a von Kries transform.
-# 03/03/2025 -- added a "reflect" argument for specifying whether this is a
-# reflectance/transmission spectrum and should be multiplied by our light source. If it's
-# an emission spectrum as in the sky and illuminant examples, we don't want this.
-def spectral_rendering(table, light_source=wp_1nm, output=True, lw=l1, mw=m1, sw=s1, reflect=True):
-	table_l = 0
-	table_m = 0
-	table_s = 0
-	table_r = 0
-	table_g = 0
-	table_b = 0
-	brightness = 0
+"""
+generate an RGB color from a spectral power distribution
+This can produce either a "true color" using colormath or a "false color"
+using the specified visual system. Out-of-gamut colors are scaled down if a
+value is more than 1 and clipped if a value is less than 0.
+"""
+def spec2rgb(table, reflect=True, mode=args.fcmode):
+	rgb_r = 0
+	rgb_g = 0
+	rgb_b = 0
 	
 	# interpolate
-	if(len(table) < 401):
-		x10nm = np.empty(41)
-		for i in range(41):
-			x10nm[i] = i*10 + 300
+	if(len(table) < 401): table = np.interp(x_1nm, x_10nm, table)
+	
+	# combine SPD with illuminant
+	if (reflect == True): table = table * wp_1nm
+	
+	# remove nans
+	for i in range(table.shape[0]):
+		if (np.isnan(table[i])): table[i] = 0
+	
+	if (mode == "lms"):
+		# LMS
+		for i in range(table.shape[0]):
+			rgb_r += r1_1nm[i] * table[i] * media_1nm[i]
+			rgb_g += r2_1nm[i] * table[i] * media_1nm[i]
+			rgb_b += r3_1nm[i] * table[i] * media_1nm[i]
+	
+		# von Kries transform
+		if (args.vonkries):
+			wpr1 = 0
+			wpr2 = 0
+			wpr3 = 0
+			for i in range(401):
+				wpr1 += r1_1nm[i] * wp_1nm[i] * media_1nm[i]
+				wpr2 += r2_1nm[i] * wp_1nm[i] * media_1nm[i]
+				wpr3 += r3_1nm[i] * wp_1nm[i] * media_1nm[i]
 		
-		x1nm = np.empty(401)
+			rgb_r = rgb_r / wpr1
+			rgb_g = rgb_g / wpr2
+			rgb_b = rgb_b / wpr3
+
+		# gamma correction
+		rgb_r = gamma(rgb_r)
+		rgb_g = gamma(rgb_g)
+		rgb_b = gamma(rgb_b)
+
+		# render
+		if (dimension == 2): rgb_g = rgb_r
+		rgb_tuple = (rgb_r, rgb_g, rgb_b)
+
+	elif (mode == "cmf"):
+		# CMF
+		matrix_cmf = cmf()
 		for i in range(401):
-			x1nm[i] = i + 300
+			if (dimension > 2):
+				rgb_r += matrix_cmf[0][i] * table[i]
+				rgb_g += matrix_cmf[1][i] * table[i]
+				rgb_b += matrix_cmf[2][i] * table[i]
+			elif (dimension == 2):
+				rgb_r += matrix_cmf[0][i] * table[i]
+				rgb_b += matrix_cmf[1][i] * table[i]
+				rgb_g = rgb_r
 		
-		table = np.interp(x1nm, x10nm, table)
-	
-	for i in range(0, table.shape[0]):
-		w = i + 300
-		if (table[i] > 0): # don't add zeroes or nans
-			if (reflect == True): table_l += vpt(w, lw) * table[i] * light_source[i] * ocular_media(w)
-			else: table_l += vpt(w, lw) * table[i] * ocular_media(w)
-			# remove either M or S for dichromacy
-			if (mw != lw):
-				if (reflect == True): table_m += vpt(w, mw) * table[i] * light_source[i] * ocular_media(w)
-				else: table_m += vpt(w, mw) * table[i] * ocular_media(w)
-			if (sw != mw):
-				if (reflect == True): table_s += vpt(w, sw) * table[i] * light_source[i] * ocular_media(w)
-				else: table_s += vpt(w, sw) * table[i] * ocular_media(w)
-			
-			# brightness
-			if (reflect == True): brightness += sensitivity(w) * table[i] * light_source[i]
-			else: brightness += sensitivity(w) * table[i]
-			
-			# CMF
-			if (lw != mw != sw):
-				if (reflect == True): table_r += matrix_cmf[0][i] * table[i] * light_source[i]
-				else: table_r += matrix_cmf[0][i] * table[i]
-				if (reflect == True): table_g += matrix_cmf[1][i] * table[i] * light_source[i]
-				else: table_g += matrix_cmf[1][i] * table[i]
-				if (reflect == True): table_b += matrix_cmf[2][i] * table[i] * light_source[i]
-				else: table_b += matrix_cmf[2][i] * table[i]
-	
-	# normalize according to provided light source
-	n = 0
-	wpl = 0
-	wpm = 0
-	wps = 0
-	for i in range(0, table.shape[0]):
-		w = i + 300
-		n += sensitivity(w) * light_source[i]
-		wpl += vpt(w, lw) * light_source[i] * ocular_media(w)
-		wpm += vpt(w, mw) * light_source[i] * ocular_media(w)
-		wps += vpt(w, sw) * light_source[i] * ocular_media(w)
-	
-	# von Kries transform
-	if (args.novk == False):
-		table_l = table_l / wpl
-		table_m = table_m / wpm
-		table_s = table_s / wps
-	
-	# gamma correction for CMF colors
-	table_r = gamma(table_r)
-	table_g = gamma(table_g)
-	table_b = gamma(table_b)
-	
-	# express brightness of reflected/emitted light proportional to the light source
-	brightness = brightness / n
-	
-	# L-M position
-	lm = (table_l - table_m) / (table_l + table_m)
+		# gamma correction
+		rgb_r = gamma(rgb_r)
+		rgb_g = gamma(rgb_g)
+		rgb_b = gamma(rgb_b)
 
-	# declare posx and posy
-	posx = -1
-	posy = -1
+		# render
+		rgb_tuple = (rgb_r, rgb_g, rgb_b)
 	
-	if (output):
-		# render color
-		# For trichromacy we convert the LMS values to other color spaces to roughly visualize
-		# the hue and saturation. This assumes a given ratio of cone absorption produces the
-		# same perception as it does in humans and can be adequately modeled by an LMS<->XYZ
-		# transformation matrix I found on Wikipedia. For dichromacy and monochromacy this
-		# doesn't really work, so we just report the estimated brightness and (for dichromacy)
-		# the L:S difference.
-		# Now estimates trichromatic colors based on a color triangle. The wavelengths
-		# reported agree reasonably well with what the hue should be. I've fixed this so
-		# it uses proper Maxwell coordinates, lens filtering and a von Kries transform.
-		if (lw != mw != sw):
-			print("Cone response: l=" + str(table_l) + ", m=" + str(table_m) + ", s=" + str(table_s))
-			print("Position on L-M axis: " + str(lm))
-			
-			# simple false color rendering
-			table_l_gamma = gamma(table_l)
-			table_m_gamma = gamma(table_m)
-			table_s_gamma = gamma(table_s)
-			print("RGB=LMS false color: (" + str(round(table_l_gamma * 255)) + ", " + str(round(table_m_gamma * 255)) + ", " + str(round(table_s_gamma * 255)) + ")")
-			try:
-				hsl = convert_color(sRGBColor(table_l, table_m, table_s), HSLColor)
-				print("LMS->HSL: " + str(hsl.get_value_tuple()))
-			except ZeroDivisionError: print("Warning: HSL conversion failed (ZeroDivisionError)")
-			
-			# CMF false color rendering. Out-of-gamut colors are scaled down if
-			# too large and clipped toward the white point if negative.
-			rgb_max = max(table_r,table_g,table_b)
-			rgb_min = min(table_r,table_g,table_b,0)
-			rgb_max2 = max(table_r-rgb_min,table_g-rgb_min,table_b-rgb_min,rgb_max,1)
-			print("CMF false color: (" + str(round(table_r * 255)) + ", " + str(round(table_g * 255)) + ", " + str(round(table_b * 255)) + ")")
-			print("CMF false color (within gamut): (" + str((table_r-rgb_min) * 255 / rgb_max2) + ", " + str((table_g-rgb_min) * 255 / rgb_max2) + ", " + str((table_b-rgb_min) * 255 / rgb_max2) + ")")
-			try:
-				hsl = convert_color(sRGBColor(table_r-rgb_min, table_g-rgb_min, table_b-rgb_min), HSLColor)
-				print("CMF->HSL: " + str(hsl.get_value_tuple()))
-			except ZeroDivisionError: print("Warning: HSL conversion failed (ZeroDivisionError)")
-				
-			
-			# This should be the nearest wavelength on a line from the white point.
-			match = 300
-			x0 = math.sqrt(1/2)*(table_l - table_s) / (table_l + table_m + table_s)
-			y0 = math.sqrt(2/3)*(table_m - 0.5*(table_l + table_s)) / (table_l + table_m + table_s)
-			wx = math.sqrt(1/2)*(wpl - wps) / (wpl + wpm + wps)
-			wy = math.sqrt(2/3)*(wpm - 0.5*(wpl + wps)) / (wpl + wpm + wps)
-			
-			# adjust to chosen visible range
-			while (ocular_media(match) == 0):
-				match += 1
-			
-			for i in range(300, 701):
-				matchl1 = vpt(match, lw)*ocular_media(match) / wpl
-				matchm1 = vpt(match, mw)*ocular_media(match) / wpm
-				matchs1 = vpt(match, sw)*ocular_media(match) / wps
-				matchl2 = vpt(i, lw)*ocular_media(i) / wpl
-				matchm2 = vpt(i, mw)*ocular_media(i) / wpm
-				matchs2 = vpt(i, sw)*ocular_media(i) / wps
-				x1 = math.sqrt(1/2)*(matchl1 - matchs1) / (matchl1 + matchm1 + matchs1)
-				y1 = math.sqrt(2/3)*(matchm1 - 0.5*(matchl1 + matchs1)) / (matchl1 + matchm1 + matchs1)
-				x2 = math.sqrt(1/2)*(matchl2 - matchs2) / (matchl2 + matchm2 + matchs2)
-				y2 = math.sqrt(2/3)*(matchm2 - 0.5*(matchl2 + matchs2)) / (matchl2 + matchm2 + matchs2)
-				d1 = np.linalg.norm(np.cross(np.asarray((wx, wy)) - np.asarray((x0, y0)), np.asarray((x0, y0)) - np.asarray((x1, y1)))) / np.linalg.norm(np.asarray((wx, wy)) - np.asarray((x0, y0)))
-				d2 = np.linalg.norm(np.cross(np.asarray((wx, wy)) - np.asarray((x0, y0)), np.asarray((x0, y0)) - np.asarray((x2, y2)))) / np.linalg.norm(np.asarray((wx, wy)) - np.asarray((x0, y0)))
-				
-				# This should be on the same "side" of the white point, not just on the line.
-				# Otherwise we have the complementary color.
-				if (math.dist((x2, y2), (x0, y0)) < math.dist((x2, y2), (wx, wy)) and d2 < d1):
-					match = i
-			print("Closest wavelength: " + str(match))
-			
-			posx = math.sqrt(1/2)*(table_l - table_s) / (table_l + table_m + table_s)
-			posy = math.sqrt(2/3)*(table_m - (table_l + table_s)/2) / (table_l + table_m + table_s)
-			dist = math.dist((posx, posy), (wx, wy))
-			print("Position in color triangle: " + str((posx, posy)))
+	else:
+		# colormath true color
+		spectral = SpectralColor(spec_340nm=table[40],
+		spec_350nm=table[50],
+		spec_360nm=table[60],
+		spec_370nm=table[70],
+		spec_380nm=table[80],
+		spec_390nm=table[90],
+		spec_400nm=table[100],
+		spec_410nm=table[110],
+		spec_420nm=table[120],
+		spec_430nm=table[130],
+		spec_440nm=table[140],
+		spec_450nm=table[150],
+		spec_460nm=table[160],
+		spec_470nm=table[170],
+		spec_480nm=table[180],
+		spec_490nm=table[190],
+		spec_500nm=table[200],
+		spec_510nm=table[210],
+		spec_520nm=table[220],
+		spec_530nm=table[230],
+		spec_540nm=table[240],
+		spec_550nm=table[250],
+		spec_560nm=table[260],
+		spec_570nm=table[270],
+		spec_580nm=table[280],
+		spec_590nm=table[290],
+		spec_600nm=table[300],
+		spec_610nm=table[310],
+		spec_620nm=table[320],
+		spec_630nm=table[330],
+		spec_640nm=table[340],
+		spec_650nm=table[350],
+		spec_660nm=table[360],
+		spec_670nm=table[370],
+		spec_680nm=table[380],
+		spec_690nm=table[390],
+		spec_700nm=table[400],
+		spec_710nm=0,
+		spec_720nm=0,
+		spec_730nm=0,
+		spec_740nm=0,
+		spec_750nm=0,
+		spec_760nm=0,
+		spec_770nm=0,
+		spec_780nm=0,
+		spec_790nm=0,
+		spec_800nm=0,
+		spec_810nm=0,
+		spec_820nm=0,
+		spec_830nm=0,
+		illuminant='d65')
 		
-		elif (lw == mw != sw):
-			# typical dichromacy
-			print("Cone response: l/m=" + str(table_l) + ", s=" + str(table_s))
-			
-			match = 300
-			for i in range(300, 800):
-				diff0 = abs(table_l / table_s - vpt(match, lw) / vpt(match, sw))
-				diff1 = abs(table_l / table_s - vpt(i, lw) / vpt(i, sw))
-				if (diff1 < diff0):
-					match = i
-			print("Matching wavelength: " + str(match))
-			
-			pos = (table_l - table_s) / (table_l + table_s)
-			dist = pos - (wpl - wps) / (wpl + wps)
-			print("Position on color line: " + str(pos))
-		elif (lw != mw == sw):
-			# tritanopia
-			print("Cone response: l=" + str(table_l) + ", m=" + str(table_m))
-		elif (lw == mw == sw):
-			# monochromacy
-			print("Cone response: " + str(table_l))
+		# If an illuminant is set, we'll also set it here. Note that colormath
+		# only adapts the CMFs and not the SPD itself, so we've already adjusted
+		# it.
+		if (args.white == 'd65'): spectral.set_illuminant('d65')
+		elif (args.white == 'a' or args.white == 'i'): spectral.set_illuminant('a')
+		elif (args.white == 'e'): spectral.set_illuminant('e')
 		
-		# estimate brightness
-		print("Brightness relative to light source: " + str(brightness))
-		
-		# "SpectralColor" conversion for comparison
-		if (args.render):
-			# colormath doesn't handle nans, so replace them with zeroes first
-			for i in range(table.shape[0]):
-				if (np.isnan(table[i])): table[i] = 0
-			
-			spectral = SpectralColor(spec_340nm=table[40],
-			spec_350nm=table[50],
-			spec_360nm=table[60],
-			spec_370nm=table[70],
-			spec_380nm=table[80],
-			spec_390nm=table[90],
-			spec_400nm=table[100],
-			spec_410nm=table[110],
-			spec_420nm=table[120],
-			spec_430nm=table[130],
-			spec_440nm=table[140],
-			spec_450nm=table[150],
-			spec_460nm=table[160],
-			spec_470nm=table[170],
-			spec_480nm=table[180],
-			spec_490nm=table[190],
-			spec_500nm=table[200],
-			spec_510nm=table[210],
-			spec_520nm=table[220],
-			spec_530nm=table[230],
-			spec_540nm=table[240],
-			spec_550nm=table[250],
-			spec_560nm=table[260],
-			spec_570nm=table[270],
-			spec_580nm=table[280],
-			spec_590nm=table[290],
-			spec_600nm=table[300],
-			spec_610nm=table[310],
-			spec_620nm=table[320],
-			spec_630nm=table[330],
-			spec_640nm=table[340],
-			spec_650nm=table[350],
-			spec_660nm=table[360],
-			spec_670nm=table[370],
-			spec_680nm=table[380],
-			spec_690nm=table[390],
-			spec_700nm=table[400],
-			spec_710nm=0,
-			spec_720nm=0,
-			spec_730nm=0,
-			spec_740nm=0,
-			spec_750nm=0,
-			spec_760nm=0,
-			spec_770nm=0,
-			spec_780nm=0,
-			spec_790nm=0,
-			spec_800nm=0,
-			spec_810nm=0,
-			spec_820nm=0,
-			spec_830nm=0, illuminant='e')
-			
-			# If an illuminant is set, we'll also set it here. Note that colormath
-			# only adapts the CMFs and not the SPD itself, so this may not do what
-			# we want. D65 vs. E doesn't make much difference because they're very
-			# similar for human vision.
-			if (args.white == 'd65'): spectral.set_illuminant('d65')
-			if (args.white == 'a' or args.white == 'i'): spectral.set_illuminant('a')
-			
-			srgb = convert_color(spectral, sRGBColor)
-			srgb_tuple = srgb.get_value_tuple()
-			scale = max(srgb_tuple[0], srgb_tuple[1], srgb_tuple[2]) / 255
-			scale_eq = (srgb_tuple[0] + srgb_tuple[1] + srgb_tuple[2]) / 255
-			print("colormath conversion:")
-			print("XYZ: " + str(convert_color(spectral, XYZColor).get_value_tuple()))
-			print("sRGB (0.0-1.0): " + str(srgb.get_value_tuple()))
-			print("sRGB (0-255): " + str(srgb.get_upscaled_value_tuple()))
-			#print("Lab: " + str(convert_color(spectral, LabColor).get_value_tuple()))
-			print("HSL: " + str(convert_color(spectral, HSLColor).get_value_tuple()))
-		# break up text
-		print("")
+		srgb = convert_color(spectral, sRGBColor)
+		rgb_tuple = srgb.get_value_tuple()
+		rgb_r = rgb_tuple[0]
+		rgb_g = rgb_tuple[1]
+		rgb_b = rgb_tuple[2]
 	
-	# return various items:
-	# 0: brightness
-	# 1: color triangle x
-	# 2: color triangle y
-	# 3: L-M position
-	return([brightness, posx, posy, lm])
+	if (args.verbose):
+		print("Mode: " + mode)
+		print("RGB: " + str(rgb_tuple))
 
-# contrast sensitivity (Vorobyev and Osorio (1998); Vorobyev and Osorio (2001))
-# This predicts that two very small values like 1e-5 and 1e-6 can produce a
-# large amount of contrast despite probably neither of them being noticeable.
-# Is this where quantum noise comes in? An alternative is to use the linear
-# model rather than log-linear, which makes the contrast proportional to the
-# size of the signals, but this reduces the contrast too much. For reference,
-# human trichromacy should show all the Kodak Wratten colors as "different" and
-# human-like dichromacy should show red, yellow and probably green as "the same".
-# Neither of these models do both of these. (This has been fixed.)
-# Absolute quantum catch integrals need values at 1-nm intervals, so we find them
-# with linear interpolation if we don't already have them.
-def color_contrast(table1, table2, quantum_noise=args.qn, lw = args.lw, mw = args.mw, sw = args.sw):
+	rgb_max = max(*rgb_tuple,1)
+	rgb_min = min(*rgb_tuple)
+	if ((rgb_max > 1 or rgb_min < 0) and args.warnings):
+		print("Warning (spec2rgb): color is out of gamut. For details, use --verbose/-v.")
+	rgb_tuple = (max(rgb_r/rgb_max, 0), max(rgb_g/rgb_max, 0), max(rgb_b/rgb_max, 0))
+
+	return(rgb_tuple)
+
+"""
+contrast sensitivity (Vorobyev and Osorio (1998); Vorobyev and Osorio (2001))
+Without quantum noise, this tends to make unrealistic predictions when the value
+for one or more cone signals is very small.
+"""
+def color_contrast(table1, table2, quantum_noise=args.qn, r1 = r1_1nm, r2 = r2_1nm, r3 = r3_1nm, r4 = r4_1nm):
+	if (dimension > 4):
+		print("Warning: color_contrast() does not support dimensions higher than 4. Any "
+		+ "receptors after r4 will be ignored.")
 	# interpolate 1-nm intervals if we're provided with 10-nm
-	if (len(table1) < 401):
-		x10nm = np.empty(41)
-		for i in range(41):
-			x10nm[i] = i*10 + 300
-		
-		x1nm = np.empty(401)
-		for i in range(401):
-			x1nm[i] = i + 300
-		
-		table1 = np.interp(x1nm, x10nm, table1)
-	if (len(table2) < 401):
-		x10nm = np.empty(41)
-		for i in range(41):
-			x10nm[i] = i*10 + 300
-		
-		x1nm = np.empty(401)
-		for i in range(401):
-			x1nm[i] = i + 300
-		
-		table2 = np.interp(x1nm, x10nm, table2)
+	if (len(table1) < 401): table1 = np.interp(x_1nm, x_10nm, table1)
+	if (len(table2) < 401): table2 = np.interp(x_1nm, x_10nm, table2)
 	
 	# background light
-	wpl = 0
-	wpm = 0
-	wps = 0
+	wpr1 = 0
+	wpr2 = 0
+	wpr3 = 0
+	wpr4 = 0
 	
-	ql1 = 0
-	qm1 = 0
-	qs1 = 0
-	ql2 = 0
-	qm2 = 0
-	qs2 = 0
-	for i in range(0, table1.shape[0]):
-		w = i + 300
+	qr11 = 0
+	qr21 = 0
+	qr31 = 0
+	qr41 = 0
+	qr12 = 0
+	qr22 = 0
+	qr32 = 0
+	qr42 = 0
+	for i in range(table1.shape[0]):
 		if (table1[i] > 0): # zero/nan check
-			ql1 += vpt(w, lw) * table1[i] * wp_1nm[i] * ocular_media(w)
-			qm1 += vpt(w, mw) * table1[i] * wp_1nm[i] * ocular_media(w)
-			qs1 += vpt(w, sw) * table1[i] * wp_1nm[i] * ocular_media(w)
-		wpl += vpt(w, lw) * wp_1nm[i] * ocular_media(w)
-		wpm += vpt(w, mw) * wp_1nm[i] * ocular_media(w)
-		wps += vpt(w, sw) * wp_1nm[i] * ocular_media(w)
-	for i in range(0, table2.shape[0]):
+			qr11 += r1[i] * table1[i] * wp_1nm[i] * media_1nm[i]
+			qr21 += r2[i] * table1[i] * wp_1nm[i] * media_1nm[i]
+			qr31 += r3[i] * table1[i] * wp_1nm[i] * media_1nm[i]
+			qr41 += r2[i] * table1[i] * wp_1nm[i] * media_1nm[i]
+		wpr1 += r1[i] * wp_1nm[i] * media_1nm[i]
+		wpr2 += r2[i] * wp_1nm[i] * media_1nm[i]
+		wpr3 += r3[i] * wp_1nm[i] * media_1nm[i]
+		wpr4 += r2[i] * wp_1nm[i] * media_1nm[i]
+	for i in range(table2.shape[0]):
 		w = i + 300
 		if (table2[i] > 0):
-			ql2 += vpt(w, lw) * table2[i] * wp_1nm[i] * ocular_media(w)
-			qm2 += vpt(w, mw) * table2[i] * wp_1nm[i] * ocular_media(w)
-			qs2 += vpt(w, sw) * table2[i] * wp_1nm[i] * ocular_media(w)
+			qr12 += r1[i] * table2[i] * wp_1nm[i] * media_1nm[i]
+			qr22 += r2[i] * table2[i] * wp_1nm[i] * media_1nm[i]
+			qr32 += r3[i] * table2[i] * wp_1nm[i] * media_1nm[i]
+			qr42 += r2[i] * table2[i] * wp_1nm[i] * media_1nm[i]
 	
 	# normalize
-	if (args.novk == False):
-		ql1 = ql1 / wpl
-		qm1 = qm1 / wpm
-		qs1 = qs1 / wps
-		ql2 = ql2 / wpl
-		qm2 = qm2 / wpm
-		qs2 = qs2 / wps
+	if (args.vonkries):
+		qr11 = qr11 / wpr1
+		qr21 = qr21 / wpr2
+		qr31 = qr31 / wpr3
+		qr41 = qr41 / wpr4
+		qr12 = qr12 / wpr1
+		qr22 = qr22 / wpr2
+		qr32 = qr32 / wpr3
+		qr42 = qr42 / wpr4
 	
 	# differences
-	dfl = math.log(ql1 / ql2)
-	dfm = math.log(qm1 / qm2)
-	dfs = math.log(qs1 / qs2)
+	dfr1 = math.log(qr11 / qr12)
+	dfr2 = math.log(qr21 / qr22)
+	dfr3 = math.log(qr31 / qr32)
+	dfr4 = math.log(qr41 / qr42)
 	
 	# quantum noise (needs work)
 	# Based on these equations:
@@ -3651,34 +3041,31 @@ def color_contrast(table1, table2, quantum_noise=args.qn, lw = args.lw, mw = arg
 		
 		# lens filtering scaling factor
 		#T = 0.8 / ocular_media(700)
-		T = 1 / ocular_media(700) # set to 1 at 700 nm
-		
-		# select illuminant
-		if (args.white == "i"):
-			photons = ia
-		elif (args.white == "d65"):
-			photons = d65a
-		else:
-			photons = e_abs
+		#T = 1 / ocular_media(700) # set to 1 at 700 nm
+		T = 1
 	
-		aql1 = 0
-		aqm1 = 0
-		aqs1 = 0
-		aql2 = 0
-		aqm2 = 0
-		aqs2 = 0
+		aqr11 = 0
+		aqr21 = 0
+		aqr31 = 0
+		aqr41 = 0
+		aqr12 = 0
+		aqr22 = 0
+		aqr32 = 0
+		aqr42 = 0
 		for i in range(table1.shape[0]):
 			w = i + 300
 			if (table1[i] > 0):
-				aql1 += (math.pi/4)**2*(d / f)**2*D**2*K*T*dt*(1 - math.exp(-k*vpt(w, lw)*l)) * vpt(w, lw) * table1[i] * photons[i] * ocular_media(w)
-				aqm1 += (math.pi/4)**2*(d / f)**2*D**2*K*T*dt*(1 - math.exp(-k*vpt(w, mw)*l)) * vpt(w, mw) * table1[i] * photons[i] * ocular_media(w) 
-				aqs1 += (math.pi/4)**2*(d / f)**2*D**2*K*T*dt*(1 - math.exp(-k*vpt(w, sw)*l)) * vpt(w, sw) * table1[i] * photons[i] * ocular_media(w)
+				aqr11 += (math.pi/4)**2*(d / f)**2*D**2*K*T*dt*(1 - math.exp(-k*r1[i]*l)) * r1[i] * table1[i] * wp_photons[i] * media_1nm[i]
+				aqr21 += (math.pi/4)**2*(d / f)**2*D**2*K*T*dt*(1 - math.exp(-k*r2[i]*l)) * r2[i] * table1[i] * wp_photons[i] * media_1nm[i]
+				aqr31 += (math.pi/4)**2*(d / f)**2*D**2*K*T*dt*(1 - math.exp(-k*r3[i]*l)) * r3[i] * table1[i] * wp_photons[i] * media_1nm[i]
+				aqr41 += (math.pi/4)**2*(d / f)**2*D**2*K*T*dt*(1 - math.exp(-k*r4[i]*l)) * r4[i] * table1[i] * wp_photons[i] * media_1nm[i]
 		for i in range(table2.shape[0]):
 			w = i + 300
 			if (table2[i] > 0):
-				aql2 += (math.pi/4)**2*(d / f)**2*D**2*K*T*dt*(1 - math.exp(-k*vpt(w, lw)*l)) * vpt(w, lw) * table2[i] * photons[i] * ocular_media(w)
-				aqm2 += (math.pi/4)**2*(d / f)**2*D**2*K*T*dt*(1 - math.exp(-k*vpt(w, mw)*l)) * vpt(w, mw) * table2[i] * photons[i] * ocular_media(w)
-				aqs2 += (math.pi/4)**2*(d / f)**2*D**2*K*T*dt*(1 - math.exp(-k*vpt(w, sw)*l)) * vpt(w, sw) * table2[i] * photons[i] * ocular_media(w)
+				aqr12 += (math.pi/4)**2*(d / f)**2*D**2*K*T*dt*(1 - math.exp(-k*r1[i]*l)) * r1[i] * table2[i] * wp_photons[i] * media_1nm[i]
+				aqr22 += (math.pi/4)**2*(d / f)**2*D**2*K*T*dt*(1 - math.exp(-k*r2[i]*l)) * r2[i] * table2[i] * wp_photons[i] * media_1nm[i]
+				aqr32 += (math.pi/4)**2*(d / f)**2*D**2*K*T*dt*(1 - math.exp(-k*r3[i]*l)) * r3[i] * table2[i] * wp_photons[i] * media_1nm[i]
+				aqr42 += (math.pi/4)**2*(d / f)**2*D**2*K*T*dt*(1 - math.exp(-k*r4[i]*l)) * r4[i] * table2[i] * wp_photons[i] * media_1nm[i]
 		
 		# This defines "number of cones per receptive field" to mean the convergence
 		# ratio for each type of cone. This can in fact be less than 1 (see Vlahos
@@ -3690,82 +3077,68 @@ def color_contrast(table1, table2, quantum_noise=args.qn, lw = args.lw, mw = arg
 		# chickens and honey possums. The default for v is now "1". Setting it to 0
 		# disables this feature.
 		if (v != 0):
-			aql1 = aql1*v*args.lp
-			aql2 = aql2*v*args.lp
-			aqm1 = aqm1*v*args.mp
-			aqm2 = aqm2*v*args.mp
-			aqs1 = aqs1*v*args.sp
-			aqs2 = aqs2*v*args.sp
+			aqr11 = aqr11*v*args.r1p
+			aqr12 = aqr12*v*args.r1p
+			aqr21 = aqr21*v*args.r2p
+			aqr22 = aqr22*v*args.r2p
+			aqr31 = aqr31*v*args.r3p
+			aqr32 = aqr32*v*args.r3p
+			aqr41 = aqr41*v*args.r4p
+			aqr42 = aqr42*v*args.r4p
 		
-		el = math.sqrt((1 / aql1 + 1 / aql2) + 2*wl**2)
-		em = math.sqrt((1 / aqm1 + 1 / aqm2) + 2*wm**2)
-		es = math.sqrt((1 / aqs1 + 1 / aqs2) + 2*ws**2)
+		er1 = math.sqrt((1 / aqr11 + 1 / aqr12) + 2*wr1**2)
+		er2 = math.sqrt((1 / aqr21 + 1 / aqr22) + 2*wr2**2)
+		er3 = math.sqrt((1 / aqr31 + 1 / aqr32) + 2*wr3**2)
+		er4 = math.sqrt((1 / aqr41 + 1 / aqr42) + 2*wr4**2)
 		
 		if (args.qcheck):
-			print("L1: " + str(aql1) + ", M1: " + str(aqm1) + ", S1: " + str(aqs1))
-			print("L2: " + str(aql2) + ", M2: " + str(aqm2) + ", S2: " + str(aqs2))
-			print("el: " + str(el) + ", em: " + str(em) + ", es: " + str(es))
-			print("wl: " + str(wl) + ", wm: " + str(wm) + ", ws: " + str(ws))
+			print("r11: " + str(aqr11) + ", r21: " + str(aqr21)
+			+ ", r31: " + str(aqr31) + ", r41: " + str(aqr41))
+			print("r12: " + str(aqr12) + ", r22: " + str(aqr22)
+			+ ", r32: " + str(aqr32) + ", r42: " + str(aqr42))
+			print("er1: " + str(er1) + ", er2: " + str(er2)
+			+ ", er3: " + str(er3) + ", er4: " + str(er4))
+			print("wr1: " + str(wr1) + ", wr2: " + str(wr2)
+			+ ", wr3: " + str(wr3) + ", wr4: " + str(wr4))
 	else:
-		el = wl
-		em = wm
-		es = ws
+		er1 = wr1
+		er2 = wr2
+		er3 = wr3
+		er4 = wr4
 	
-	if (l1 != m1):
-		delta_s = (es**2*(dfl - dfm)**2 + em**2*(dfl - dfs)**2 + el**2*(dfs - dfm)**2) / ((el*em)**2 + (el*es)**2 + (em*es)**2)
+	if (dimension > 3):
+		delta_s = ((er3*er4)**2*(dfr1 - dfr2)**2
+		+ (er2*er4)**2*(dfr1 - dfr3)**2
+		+ (er2*er3)**2*(dfr1 - dfr4)**2
+		+ (er1*er4)**2*(dfr2 - dfr3)**2
+		+ (er1*er3)**2*(dfr2 - dfr4)**2
+		+ (er1*er2)**2*(dfr3 - dfr4)**2) / ((er1*er2*er3)**2 + (er1*er2*er4)**2 + (er1*er3*er4)**2 + (er2*er3*er4)**2)
+	elif (dimension == 3):
+		delta_s = (er3**2*(dfr1 - dfr2)**2
+		+ er2**2*(dfr1 - dfr3)**2
+		+ er1**2*(dfr3 - dfr2)**2) / ((er1*er2)**2 + (er1*er3)**2 + (er2*er3)**2)
 	else:
-		delta_s = (dfl - dfs)**2 / (el**2 + es**2)
+		delta_s = (dfr1 - dfr2)**2 / (er1**2 + er2**2)
 	return math.sqrt(delta_s)
 
 # brightness contrast based on https://journals.biologists.com/jeb/article/207/14/2471/14748/Interspecific-and-intraspecific-views-of-color
 # I've changed it to a signed value because we care about the direction.
-def brightness_contrast(table1, table2, lw=args.lw):
+def brightness_contrast(table1, table2, r1=luminosity):
 	# interpolate 1-nm intervals if we're provided with 10-nm
-	if (len(table1) < 401):
-		x10nm = np.empty(41)
-		for i in range(41):
-			x10nm[i] = i*10 + 300
-		
-		x1nm = np.empty(401)
-		for i in range(401):
-			x1nm[i] = i + 300
-		
-		table1 = np.interp(x1nm, x10nm, table1)
-	if (len(table2) < 401):
-		x10nm = np.empty(41)
-		for i in range(41):
-			x10nm[i] = i*10 + 300
-		
-		x1nm = np.empty(401)
-		for i in range(401):
-			x1nm[i] = i + 300
-		
-		table2 = np.interp(x1nm, x10nm, table2)
-	
-	# background light
-	# This doesn't seem to be used for anything? I don't think a von Kries transform is
-	# relevant here. It gets divided out anyway.
-	wpt = 0
+	if (len(table1) < 401): table1 = np.interp(x_1nm, x_10nm, table1)
+	if (len(table2) < 401): table2 = np.interp(x_1nm, x_10nm, table2)
 	
 	# We're redoing this to use sensitivity() so we can use the photopic luminosity
 	# function for humans.
 	q1 = 0
 	q2 = 0
-	for i in range(table1.shape[0]):
-		w = i + 300
-		wpt += sensitivity(w, lw) * wp_1nm[i]
-		q1 += sensitivity(w, lw) * table1[i] * wp_1nm[i]
-	for i in range(table2.shape[0]):
-		w = i + 300
-		q2 += sensitivity(w, lw) * table2[i] * wp_1nm[i]
+	for i in range(401):
+		q1 += r1[i] * table1[i] * wp_1nm[i]
+		q2 += r1[i] * table2[i] * wp_1nm[i]
 	
 	df = math.log(q1 / q2)
 	delta_s = df / args.weberb # not an absolute value
 	return delta_s
-
-# print specified information
-print("L: " + str(l1) + ", M: " + str(m1) + ", S: " + str(s1) + ", rod: " + str(rod))
-print("")
 
 """
 plot visual pigment templates
@@ -3773,153 +3146,326 @@ I changed the line colors back to red, green and blue. I've been trying to avoid
 of color coding, but in this case it's generally understood which visual pigment template
 is which based on its position on the graph, and the shades-of-gray "color" scheme was too
 pale for my liking.
+
+09/10/2025 -- you can now plot an arbitrary number of templates and the color for each is
+chosen based on their peak sensitivity
 """
 if (args.vpt):
-	xvalues = np.empty(400)
-	lvalues = np.empty(400)
-	mvalues = np.empty(400)
-	svalues = np.empty(400)
-	rvalues = np.empty(400)
-	lmax = 0
-	mmax = 0
-	smax = 0
-	rmax = 0
-	for i in range(0, 400):
-		xvalues[i] = i + 300
-		if (args.media != "none"):
-			lvalues[i] = vpt(i+300, l1) * ocular_media(i+300)
-			mvalues[i] = vpt(i+300, m1) * ocular_media(i+300)
-			svalues[i] = vpt(i+300, s1) * ocular_media(i+300)
-			rvalues[i] = vpt(i+300, rod) * ocular_media(i+300)
-			lmax = max(lmax, lvalues[i])
-			mmax = max(mmax, mvalues[i])
-			smax = max(smax, svalues[i])
-			rmax = max(rmax, rvalues[i])
-		else:
-			lvalues[i] = vpt(i+300, l1)
-			mvalues[i] = vpt(i+300, m1)
-			svalues[i] = vpt(i+300, s1)
-			rvalues[i] = vpt(i+300, rod)
-			lmax = 1
-			mmax = 1
-			smax = 1
-			rmax = 1
-
-	plt.plot(xvalues, lvalues/lmax, 'r', label="L (" + str(args.lw) + ")")
-	# don't plot redundant curves
-	if (l1 != m1):
-		plt.plot(xvalues, mvalues/mmax, 'g', label="M (" + str(args.mw) + ")")
-	if (m1 != s1):
-		plt.plot(xvalues, svalues/smax, 'b', label="S (" + str(args.sw) + ")")
+	# rod
 	if (args.rod != 0):
-		plt.plot(xvalues, rvalues/rmax, ':k', label="rod (" + str(args.rod) + ")")
+		yvalues = np.empty(401)
+		ymax = 0
+		for i in range(401):
+			x_1nm[i] = i + 300
+			yvalues[i] = vpt(i+300, rod) * media_1nm[i]
+			ymax = max(ymax, yvalues[i])
+		plt.plot(x_1nm, yvalues/ymax, ':k')
+	
+	# non-rod receptors
+	for i in range(dimension):
+		peak = receptors[i] # peak sensitivity
+		yvalues = rlist[i] * media_1nm
+		ymax = max(*yvalues)
+		
+		plt.plot(x_1nm, yvalues/ymax, color=colorcode(peak))
+
 	plt.xlabel("Wavelength (nm)")
 	plt.ylabel("Relative sensitivity")
-	plt.legend()
 	plt.show()
 
 # show luminous efficiency function and lens filtering
 if (args.luminosity):
-	xvalues = np.empty(401)
-	yvalues = np.empty(401)
-	yvalues1 = np.empty(401)
 	ms = 300
-	for i in range(300, 701):
-		if (sensitivity(i) > (sensitivity(ms))):
-			ms = i
-		xvalues[i-300] = i
-		yvalues[i-300] = sensitivity(i)
-		yvalues1[i-300] = ocular_media(i)
+	msy = 0
+	for i in range(401):
+		if (luminosity[i] > msy):
+			msy = luminosity[i]
+			ms = i+300
 	print("Maximum sensitivity: " + str(ms))
 	print("")
 	
-	plt.plot(xvalues, yvalues/sensitivity(ms), 'k')
+	plt.plot(x_1nm, luminosity, 'k')
 	if (args.media != "none"):
-		plt.plot(xvalues, yvalues1, ':k')
+		plt.plot(x_1nm, media_1nm, ':k')
 	plt.xlabel("Wavelength (nm)")
 	plt.ylabel("Relative sensitivity")
 	plt.show()
 
-# plot color triangle
-# Now a real Maxwell triangle with Cartesian coordinates. Note these triangles often (more commonly?)
-# have M on the left and S on top rather than the other way around as I do here. I chose this
-# orientation because I find it more intuitive.
-if (args.triangle):
-	el = 0
-	em = 0
-	es = 0
-	d65l = 0
-	d65m = 0
-	d65s = 0
-	wl = 0
-	wm = 0
-	ws = 0
+"""
+plot color triangle
+See this paper for information on Maxwell triangles: https://www.researchgate.net/publication/8064482_Animal_colour_vision_-_Behavioural_tests_and_physiological_concepts
+In the literature, Maxwell triangles may have either M on the left and S on top, as in the above
+paper, or the reverse (S left, M top). triangle() defaults to the former because it simplifies
+having multiple dimensions of plots. If you want a different orientation, you can specify another
+order for --receptors and change the labels with --r1name, --r2name and --r3name. Note the default
+label for the left side is "M" for both lines and triangles.
+
+The name "triangle" is now slightly misleading because it produces a line or tetrahedron when
+provided with 2 or 4+ receptors.
+
+Numbers are off by default because they overlap with everything and are almost unreadable.
+
+Axes are off by default because these plots don't usually include them and the Y-axis isn't
+meaningful for dichromacy. This doesn't hide the color bar for the 4th dimension.
+"""
+def triangle(spectra=[], reflect=True, markers=[], colors=[], text=[], legend=False, numbers=False, mec='k', gamut=False, gamutcolor='k', gamutedge='-', achro=True, axes=False):
+	# default list elements
+	# Checking if they're blank doesn't always work if you call the function twice in a row.
+	if (len(markers) < len(spectra)):
+		for i in range(len(spectra)): markers.append('o')
+	if (len(colors) < len(spectra)):
+		for i in range(len(spectra)): colors.append('k')
+	if (len(text) < len(spectra)):
+		for i in range(len(spectra)): text.append('')
+	
+	# plot triangle and visible gamut
+	wr1 = 0
+	wr2 = 0
+	wr3 = 0
+	wr4 = 0
+	wr5 = 0
 	xvalues = np.empty(41)
-	yvalues = np.empty(41)
+	yvalues = np.zeros(41)
+	zvalues = np.zeros(41)
+	wvalues = np.zeros(41)
 	labels = np.empty(41)
 	
-	# white
-	for i in range(0, 41):
+	# triangle
+	if (dimension > 3):
+		fig = plt.figure()
+		ax = fig.add_subplot(projection='3d')
+		
+		# vertices
+		r1v = [1/math.sqrt(2), -math.sqrt(2)/(2*math.sqrt(3)), -1/(2*math.sqrt(3))]
+		r2v = [-1/math.sqrt(2), -math.sqrt(2)/(2*math.sqrt(3)), -1/(2*math.sqrt(3))]
+		r3v = [0, math.sqrt(2/3), -1/(2*math.sqrt(3))]
+		r4v = [0, 0, math.sqrt(3)/2]
+		
+		# LMS triangle
+		ax.plot([r1v[0], r2v[0], r3v[0], r1v[0]], [r1v[1], r2v[1], r3v[1], r1v[1]],
+		[r1v[2], r2v[2], r3v[2], r1v[2]], '-k')
+		# LMU triangle
+		ax.plot([r1v[0], r2v[0], r4v[0], r1v[0]], [r1v[1], r2v[1], r4v[1], r1v[1]],
+		[r1v[2], r2v[2], r4v[2], r1v[2]], '-k')
+		# LSU triangle
+		ax.plot([r1v[0], r3v[0], r4v[0], r1v[0]], [r1v[1], r3v[1], r4v[1], r1v[1]],
+		[r1v[2], r3v[2], r4v[2], r1v[2]], '-k')
+		# MSU triangle
+		ax.plot([r2v[0], r3v[0], r4v[0], r2v[0]], [r2v[1], r3v[1], r4v[1], r2v[1]],
+		[r2v[2], r3v[2], r4v[2], r2v[2]], '-k')
+		
+	elif (dimension == 3):
+		xborder = np.array([-math.sqrt(1/2), 0, math.sqrt(1/2), -math.sqrt(1/2)])
+		yborder = np.array([-math.sqrt(2/3)/2, math.sqrt(2/3), -math.sqrt(2/3)/2, -math.sqrt(2/3)/2])
+		plt.plot(xborder, yborder, '-k')
+		plt.text(-math.sqrt(1/2) - 0.05, -math.sqrt(2/3)/2 - 0.025, args.r2name)
+		plt.text(0 - 0.025, math.sqrt(2/3) + 0.0125, args.r3name)
+		plt.text(math.sqrt(1/2) + 0.0125, -math.sqrt(2/3)/2 - 0.025, args.r1name)
+	else:
+		plt.plot([-1, 1], [0, 0], '-k')
+		plt.text(-1.1, -.025, args.r2name)
+		plt.text(1.1, -.025, args.r1name)
+		plt.ylim(-1, 1)
+
+	# gamut
+	for i in range(41):
 		w = i*10 + 300
-		wl += vpt(w, l1) * wp[i] * ocular_media(w)
-		wm += vpt(w, m1) * wp[i] * ocular_media(w)
-		ws += vpt(w, s1) * wp[i] * ocular_media(w)
-		el += vpt(w, l1) * e[i] * ocular_media(w)
-		em += vpt(w, m1) * e[i] * ocular_media(w)
-		es += vpt(w, s1) * e[i] * ocular_media(w)
-		d65l += vpt(w, l1) * d65[i] * ocular_media(w)
-		d65m += vpt(w, m1) * d65[i] * ocular_media(w)
-		d65s += vpt(w, s1) * d65[i] * ocular_media(w)
-	
-	for i in range(0, 41):
+		wr1 += r1_1nm[i*10] * wp_10nm[i] * media_10nm[i]
+		wr2 += r2_1nm[i*10] * wp_10nm[i] * media_10nm[i]
+		wr3 += r3_1nm[i*10] * wp_10nm[i] * media_10nm[i]
+		wr4 += r4_1nm[i*10] * wp_10nm[i] * media_10nm[i]
+		wr5 += r5_1nm[i*10] * wp_10nm[i] * media_10nm[i]
+	for i in range(41):
 		w = i*10 + 300
 		labels[i] = w
-		l = vpt(w, l1) * ocular_media(w)
-		m = vpt(w, m1) * ocular_media(w)
-		s = vpt(w, s1) * ocular_media(w)
-		if (args.novk == False):
-			l = l / wl
-			m = m / wm
-			s = s / ws
-		total = l + m + s
-		l = l / total
-		m = m / total
-		s = s / total
-		xvalues[i] = math.sqrt(1/2)*(l - s)
-		yvalues[i] = math.sqrt(2/3)*(m - (l + s)/2)
-	plt.plot(xvalues, yvalues, '-k')
-	for i in range(0, 41):
-		plt.plot(xvalues[i], yvalues[i], 'ok')
-		plt.text(xvalues[i], yvalues[i], labels[i])
+		r1 = r1_1nm[i*10] * wp_10nm[i] * media_10nm[i]
+		r2 = r2_1nm[i*10] * wp_10nm[i] * media_10nm[i]
+		r3 = r3_1nm[i*10] * wp_10nm[i] * media_10nm[i]
+		r4 = r4_1nm[i*10] * wp_10nm[i] * media_10nm[i]
+		r5 = r5_1nm[i*10] * wp_10nm[i] * media_10nm[i]
+		if (args.vonkries):
+			r1 = r1 / wr1
+			if (wr2 > 0): r2 = r2 / wr2
+			if (wr3 > 0): r3 = r3 / wr3
+			if (wr4 > 0): r4 = r4 / wr4
+			if (wr5 > 0): r5 = r5 / wr5
+		total = r1 + r2 + r3 + r4 + r5
+		if (total > 0): # avoid "invalid value encountered in scalar divide" warning
+			r1 = r1 / total
+			r2 = r2 / total
+			r3 = r3 / total
+			r4 = r4 / total
+			r5 = r5 / total
+		if (dimension > 2):
+			xvalues[i] = math.sqrt(1/2)*(r1 - r2)
+			yvalues[i] = math.sqrt(2/3)*(r3 - (r1 + r2)/2)
+			if (dimension > 3): zvalues[i] = math.sqrt(3)/2*(r4 - (r1 + r2 + r3)/3)
+			# we're not combining this with the others, so no coefficient
+			if (dimension > 4): wvalues[i] = (r5 - (r1 + r2 + r3 + r4)/4)
+		else:
+			if (total > 0): xvalues[i] = (r1 - r2)
+			else: xvalues[i] = 0
+		if (total > 0): # Hide zeroes. Line segments connecting them are still plotted.
+			if (dimension > 3):
+				if (gamut): ax.plot(xvalues[i], yvalues[i], zvalues[i], 'o', color=gamutcolor)
+				# use int() to cut off the ".0" at the end
+				if (numbers): ax.text(xvalues[i], yvalues[i], zvalues[i], int(labels[i]))
+			else:
+				if (gamut): plt.plot(xvalues[i], yvalues[i], 'o', color=gamutcolor)
+				if (numbers): plt.text(xvalues[i], yvalues[i], int(labels[i]))
 	
-	# E and D65
-	if (args.novk == False):
-		el = el / wl
-		em = em / wm
-		es = es / ws
-		d65l = d65l / wl
-		d65m = d65m / wm
-		d65s = d65s / ws
+	if (gamut):
+		if (dimension > 3): plt.plot(xvalues, yvalues, zvalues, linestyle=gamutedge, color=gamutcolor)
+		else: plt.plot(xvalues, yvalues, linestyle=gamutedge, color=gamutcolor)
 	
-	ex = math.sqrt(1/2)*(el - es) / (el + em + es)
-	ey = math.sqrt(2/3)*(em - (el + es)/2) / (el + em + es)
-	d65x = math.sqrt(1/2)*(d65l - d65s) / (d65l + d65m + d65s)
-	d65y = math.sqrt(2/3)*(d65m - (d65l + d65s)/2) / (d65l + d65m + d65s)
-	plt.plot(ex, ey, 'ok')
-	plt.plot(d65x, d65y, 'ok')
-	plt.text(ex, ey, 'E')
-	plt.text(d65x, d65y, 'D65')
+	# plot point at origin
+	if (achro):
+		if (dimension > 3): plt.plot(0, 0, 0, linestyle='', color='0.8', marker='s')
+		else: plt.plot(0, 0, linestyle='', color='0.8', marker='s')
 	
-	xborder = np.array([-math.sqrt(1/2), 0, math.sqrt(1/2), -math.sqrt(1/2)])
-	yborder = np.array([-math.sqrt(2/3)/2, math.sqrt(2/3), -math.sqrt(2/3)/2, -math.sqrt(2/3)/2])
-	plt.plot(xborder, yborder, '-k')
-	plt.text(-math.sqrt(1/2) - 0.05, -math.sqrt(2/3)/2 - 0.025, 'S')
-	plt.text(0 - 0.025, math.sqrt(2/3) + 0.0125, 'M')
-	plt.text(math.sqrt(1/2) + 0.0125, -math.sqrt(2/3)/2 - 0.025, 'L')
+	
+	# plot spectra
+	if (len(spectra) > 0):
+		wpr1 = 0
+		wpr2 = 0
+		wpr3 = 0
+		wpr4 = 0
+		wpr5 = 0
+		posxlist = []
+		posylist = []
+		poszlist = []
+		poswlist = []
+		for i in range(401):
+			wpr1 += r1_1nm[i] * wp_1nm[i] * media_1nm[i]
+			wpr2 += r2_1nm[i] * wp_1nm[i] * media_1nm[i]
+			wpr3 += r3_1nm[i] * wp_1nm[i] * media_1nm[i]
+			wpr4 += r4_1nm[i] * wp_1nm[i] * media_1nm[i]
+			wpr5 += r5_1nm[i] * wp_1nm[i] * media_1nm[i]
+		
+		for i in range(len(spectra)):
+			table = spectra[i]
+			table_r1 = 0
+			table_r2 = 0
+			table_r3 = 0
+			table_r4 = 0
+			table_r5 = 0
+			
+			# interpolate
+			if(len(table) < 401): table = np.interp(x_1nm, x_10nm, table)
+			
+			# combine SPD with illuminant
+			if (reflect == True):
+				for j in range(401): table[j] *= wp_1nm[j]
+			
+			# remove nans
+			for j in range(401):
+				if (np.isnan(table[j])): table[j] = 0
+			
+			for j in range(401):
+				table_r1 += r1_1nm[j] * table[j] * media_1nm[j]
+				table_r2 += r2_1nm[j] * table[j] * media_1nm[j]
+				table_r3 += r3_1nm[j] * table[j] * media_1nm[j]
+				table_r4 += r4_1nm[j] * table[j] * media_1nm[j]
+				table_r5 += r5_1nm[j] * table[j] * media_1nm[j]
+			
+			# von Kries transform
+			if (args.vonkries):
+				table_r1 = table_r1 / wpr1
+				if (wpr2 > 0): table_r2 = table_r2 / wpr2
+				if (wpr3 > 0): table_r3 = table_r3 / wpr3
+				if (wpr4 > 0): table_r4 = table_r4 / wpr4
+				if (wpr5 > 0): table_r5 = table_r5 / wpr5
+
+			# declare variables
+			posx = 0
+			posy = 0
+			posz = 0
+			posw = 0
+
+			if (dimension > 3):
+				total = table_r1 + table_r2 + table_r3 + table_r4 + table_r5
+				if (total > 0):
+					posx = math.sqrt(1/2)*(table_r1 - table_r2) / total
+					posy = math.sqrt(2/3)*(table_r3 - (table_r1 + table_r2)/2) / total
+					posz = math.sqrt(3)/2*(table_r4 - (table_r1 + table_r2 + table_r3)/3) / total
+					posw = (table_r5 - (table_r1 + table_r2 + table_r3 + table_r4)/4) / total
+				else:
+					posx = 0
+					posy = 0
+					posz = 0
+					posw = 0
+				if (args.verbose):
+					print("Relative quantum catches: r1=" + str(table_r1) + ", r2=" + str(table_r2) + ", r3=" + str(table_r3) + ", r4=" + str(table_r4) + ", r5=" + str(table_r5))
+					print("Position in color tetrahedron: " + str((posx, posy, posz, posw)))
+			elif (dimension == 3):
+				total = table_r1 + table_r2 + table_r3
+				if (total > 0):
+					posx = math.sqrt(1/2)*(table_r1 - table_r2) / total
+					posy = math.sqrt(2/3)*(table_r3 - (table_r1 + table_r2)/2) / total
+				else:
+					posx = 0
+					posy = 0
+				if (args.verbose):
+					print("Relative quantum catches: r1=" + str(table_r1) + ", r2=" + str(table_r2) + ", r3=" + str(table_r3))
+					print("Position in color triangle: " + str((posx, posy)))
+			elif (dimension == 2):
+				if (table_r1 + table_r2 > 0): posx = (table_r1 - table_r2) / (table_r1 + table_r2)
+				else: posx = 0
+				if (args.verbose):
+					print("Relative quantum catches: r1=" + str(table_r1) + ", r2=" + str(table_r2))
+					print("Position on color line: " + str(posx))
+			elif (dimension == 1 and args.verbose):
+				# monochromacy
+				print("Relative quantum catch: " + str(table_r1))
+
+			if (dimension == 4):
+				if (text[i] == ''):
+					ax.plot(posx, posy, posz, marker=markers[i], mec=mec, color=colors[i], linestyle='')
+				else:
+					ax.plot(posx, posy, posz, marker=markers[i], mec=mec, color=colors[i], label=text[i], linestyle='')
+			elif (dimension < 4):
+				if (text[i] == ''):
+					plt.plot(posx, posy, marker=markers[i], mec=mec, color=colors[i], linestyle='')
+				else:
+					plt.plot(posx, posy, marker=markers[i], mec=mec, color=colors[i], label=text[i], linestyle='')
+
+			posxlist.append(posx)
+			posylist.append(posy)
+			poszlist.append(posz)
+			poswlist.append(posw)
+	
+		# cmap needs the whole list at once
+		if (dimension > 4):
+			img = ax.scatter(posxlist, posylist, poszlist, c=poswlist, cmap=plt.viridis())
+			fig.colorbar(img)
+	
+	if (dimension > 3):
+		# positioning text is awkward, I have a better idea...
+		ax.plot(*r1v, 'o', color=colorcode(receptors[0]))
+		ax.plot(*r2v, 'o', color=colorcode(receptors[1]))
+		ax.plot(*r3v, 'o', color=colorcode(receptors[2]))
+		ax.plot(*r4v, 'o', color=colorcode(receptors[3]))
+	
+	if (axes == False): plt.axis('off')
+	if (legend and dimension < 5): plt.legend()
 	plt.show()
+
+if (type(args.csplot) == list):
+	if (args.csplot == []):
+		triangle(numbers=True, gamut=True)
+	else:
+		spectra = []
+		colors = []
+		for i in range(len(args.csplot)):
+			values = csv2spec(args.csplot[i])
+			spectrum = np.interp(x_1nm, *values)
+			spectra.append(spectrum)
+			colors.append(spec2rgb(spectrum))
+		triangle(spectra, colors=colors)
 
 """
 function for modeling color discrimination trials
+
 This outputs a probability for both success (defined as at least the criterion) and failure (less
 than the criterion) because the behavioral results include both. We use different thresholds
 for "success" for the different sets of discriminations. In Friedman (1967) the criterion was
@@ -3927,8 +3473,10 @@ for "success" for the different sets of discriminations. In Friedman (1967) the 
 significant performance is defined as more than 62.5% and the total number of trials for each
 pair was 64, so the criterion would be 41 of 64. This produces considerably different
 significance thresholds when comparing "success" or "failure" against expected values:
+
 * 35/40 and 68/80: success 0-12 (out of 16), failure 15-16
 * 41/64: success 0-8, failure 12-16
+
 For contrast where we don't consider overlap and expect chance (50%) performance for deltaS < 1,
 this means that under the first criterion "success" is defined as at least 10 of 16 distinguishable
 pairs and "failure" is defined as at most 13 of 16, whereas under the second criterion "success"
@@ -3936,50 +3484,41 @@ is at least 1 and "failure" is at most 7. There are also several intermediate va
 the probability of both success and failure exceeds 0.05. With the first two criteria, success
 becomes more likely than failure at 14 (12 distinguishable), and with the second this occurs at 10.5
 (5 distinguishable).
+
 This is now also used directly for optimization graphs, so all the parts relevant only to
 testing one set of pigments have been made conditional to reduce noise and computation.
 """
-def color_disc(f0, f1, f2, f3, s0, s1, s2, s3, correct=35, trials=40, alternative='greater', lw = args.lw, mw = args.mw, sw = args.sw, output=True):
+def color_disc(first, second, correct=35, trials=40, r1 = 0, r2 = 0, r3 = 0, output=True):
+	# custom receptors
+	custom_r1 = r1_1nm
+	custom_r2 = r2_1nm
+	custom_r3 = r3_1nm
+	if (r1 > 0):
+		for i in range(401): custom_r1[i] = vpt(i+300, r1)
+	if (r2 > 0):
+		for i in range(401): custom_r2[i] = vpt(i+300, r1)
+	if (r3 > 0):
+		for i in range(401): custom_r3[i] = vpt(i+300, r3)
+	plt.show()
 	d = 0 # different
 	s = 0 # same
 	counter = 0
 	box = np.empty(16)
 	
-	for i in range(0, 4):
-		if (i == 0):
-			flevel = f0
-		elif (i == 1):
-			flevel = f1
-		elif (i == 2):
-			flevel = f2
-		elif (i == 3):
-			flevel = f3
-		for j in range(0, 4):
-			if (j == 0):
-				slevel = s0
-			elif (j == 1):
-				slevel = s1
-			elif (j == 2):
-				slevel = s2
-			elif (j == 3):
-				slevel = s3
-			contrast = color_contrast(flevel, slevel, lw = lw, mw = mw, sw = sw)
+	for i in range(4):
+		for j in range(4):
+			contrast = color_contrast(first[i], second[j], r1 = custom_r1, r2 = custom_r2, r3 = custom_r3)
 			box[counter] = contrast
 			if (output):
 				print(str(i) + " vs. " + str(j) + ": " + str(contrast))
-				if (contrast < 1):
-					s += 1
-				else:
-					d += 1
+				if (contrast < 1): s += 1
+				else: d += 1
 			counter += 1
 	if (output):
 		print("Different: " + str(d))
 		print("Same: " + str(s))
-		#if (l1 == m1):
 		binomial = binomtest(correct, trials, p=(d + s/2)/16, alternative='greater')
 		binomial2 = binomtest(correct-1, trials, p=(d + s/2)/16, alternative='less')
-		#else:
-		#	binomial = binomtest(correct, trials, p=(d + s/2)/16, alternative=alternative)
 		print("P-value (success): " + str(binomial.pvalue))
 		print("P-value (failure): " + str(binomial2.pvalue))
 	
@@ -3990,7 +3529,6 @@ def color_disc(f0, f1, f2, f3, s0, s1, s2, s3, correct=35, trials=40, alternativ
 	if (output):
 		print("Median contrast: " + str(mc))
 		print("")
-		#return
 	return [mc, minc, maxc, box]
 
 
@@ -3999,34 +3537,21 @@ like color_disc except for brightness
 We want to know both the direction and the strength of the difference
 to judge whether it could be reliably used as a cue.
 """
-def brightness_disc(f0, f1, f2, f3, s0, s1, s2, s3, correct=35, trials=40, lw=args.lw, output=True): 
+def brightness_disc(first, second, correct=35, trials=40, r1=0, output=True, customize=False):
+	# custom L cone
+	custom_r1 = luminosity
+	if (r1 > 0):
+		for i in range(401): custom_r1[i] = vpt(i+300, r1) * media_1nm[i]
 	fb = 0 # first brighter
 	sb = 0 # second brighter
-	equal = 0
 	# first set
-	for i in range(0, 4):
-		if (i == 0):
-			flevel = f0
-		elif (i == 1):
-			flevel = f1
-		elif (i == 2):
-			flevel = f2
-		elif (i == 3):
-			flevel = f3
+	for i in range(4):
 		# second set
-		for j in range(0, 4):
-			if (j == 0):
-				slevel = s0
-			elif (j == 1):
-				slevel = s1
-			elif (j == 2):
-				slevel = s2
-			elif (j == 3):
-				slevel = s3
-			contrast = brightness_contrast(flevel, slevel, lw=lw)
+		for j in range(4):
+			contrast = brightness_contrast(first[i], second[j], r1=custom_r1)
 			if (contrast >= 1): fb += 1
 			elif (contrast <= -1): sb += 1
-			else: equal += 1
+	equal = 16 - fb - sb
 	
 	binomial = binomtest(correct, trials, (max(fb, sb) + equal/2) / 16, alternative='greater')
 	binomial2 = binomtest(correct-1, trials, (max(fb, sb) + equal/2) / 16, alternative='less')
@@ -4040,3 +3565,6 @@ def brightness_disc(f0, f1, f2, f3, s0, s1, s2, s3, correct=35, trials=40, lw=ar
 		print("")
 
 	return [binomial.pvalue, binomial2.pvalue]
+
+# print execution time
+#print("%s seconds" % (time.time() - start_time))
