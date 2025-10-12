@@ -1,3 +1,9 @@
+# Background
+
+This set of scripts began as an attempt to reverse-engineer a program called Color Vision Simulator developed for altering photographs to mimic various forms of primate color vision. The method used by CVS is described in the paper where it was introduced (Melin et al. 2013), but the software itself has not been published. I later added other functions for analyzing animal color vision more generally, and the image processing code is now contained in its own file (image_processing.py) because it relies on OpenCV while the main file uses matplotlib -- see [https://github.com/opencv/opencv-python/issues/386](this bug report).
+
+I have no formal background in biology or neuroscience, and these tools are meant more for artistic purposes than rigorous analysis. Professional-quality software with some similar functions includes [https://www.empiricalimaging.com/](micaToolbox) and [https://pavo.colrverse.com/](pavo) (both free to download).
+
 # References
 
 * A.D. Melin, D.W. Kline, C.M. Hickey, L.M. Fedigan, Food search through the eyes of a monkey: A functional substitution approach for assessing the ecology of primate color vision, Vision Research, Volume 86, 2013, Pages 87-96, ISSN 0042-6989, https://doi.org/10.1016/j.visres.2013.04.013. (https://www.sciencedirect.com/science/article/pii/S0042698913001119)
@@ -18,6 +24,7 @@
 * CIE 2-deg CMFs. http://cvrl.ucl.ac.uk/database/text/cienewxyz/cie2012xyz2.htm
 * Pridmore, R.W. A new transformation of cone responses to opponent color responses. Atten Percept Psychophys 83, 1797–1803 (2021). https://doi.org/10.3758/s13414-020-02216-7
 * https://chittkalab.sbcs.qmul.ac.uk/1992/Chittka%201992%20J%20Comp%20Physiol_R.pdf
+* https://doi.org/10.1016/j.jqsrt.2020.107162
 
 # Further reading
 * https://xkcd.com/1926/
