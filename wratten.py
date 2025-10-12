@@ -1,17 +1,24 @@
-# Kodak Wratten camera filters
-# These were obtained from the graphs at https://www.kodak.com/en/motion/page/wratten-2-filters/
-# using Plot Digitizer (https://plotdigitizer.sourceforge.net/). The wavelength intervals are
-# roughly 5 nm (getting exact integer X values usually isn't possible).
+"""
+Kodak Wratten camera filters
+These were obtained from the graphs at https://www.kodak.com/en/motion/page/wratten-2-filters/
+using Plot Digitizer (https://plotdigitizer.sourceforge.net/). The wavelength intervals are
+roughly 5 nm (getting exact integer X values usually isn't possible).
+"""
 
 import central as c
 import numpy as np
 import math
 import matplotlib.pyplot as plt
 import statistics
+import time
+import scipy
+from scipy.integrate import quad
 args = c.args
-l1 = c.l1
-m1 = c.m1
-s1 = c.s1
+r1 = args.receptors[0]
+r2 = args.receptors[1]
+
+# execution time
+start_time = time.time()
 
 # yellow 15
 yellow15_5nm = np.array([[
@@ -4422,278 +4429,190 @@ for i in range(401):
 	gray_10[i] = gray_0[i] * nd10_1nm[i]
 
 # plot
-xvalues = np.empty(401)
-for i in range(401):
-        xvalues[i] = i + 300
 plt.subplot(3, 2, 1)
-plt.plot(xvalues, red25_0*100, 'r')
-plt.plot(xvalues, red25_03*100, 'r')
-plt.plot(xvalues, red25_07*100, 'r')
-plt.plot(xvalues, red25_10*100, 'r')
+plt.plot(c.x_1nm, red25_0*100, color=c.spec2rgb(red25_0))
+plt.plot(c.x_1nm, red25_03*100, color=c.spec2rgb(red25_03))
+plt.plot(c.x_1nm, red25_07*100, color=c.spec2rgb(red25_07))
+plt.plot(c.x_1nm, red25_10*100, color=c.spec2rgb(red25_10))
+# problem with overlapping text
+plt.gca().axes.get_xaxis().set_ticklabels([])
 plt.title("Red 25")
 plt.subplot(3, 2, 2)
-plt.plot(xvalues, yellow15_0*100, 'y')
-plt.plot(xvalues, yellow15_03*100, 'y')
-plt.plot(xvalues, yellow15_07*100, 'y')
-plt.plot(xvalues, yellow15_10*100, 'y')
+plt.plot(c.x_1nm, yellow15_0*100, color=c.spec2rgb(yellow15_0))
+plt.plot(c.x_1nm, yellow15_03*100, color=c.spec2rgb(yellow15_03))
+plt.plot(c.x_1nm, yellow15_07*100, color=c.spec2rgb(yellow15_07))
+plt.plot(c.x_1nm, yellow15_10*100, color=c.spec2rgb(yellow15_10))
+plt.gca().axes.get_xaxis().set_ticklabels([])
 plt.title("Yellow 15")
 plt.subplot(3, 2, 3)
-plt.plot(xvalues, green58_0*100, 'g')
-plt.plot(xvalues, green58_03*100, 'g')
-plt.plot(xvalues, green58_07*100, 'g')
-plt.plot(xvalues, green58_10*100, 'g')
+plt.plot(c.x_1nm, green58_0*100, color=c.spec2rgb(green58_0))
+plt.plot(c.x_1nm, green58_03*100, color=c.spec2rgb(green58_03))
+plt.plot(c.x_1nm, green58_07*100, color=c.spec2rgb(green58_07))
+plt.plot(c.x_1nm, green58_10*100, color=c.spec2rgb(green58_10))
+plt.gca().axes.get_xaxis().set_ticklabels([])
 plt.title("Green 58")
 plt.subplot(3, 2, 4)
-plt.plot(xvalues, blue47_0*100, 'b')
-plt.plot(xvalues, blue47_03*100, 'b')
-plt.plot(xvalues, blue47_07*100, 'b')
-plt.plot(xvalues, blue47_10*100, 'b')
+plt.plot(c.x_1nm, blue47_0*100, color=c.spec2rgb(blue47_0))
+plt.plot(c.x_1nm, blue47_03*100, color=c.spec2rgb(blue47_03))
+plt.plot(c.x_1nm, blue47_07*100, color=c.spec2rgb(blue47_07))
+plt.plot(c.x_1nm, blue47_10*100, color=c.spec2rgb(blue47_10))
+plt.gca().axes.get_xaxis().set_ticklabels([])
 plt.title("Blue 47")
 plt.subplot(3, 2, 5)
-plt.plot(xvalues, gray_0*100, color='gray')
-plt.plot(xvalues, gray_03*100, color='gray')
-plt.plot(xvalues, gray_07*100, color='gray')
-plt.plot(xvalues, gray_10*100, color='gray')
+plt.plot(c.x_1nm, gray_0*100, color=c.spec2rgb(gray_0))
+plt.plot(c.x_1nm, gray_03*100, color=c.spec2rgb(gray_03))
+plt.plot(c.x_1nm, gray_07*100, color=c.spec2rgb(gray_07))
+plt.plot(c.x_1nm, gray_10*100, color=c.spec2rgb(gray_10))
+plt.gca().axes.get_xaxis().set_ticklabels([])
 plt.title("Gray")
 plt.show()
 
-# brightness levels and color space coordinates
-red25l = np.empty(4)
-red25cs = np.empty(4)
-red25cs1 = np.empty(4)
-print("Red 25 (+ 1.0 + 0.1)")
-red25data = c.spectral_rendering(red25_0)
-red25l[0] = red25data[0]
-red25cs[0] = red25data[1]
-red25cs1[0] = red25data[2]
-print("+ 0.3")
-red25data = c.spectral_rendering(red25_03)
-red25l[1] = red25data[0]
-red25cs[1] = red25data[1]
-red25cs1[1] = red25data[2]
-print("+ 0.7")
-red25data = c.spectral_rendering(red25_07)
-red25l[2] = red25data[0]
-red25cs[2] = red25data[1]
-red25cs1[2] = red25data[2]
-print("+ 1.0")
-red25data = c.spectral_rendering(red25_10)
-red25l[3] = red25data[0]
-red25cs[3] = red25data[1]
-red25cs1[3] = red25data[2]
+# arrays containing all 4 variants of the colors
+red25_all = [red25_0, red25_03, red25_07, red25_10]
+yellow15_all = [yellow15_0, yellow15_03, yellow15_07, yellow15_10]
+green58_all = [green58_0, green58_03, green58_07, green58_10]
+blue47_all = [blue47_0, blue47_03, blue47_07, blue47_10]
+gray_all = [gray_0, gray_03, gray_07, gray_10]
 
-yellow15l = np.empty(4)
-yellow15cs = np.empty(4)
-yellow15cs1 = np.empty(4)
-print("Yellow 15 (+ 2.0 + 0.5)")
-yellow15data = c.spectral_rendering(yellow15_0)
-yellow15l[0] = yellow15data[0]
-yellow15cs[0] = yellow15data[1]
-yellow15cs1[0] = yellow15data[2]
-print("+ 0.3")
-yellow15data = c.spectral_rendering(yellow15_03)
-yellow15l[1] = yellow15data[0]
-yellow15cs[1] = yellow15data[1]
-yellow15cs1[1] = yellow15data[2]
-print("+ 0.7")
-yellow15data = c.spectral_rendering(yellow15_07)
-yellow15l[2] = yellow15data[0]
-yellow15cs[2] = yellow15data[1]
-yellow15cs1[2] = yellow15data[2]
-print("+ 1.0")
-yellow15data = c.spectral_rendering(yellow15_10)
-yellow15l[3] = yellow15data[0]
-yellow15cs[3] = yellow15data[1]
-yellow15cs1[3] = yellow15data[2]
+# print execution time
+print("%s seconds" % (time.time() - start_time))
 
-green58l = np.empty(4)
-green58cs = np.empty(4)
-green58cs1 = np.empty(4)
-print("Green 58 (+ 1.0 + 0.3)")
-green58data = c.spectral_rendering(green58_0)
-green58l[0] = green58data[0]
-green58cs[0] = green58data[1]
-green58cs1[0] = green58data[2]
-print("+ 0.3")
-green58data = c.spectral_rendering(green58_03)
-green58l[1] = green58data[0]
-green58cs[1] = green58data[1]
-green58cs1[1] = green58data[2]
-print("+ 0.7")
-green58data = c.spectral_rendering(green58_07)
-green58l[2] = green58data[0]
-green58cs[2] = green58data[1]
-green58cs1[2] = green58data[2]
-print("+ 1.0")
-green58data = c.spectral_rendering(green58_10)
-green58l[3] = green58data[0]
-green58cs[3] = green58data[1]
-green58cs1[3] = green58data[2]
-
-blue47l = np.empty(4)
-blue47cs = np.empty(4)
-blue47cs1 = np.empty(4)
-print("Blue 47")
-blue47data = c.spectral_rendering(blue47_0)
-blue47l[0] = blue47data[0]
-blue47cs[0] = blue47data[1]
-blue47cs1[0] = blue47data[2]
-print("+ 0.3")
-blue47data = c.spectral_rendering(blue47_03)
-blue47l[1] = blue47data[0]
-blue47cs[1] = blue47data[1]
-blue47cs1[1] = blue47data[2]
-print("+ 0.7")
-blue47data = c.spectral_rendering(blue47_07)
-blue47l[2] = blue47data[0]
-blue47cs[2] = blue47data[1]
-blue47cs1[2] = blue47data[2]
-print("+ 1.0")
-blue47data = c.spectral_rendering(blue47_10)
-blue47l[3] = blue47data[0]
-blue47cs[3] = blue47data[1]
-blue47cs1[3] = blue47data[2]
-
-grayl = np.empty(4)
-graycs = np.empty(4)
-graycs1 = np.empty(4)
-print("Gray")
-graydata = c.spectral_rendering(gray_0)
-grayl[0] = graydata[0]
-graycs[0] = graydata[1]
-graycs1[0] = graydata[2]
-print("+ 0.3")
-graydata = c.spectral_rendering(gray_03)
-grayl[1] = graydata[0]
-graycs[1] = graydata[1]
-graycs1[1] = graydata[2]
-print("+ 0.7")
-graydata = c.spectral_rendering(gray_07)
-grayl[2] = graydata[0]
-graycs[2] = graydata[1]
-graycs1[2] = graydata[2]
-print("+ 1.0")
-graydata = c.spectral_rendering(gray_10)
-grayl[3] = graydata[0]
-graycs[3] = graydata[1]
-graycs1[3] = graydata[2]
+# plot
+x = np.array([0.0, 0.3, 0.7, 1.0])
+plt.plot(x[0], sum(red25_0*c.luminosity), 's', color=c.spec2rgb(red25_0), mec='k', label="Red")
+plt.plot(x[1], sum(red25_03*c.luminosity), 's', color=c.spec2rgb(red25_03), mec='k')
+plt.plot(x[2], sum(red25_07*c.luminosity), 's', color=c.spec2rgb(red25_07), mec='k')
+plt.plot(x[3], sum(red25_10*c.luminosity), 's', color=c.spec2rgb(red25_10), mec='k')
+plt.plot(x[0], sum(yellow15_0*c.luminosity), 'D', color=c.spec2rgb(yellow15_0), mec='k', label="Yellow")
+plt.plot(x[1], sum(yellow15_03*c.luminosity), 'D', color=c.spec2rgb(yellow15_03), mec='k')
+plt.plot(x[2], sum(yellow15_07*c.luminosity), 'D', color=c.spec2rgb(yellow15_07), mec='k')
+plt.plot(x[3], sum(yellow15_10*c.luminosity), 'D', color=c.spec2rgb(yellow15_10), mec='k')
+plt.plot(x[0], sum(green58_0*c.luminosity), '^', color=c.spec2rgb(green58_0), mec='k', label="Green")
+plt.plot(x[1], sum(green58_03*c.luminosity), '^', color=c.spec2rgb(green58_03), mec='k')
+plt.plot(x[2], sum(green58_07*c.luminosity), '^', color=c.spec2rgb(green58_07), mec='k')
+plt.plot(x[3], sum(green58_10*c.luminosity), '^', color=c.spec2rgb(green58_10), mec='k')
+plt.plot(x[0], sum(blue47_0*c.luminosity), 'o', color=c.spec2rgb(blue47_0), mec='k', label="Blue")
+plt.plot(x[1], sum(blue47_03*c.luminosity), 'o', color=c.spec2rgb(blue47_03), mec='k')
+plt.plot(x[2], sum(blue47_07*c.luminosity), 'o', color=c.spec2rgb(blue47_07), mec='k')
+plt.plot(x[3], sum(blue47_10*c.luminosity), 'o', color=c.spec2rgb(blue47_10), mec='k')
+plt.plot(x[0], sum(gray_0*c.luminosity), 'v', color=c.spec2rgb(gray_0), mec='k', label="Gray")
+plt.plot(x[1], sum(gray_03*c.luminosity), 'v', color=c.spec2rgb(gray_03), mec='k')
+plt.plot(x[2], sum(gray_07*c.luminosity), 'v', color=c.spec2rgb(gray_07), mec='k')
+plt.plot(x[3], sum(gray_10*c.luminosity), 'v', color=c.spec2rgb(gray_10), mec='k')
+plt.xlabel("Filter optical density")
+plt.ylabel("Relative quantum catch")
+plt.yscale('log')
+plt.legend()
+plt.show()
 
 if (args.wratten):
 	# red-yellow
 	print("R-Y")
-	c.brightness_disc(red25_0, red25_03, red25_07, red25_10, red25l, yellow15_0, yellow15_03, yellow15_07, yellow15_10, yellow15l)
+	c.brightness_disc(red25_all, yellow15_all)
 	
 	# red-green
 	print("R-G")
-	c.brightness_disc(red25_0, red25_03, red25_07, red25_10, red25l, green58_0, green58_03, green58_07, green58_10, green58l)
+	c.brightness_disc(red25_all, green58_all)
 	
 	# red-blue
 	print("R-B")
-	c.brightness_disc(red25_0, red25_03, red25_07, red25_10, red25l, blue47_0, blue47_03, blue47_07, blue47_10, blue47l)
+	c.brightness_disc(red25_all, blue47_all)
 	
 	# yellow-green
 	print("Y-G")
-	c.brightness_disc(yellow15_0, yellow15_03, yellow15_07, yellow15_10, yellow15l, green58_0, green58_03, green58_07, green58_10, green58l)
+	c.brightness_disc(yellow15_all, green58_all)
 	
 	# yellow-blue
 	print("Y-B")
-	c.brightness_disc(yellow15_0, yellow15_03, yellow15_07, yellow15_10, yellow15l, blue47_0, blue47_03, blue47_07, blue47_10, blue47l)
+	c.brightness_disc(yellow15_all, blue47_all)
 	
 	# green-blue
 	print("G-B")
-	c.brightness_disc(green58_0, green58_03, green58_07, green58_10, green58l, blue47_0, blue47_03, blue47_07, blue47_10, blue47l)
+	c.brightness_disc(green58_all, blue47_all)
 	
 	# colors vs. gray
 	
 	# red
 	print("Red vs. gray")
-	c.brightness_disc(red25_0, red25_03, red25_07, red25_10, red25l, gray_0, gray_03, gray_07, gray_10, grayl, correct=68, trials=80)
+	c.brightness_disc(red25_all, gray_all, correct=68, trials=80)
 	
 	# yellow
 	print("Yellow vs. gray")
-	c.brightness_disc(yellow15_0, yellow15_03, yellow15_07, yellow15_10, yellow15l, gray_0, gray_03, gray_07, gray_10, grayl, correct=68, trials=80)
+	c.brightness_disc(yellow15_all, gray_all, correct=68, trials=80)
 	
 	# green
 	print("Green vs. gray")
-	c.brightness_disc(green58_0, green58_03, green58_07, green58_10, green58l, gray_0, gray_03, gray_07, gray_10, grayl, correct=68, trials=80)
+	c.brightness_disc(green58_all, gray_all, correct=68, trials=80)
 	
 	# blue
 	print("Blue vs. gray")
-	c.brightness_disc(blue47_0, blue47_03, blue47_07, blue47_10, blue47l, gray_0, gray_03, gray_07, gray_10, grayl, correct=68, trials=80)
-	
-	# plot
-	x = np.array([0.0, 0.3, 0.7, 1.0])
-	plt.plot(x, red25l, 'sr', mec='k', label="red 25")
-	plt.plot(x, yellow15l, 'Dy', mec='k', label="yellow 15")
-	plt.plot(x, green58l, '^g', mec='k', label="green 58")
-	plt.plot(x, blue47l, 'ob', mec='k', label="blue 47")
-	plt.plot(x, grayl, marker='v', linestyle='', color='gray', mec='k', label="gray")
-	plt.xlabel("Filter optical density")
-	plt.ylabel("Relative quantum catch")
-	plt.yscale('log')
-	plt.legend()
-	plt.show()
+	c.brightness_disc(blue47_all, gray_all, correct=68, trials=80)
+
+	# print execution time
+	print("%s seconds" % (time.time() - start_time))
 	
 	# color differences -- this is the hard part...
 	
-	# first we plot them in a two-dimensional color space with (L-S)/(L+S) on
-	# the x-axis and brightness on the y-axis. Not sure how much this tells us
-	# though.
-	if (l1 == m1):
-		plt.plot(red25cs, red25l, 'sr', mec='k', label="red 25")
-		plt.plot(yellow15cs, yellow15l, 'Dy', mec='k', label="yellow 15")
-		plt.plot(green58cs, green58l, '^g', mec='k', label="green 58")
-		plt.plot(blue47cs, blue47l, 'ob', mec='k', label="blue 47")
-		plt.plot(graycs, grayl, marker='v', linestyle='', color='gray', mec='k', label="gray")
-		plt.xlabel("Chromaticity ((L-S)/(L+S))")
-		plt.ylabel("Brightness (L)")
-		plt.legend()
-		plt.show()
-	else:
-		plt.plot(red25cs, red25cs1, 'sr', mec='k', label="red 25")
-		plt.plot(yellow15cs, yellow15cs1, 'Dy', mec='k', label="yellow 15")
-		plt.plot(green58cs, green58cs1, '^g', mec='k', label="green 58")
-		plt.plot(blue47cs, blue47cs1, 'ob', mec='k', label="blue 47")
-		plt.plot(graycs, graycs1, marker='v', linestyle='', color='gray', mec='k', label="gray")
-		plt.xlabel("(L-S)/(L+M+S)")
-		plt.ylabel("(M-0.5(L+S))/(L+M+S)")
-		xborder = np.array([-math.sqrt(1/2), 0, math.sqrt(1/2), -math.sqrt(1/2)])
-		yborder = np.array([-math.sqrt(2/3)/2, math.sqrt(2/3), -math.sqrt(2/3)/2, -math.sqrt(2/3)/2])
-		plt.plot(xborder, yborder, '-k')
-		plt.text(-math.sqrt(1/2) - 0.05, -math.sqrt(2/3)/2 - 0.025, 'S')
-		plt.text(0 - 0.025, math.sqrt(2/3) + 0.0125, 'M')
-		plt.text(math.sqrt(1/2) + 0.0125, -math.sqrt(2/3)/2 - 0.025, 'L')
-		plt.legend()
-		plt.show()
+	# color space plot
+	spectra = [red25_10, red25_07, red25_03, red25_0,
+		yellow15_10, yellow15_07, yellow15_03, yellow15_0,
+		green58_10, green58_07, green58_03, green58_0,
+		blue47_10, blue47_07, blue47_03, blue47_0,
+		gray_10, gray_07, gray_03, gray_0]
+	markers = []
+	for i in range(4): markers.append('s')
+	for i in range(4): markers.append('D')
+	for i in range(4): markers.append('^')
+	for i in range(4): markers.append('o')
+	for i in range(4): markers.append('v')
+	colors = []
+	for i in range(len(spectra)): colors.append(c.spec2rgb(spectra[i]))
+	labels = []
+	for i in range(len(spectra)): labels.append('')
+	labels[3] = 'Red'
+	labels[7] = 'Yellow'
+	labels[11] = 'Green'
+	labels[15] = 'Blue'
+	labels[19] = 'Gray'
+	c.triangle(
+		spectra=spectra,
+		markers=markers,
+		colors=colors,
+		text=labels,
+		legend=True,
+		gamut=True,
+		gamutcolor="0.7",
+		gamutedge=''
+		)
 	
 	# Next we try to assess whether they're distinguishable. As with brightness, we
 	# check both the contrast and the direction.
 
 	# R-Y
 	print("R-Y")
-	ry = c.color_disc(red25_0, red25_03, red25_07, red25_10, yellow15_0, yellow15_03, yellow15_07, yellow15_10)
+	ry = c.color_disc(red25_all, yellow15_all)
 	
 	# R-G
 	print("R-G")
-	rg = c.color_disc(red25_0, red25_03, red25_07, red25_10, green58_0, green58_03, green58_07, green58_10)
+	rg = c.color_disc(red25_all, green58_all)
 	
 	# R-B
 	print("R-B")
-	rb = c.color_disc(red25_0, red25_03, red25_07, red25_10, blue47_0, blue47_03, blue47_07, blue47_10)
+	rb = c.color_disc(red25_all, blue47_all)
 	
 	# Y-G
 	print("Y-G")
-	yg = c.color_disc(yellow15_0, yellow15_03, yellow15_07, yellow15_10, green58_0, green58_03, green58_07, green58_10)
+	yg = c.color_disc(yellow15_all, green58_all)
 	
 	# Y-B
 	print("Y-B")
-	yb = c.color_disc(yellow15_0, yellow15_03, yellow15_07, yellow15_10, blue47_0, blue47_03, blue47_07, blue47_10)
+	yb = c.color_disc(yellow15_all, blue47_all)
 	
 	# G-B
 	print("G-B")
-	gb = c.color_disc(green58_0, green58_03, green58_07, green58_10, blue47_0, blue47_03, blue47_07, blue47_10)
+	gb = c.color_disc(green58_all, blue47_all)
 
-        # collect box plot data	
+	# collect box plot data	
 	labels = ["R-Y", "R-G", "R-B", "Y-G", "Y-B", "G-B"]
 	boxes = [ry[3], rg[3], rb[3], yg[3], yb[3], gb[3]]
 	
@@ -4718,19 +4637,19 @@ if (args.wratten):
 	
 	# red
 	print("Red vs. gray")
-	r_gray = c.color_disc(red25_0, red25_03, red25_07, red25_10, gray_0, gray_03, gray_07, gray_10, correct=68, trials=80)
+	r_gray = c.color_disc(red25_all, gray_all, correct=68, trials=80)
 	
 	# yellow
 	print("Yellow vs. gray")
-	y_gray = c.color_disc(yellow15_0, yellow15_03, yellow15_07, yellow15_10, gray_0, gray_03, gray_07, gray_10, correct=68, trials=80)
+	y_gray = c.color_disc(yellow15_all, gray_all, correct=68, trials=80)
 	
 	# green
 	print("Green vs. gray")
-	g_gray = c.color_disc(green58_0, green58_03, green58_07, green58_10, gray_0, gray_03, gray_07, gray_10, correct=68, trials=80)
+	g_gray = c.color_disc(green58_all, gray_all, correct=68, trials=80)
 	
 	# blue
 	print("Blue vs. gray")
-	b_gray = c.color_disc(blue47_0, blue47_03, blue47_07, blue47_10, gray_0, gray_03, gray_07, gray_10, correct=68, trials=80)
+	b_gray = c.color_disc(blue47_all, gray_all, correct=68, trials=80)
 	
 	
 	labels = ["red", "yellow", "green", "blue"]
@@ -4743,145 +4662,89 @@ if (args.wratten):
 	# have very similar responses to these.
 
 if (args.blackbody != 0):
-	energy = sigma * args.blackbody**4
+	energy = c.sigma * args.blackbody**4
 	surface_area = 4*math.pi*args.radius**2
-	print("Surface area of sphere: " + str(sphere_area))
-	print("Energy produced by light bulb (W/cm^2): " + str(watts_cm2))
-	print("Energy produced by light bulb (W/m^2): " + str(watts_m2))
-	#print("Surface area of light bulb (cm^2): " + str(surface_area))
+	print("Surface area of sphere: " + str(c.sphere_area))
+	print("Energy produced by light bulb (W/cm^2): " + str(c.watts_cm2))
+	print("Energy produced by light bulb (W/m^2): " + str(c.watts_m2))
 	print("Energy produced by blackbody model (W/m^2, 4pi sr): " + str(energy))
 	print("Energy produced by blackbody model (W): " + str(energy * surface_area / 10000))
-	print("W/m^2 scaling factor: " + str(scale))
+	print("W/m^2 scaling factor: " + str(c.scale))
+	"""
+	how much energy is produced between 300-800 nm when paired with blue 47
+	Fix this -- should use the "full" integral with 1-nm steps. As written, the values
+	produced are about 1/10 what they should be. Also try to convert it to cd/m^2 so
+	we can match the value given in the study of 5.5 foot-lamberts ~= 19 cd/m^2 or
+	59 lx (foot-lamberts are equivalent to both, and as above, the conversion factor
+	between radiance/luminance and irradiance/illuminance is pi sr). Candelas aren't
+	any less annoying than foot-lamberts just because they think they're an SI unit.
 	
-	# how much energy is produced between 300-800 nm when paired with blue 47
-	# Fix this -- should use the "full" integral with 1-nm steps. As written, the values
-	# produced are about 1/10 what they should be. Also try to convert it to cd/m^2 so
-	# we can match the value given in the study of 5.5 foot-lamberts ~= 19 cd/m^2 or
-	# 59 lx (foot-lamberts are equivalent to both, and as above, the conversion factor
-	# between radiance/luminance and irradiance/illuminance is pi sr). Candelas aren't
-	# any less annoying than foot-lamberts just because they think they're an SI unit.
+	According to the new numbers, the bulbs would have to have a color temperature of
+	about 1700 K to actually produce the brightness reported in the study. I don't
+	think they make those. Alternatively, if the number corresponds to illuminance,
+	this would be scaled by steradians and the true value in cd/m^2 would be ~131,
+	which corresponds to a color temperature of between 2000 and 2100 K. This is still
+	much lower than a typical incandescent bulb. If I change the scaling factor back to
+	W/m^2 instead of W/m^2/sr, however, the illucd/mminance definition places the color
+	temperature at about 2650 K, which is close to the number 2700 I found
+	when searching for GE 656 bulbs (https://www.bulbs.com/product/656).
 	
-	# According to the new numbers, the bulbs would have to have a color temperature of
-	# about 1700 K to actually produce the brightness reported in the study. I don't
-	# think they make those. Alternatively, if the number corresponds to illuminance,
-	# this would be scaled by steradians and the true value in cd/m^2 would be ~131,
-	# which corresponds to a color temperature of between 2000 and 2100 K. This is still
-	# much lower than a typical incandescent bulb. If I change the scaling factor back to
-	# W/m^2 instead of W/m^2/sr, however, the illucd/mminance definition places the color
-	# temperature at about 2650 K, which is close to the number 2700 I found
-	# when searching for GE 656 bulbs (https://www.bulbs.com/product/656).
+	Now that I've fixed the density/transmission issues with the filters, the
+	filtered luminance is around 19 cd/m^2 for a color temperature near 2856 K.
+	I'm not sure I buy this because the Macbeth Illuminometer is supposed to measure
+	illuminance in foot-candles rather than luminance in "foot-lamberts". At least
+	the candela only has one definition. Also my quantum catch model now predicts
+	that neither humans nor opossums can reliably distinguish the R-Y pair unless
+	I assume a high degree of spatial summation. Since lux/foot-candles is measured
+	by light falling on some flat surface, I don't know what distinguishes light
+	falling only on that surface from light radiated in all directions from the
+	source. A "perfect" reflecting surface radiates 1/pi of the illuminance it
+	receives, but what does that say about the radiance/luminance of the light
+	source?
 	
-	# Now that I've fixed the density/transmission issues with the filters, the
-	# filtered luminance is around 19 cd/m^2 for a color temperature near 2856 K.
-	# I'm not sure I buy this because the Macbeth Illuminometer is supposed to measure
-	# illuminance in foot-candles rather than luminance in "foot-lamberts". At least
-	# the candela only has one definition. Also my quantum catch model now predicts
-	# that neither humans nor opossums can reliably distinguish the R-Y pair unless
-	# I assume a high degree of spatial summation. Since lux/foot-candles is measured
-	# by light falling on some flat surface, I don't know what distinguishes light
-	# falling only on that surface from light radiated in all directions from the
-	# source. A "perfect" reflecting surface radiates 1/pi of the illuminance it
-	# receives, but what does that say about the radiance/luminance of the light
-	# source?
+	We want to scale the directional intensity. There is technically less irradiance
+	if spread over a larger area, but the radiance doesn't change. See the
+	Stefan-Boltzmann law -- "power per unit area" is power per the area of the
+	object doing the radiating, not power per how many square meters it's spread
+	over. We need an estimate of the light bulb size. I used to have that in here
+	but discarded it for some reason. The distance from the light source shouldn't
+	be involved for the same reason we don't use it in the lux calculation.
+	Actually I think this is wrong because a light bulb that's farther away from the
+	viewing point is basically the same as a bigger bulb. If we use the value of
+	5 cm and define the number of cones per receptive field to include at least 1
+	of each type, we can nearly perfectly explain both the reported brightness
+	(assuming cd/m^2) and the opossums' behavior, though R-Y is apparently a very
+	difficult discrimination.
+	"""
 	
-	# We want to scale the directional intensity. There is technically less irradiance
-	# if spread over a larger area, but the radiance doesn't change. See the
-	# Stefan-Boltzmann law -- "power per unit area" is power per the area of the
-	# object doing the radiating, not power per how many square meters it's spread
-	# over. We need an estimate of the light bulb size. I used to have that in here
-	# but discarded it for some reason. The distance from the light source shouldn't
-	# be involved for the same reason we don't use it in the lux calculation.
-	# Actually I think this is wrong because a light bulb that's farther away from the
-	# viewing point is basically the same as a bigger bulb. If we use the value of
-	# 5 cm and define the number of cones per receptive field to include at least 1
-	# of each type, we can nearly perfectly explain both the reported brightness
-	# (assuming cd/m^2) and the opossums' behavior, though R-Y is apparently a very
-	# difficult discrimination.
-	
-	radiance = quad(blackbody, 300, 700, args=args.blackbody)
+	radiance = quad(c.blackbody, 300, 700, args=args.blackbody)
 	visible = radiance[0]
-	x10nm = np.empty(41)
-	for i in range(41):
-		x10nm[i] = i*10 + 300
-	x1nm = np.empty(501)
-	for i in range(501):
-		x1nm[i] = i + 300
 	
 	visible_r0 = 0
-	for i in range(300, 701):
-		visible_r0 += c.blackbody(i, args.blackbody) * red25_0[i-300]
 	visible_r03 = 0
-	for i in range(300, 701):
-		visible_r03 += c.blackbody(i, args.blackbody) * red25_03[i-300]
 	visible_r07 = 0
-	for i in range(300, 701):
-		visible_r07 += c.blackbody(i, args.blackbody) * red25_07[i-300]
 	visible_r10 = 0
-	for i in range(300, 701):
-		visible_r10 += c.blackbody(i, args.blackbody) * red25_10[i-300]
 	visible_y0 = 0
-	for i in range(300, 701):
-		visible_y0 += c.blackbody(i, args.blackbody) * yellow15_0[i-300]
 	visible_y03 = 0
-	for i in range(300, 701):
-		visible_y03 += c.blackbody(i, args.blackbody) * yellow15_03[i-300]
 	visible_y07 = 0
-	for i in range(300, 701):
-		visible_y07 += c.blackbody(i, args.blackbody) * yellow15_07[i-300]
 	visible_y10 = 0
-	for i in range(300, 701):
-		visible_y10 += c.blackbody(i, args.blackbody) * yellow15_10[i-300]
 	visible_g0 = 0
-	for i in range(300, 701):
-		visible_g0 += c.blackbody(i, args.blackbody) * green58_0[i-300]
 	visible_g03 = 0
-	for i in range(300, 701):
-		visible_g03 += c.blackbody(i, args.blackbody) * green58_03[i-300]
 	visible_g07 = 0
-	for i in range(300, 701):
-		visible_g07 += c.blackbody(i, args.blackbody) * green58_07[i-300]
 	visible_g10 = 0
-	for i in range(300, 701):
-		visible_g10 += c.blackbody(i, args.blackbody) * green58_10[i-300]
 	visible_b0 = 0
-	for i in range(300, 701):
-		visible_b0 += c.blackbody(i, args.blackbody) * blue47_0[i-300]
 	visible_b03 = 0
-	for i in range(300, 701):
-		visible_b03 += c.blackbody(i, args.blackbody) * blue47_03[i-300]
 	visible_b07 = 0
-	for i in range(300, 701):
-		visible_b07 += c.blackbody(i, args.blackbody) * blue47_07[i-300]
 	visible_b10 = 0
-	for i in range(300, 701):
-		visible_b10 += c.blackbody(i, args.blackbody) * blue47_10[i-300]
 	visible_gray0 = 0
-	for i in range(300, 701):
-		visible_gray0 += c.blackbody(i, args.blackbody) * gray_0[i-300]
 	visible_gray03 = 0
-	for i in range(300, 701):
-		visible_gray03 += c.blackbody(i, args.blackbody) * gray_03[i-300]
 	visible_gray07 = 0
-	for i in range(300, 701):
-		visible_gray07 += c.blackbody(i, args.blackbody) * gray_07[i-300]
 	visible_gray10 = 0
-	for i in range(300, 701):
-		visible_gray10 += c.blackbody(i, args.blackbody) * gray_10[i-300]
-	
 	# lx/cd
 	visible_bcd0 = 0
-	for i in range(300, 701):
-		visible_bcd0 += c.blackbody(i, args.blackbody) * blue47_0[i-300] *  luminosity[i-300] * 683.002
 	visible_bcd03 = 0
-	for i in range(300, 701):
-		visible_bcd03 += c.blackbody(i, args.blackbody) * blue47_03[i-300] *  luminosity[i-300] * 683.002
 	visible_bcd07 = 0
-	for i in range(300, 701):
-		visible_bcd07 += c.blackbody(i, args.blackbody) * blue47_07[i-300] *  luminosity[i-300] * 683.002
 	visible_bcd10 = 0
-	for i in range(300, 701):
-		visible_bcd10 += c.blackbody(i, args.blackbody) * blue47_10[i-300] *  luminosity[i-300] * 683.002
-	#visible_filtered_cd *= luminance_full / luminance_10nm
 	visible_lx0 = visible_bcd0 * math.pi
 	visible_lx03 = visible_bcd03 * math.pi
 	visible_lx07 = visible_bcd07 * math.pi
@@ -4889,225 +4752,143 @@ if (args.blackbody != 0):
 	# other colors
 	# red
 	visible_rcd0 = 0
-	for i in range(300, 701):
-		visible_rcd0 += c.blackbody(i, args.blackbody) * red25_0[i-300] *  luminosity[i-300] * 683.002
 	visible_rcd03 = 0
-	for i in range(300, 701):
-		visible_rcd03 += c.blackbody(i, args.blackbody) * red25_03[i-300] *  luminosity[i-300] * 683.002
 	visible_rcd07 = 0
-	for i in range(300, 701):
-		visible_rcd07 += c.blackbody(i, args.blackbody) * red25_07[i-300] *  luminosity[i-300] * 683.002
 	visible_rcd10 = 0
-	for i in range(300, 701):
-		visible_rcd10 += c.blackbody(i, args.blackbody) * red25_10[i-300] *  luminosity[i-300] * 683.002
 	# yellow
 	visible_ycd0 = 0
-	for i in range(300, 701):
-		visible_ycd0 += c.blackbody(i, args.blackbody) * yellow15_0[i-300] *  luminosity[i-300] * 683.002
 	visible_ycd03 = 0
-	for i in range(300, 701):
-		visible_ycd03 += c.blackbody(i, args.blackbody) * yellow15_03[i-300] *  luminosity[i-300] * 683.002
 	visible_ycd07 = 0
-	for i in range(300, 701):
-		visible_ycd07 += c.blackbody(i, args.blackbody) * yellow15_07[i-300] *  luminosity[i-300] * 683.002
 	visible_ycd10 = 0
-	for i in range(300, 701):
-		visible_ycd10 += c.blackbody(i, args.blackbody) * yellow15_10[i-300] *  luminosity[i-300] * 683.002
 	# green
 	visible_gcd0 = 0
-	for i in range(300, 701):
-		visible_gcd0 += c.blackbody(i, args.blackbody) * green58_0[i-300] *  luminosity[i-300] * 683.002
 	visible_gcd03 = 0
-	for i in range(300, 701):
-		visible_gcd03 += c.blackbody(i, args.blackbody) * green58_03[i-300] *  luminosity[i-300] * 683.002
 	visible_gcd07 = 0
-	for i in range(300, 701):
-		visible_gcd07 += c.blackbody(i, args.blackbody) * green58_07[i-300] *  luminosity[i-300] * 683.002
 	visible_gcd10 = 0
-	for i in range(300, 701):
-		visible_gcd10 += c.blackbody(i, args.blackbody) * green58_10[i-300] *  luminosity[i-300] * 683.002
 	# gray
 	visible_graycd0 = 0
-	for i in range(300, 701):
-		visible_graycd0 += c.blackbody(i, args.blackbody) * gray_0[i-300] *  luminosity[i-300] * 683.002
 	visible_graycd03 = 0
-	for i in range(300, 701):
-		visible_graycd03 += c.blackbody(i, args.blackbody) * gray_03[i-300] *  luminosity[i-300] * 683.002
 	visible_graycd07 = 0
-	for i in range(300, 701):
-		visible_graycd07 += c.blackbody(i, args.blackbody) * gray_07[i-300] *  luminosity[i-300] * 683.002
 	visible_graycd10 = 0
 	for i in range(300, 701):
-		visible_graycd10 += c.blackbody(i, args.blackbody) * gray_10[i-300] *  luminosity[i-300] * 683.002
-	
-	# candela equivalents weighted by a custom luminosity function in place of CIE
-	# to compare brightness for another species
-	# This is probably not very useful because we're already quantifying species-specific
-	# luminosity in more standard ways, but see also https://pmc.ncbi.nlm.nih.gov/articles/PMC11562817/
-	
-	# blue
-	visible_bcde0 = 0
-	for i in range(300, 701):
-		visible_bcde0 += c.blackbody(i, args.blackbody) * blue47_0[i-300] *  sensitivity(i) * 683.002
-	visible_bcde03 = 0
-	for i in range(300, 701):
-		visible_bcde03 += c.blackbody(i, args.blackbody) * blue47_03[i-300] * sensitivity(i) * 683.002
-	visible_bcde07 = 0
-	for i in range(300, 701):
-		visible_bcde07 += c.blackbody(i, args.blackbody) * blue47_07[i-300] * sensitivity(i) * 683.002
-	visible_bcde10 = 0
-	for i in range(300, 701):
-		visible_bcde10 += c.blackbody(i, args.blackbody) * blue47_10[i-300] * sensitivity(i) * 683.002
-	# red
-	visible_rcde0 = 0
-	for i in range(300, 701):
-		visible_rcde0 += c.blackbody(i, args.blackbody) * red25_0[i-300] * sensitivity(i) * 683.002
-	visible_rcde03 = 0
-	for i in range(300, 701):
-		visible_rcde03 += c.blackbody(i, args.blackbody) * red25_03[i-300] * sensitivity(i) * 683.002
-	visible_rcde07 = 0
-	for i in range(300, 701):
-		visible_rcde07 += c.blackbody(i, args.blackbody) * red25_07[i-300] * sensitivity(i) * 683.002
-	visible_rcde10 = 0
-	for i in range(300, 701):
-		visible_rcde10 += c.blackbody(i, args.blackbody) * red25_10[i-300] * sensitivity(i) * 683.002
-	# yellow
-	visible_ycde0 = 0
-	for i in range(300, 701):
-		visible_ycde0 += c.blackbody(i, args.blackbody) * yellow15_0[i-300] * sensitivity(i) * 683.002
-	visible_ycde03 = 0
-	for i in range(300, 701):
-		visible_ycde03 += c.blackbody(i, args.blackbody) * yellow15_03[i-300] * sensitivity(i) * 683.002
-	visible_ycde07 = 0
-	for i in range(300, 701):
-		visible_ycde07 += c.blackbody(i, args.blackbody) * yellow15_07[i-300] * sensitivity(i) * 683.002
-	visible_ycde10 = 0
-	for i in range(300, 701):
-		visible_ycde10 += c.blackbody(i, args.blackbody) * yellow15_10[i-300] * sensitivity(i) * 683.002
-	# green
-	visible_gcde0 = 0
-	for i in range(300, 701):
-		visible_gcde0 += c.blackbody(i, args.blackbody) * green58_0[i-300] * sensitivity(i) * 683.002
-	visible_gcde03 = 0
-	for i in range(300, 701):
-		visible_gcde03 += c.blackbody(i, args.blackbody) * green58_03[i-300] * sensitivity(i) * 683.002
-	visible_gcde07 = 0
-	for i in range(300, 701):
-		visible_gcde07 += c.blackbody(i, args.blackbody) * green58_07[i-300] * sensitivity(i) * 683.002
-	visible_gcde10 = 0
-	for i in range(300, 701):
-		visible_gcde10 += c.blackbody(i, args.blackbody) * green58_10[i-300] * sensitivity(i) * 683.002
-	# gray
-	visible_graycde0 = 0
-	for i in range(300, 701):
-		visible_graycde0 += c.blackbody(i, args.blackbody) * gray_0[i-300] * sensitivity(i) * 683.002
-	visible_graycde03 = 0
-	for i in range(300, 701):
-		visible_graycde03 += c.blackbody(i, args.blackbody) * gray_03[i-300] * sensitivity(i) * 683.002
-	visible_graycde07 = 0
-	for i in range(300, 701):
-		visible_graycde07 += c.blackbody(i, args.blackbody) * gray_07[i-300] * sensitivity(i) * 683.002
-	visible_graycde10 = 0
-	for i in range(300, 701):
-		visible_graycde10 += c.blackbody(i, args.blackbody) * gray_10[i-300] * sensitivity(i) * 683.002
+		blackbody = c.blackbody(i, args.blackbody)
+		candela = c.luminosity[i-300] * 683.002
+		
+		visible_r0 += blackbody * red25_0[i-300]
+		visible_r03 += blackbody * red25_03[i-300]
+		visible_r07 += blackbody * red25_07[i-300]
+		visible_r10 += blackbody * red25_10[i-300]
+		visible_y0 += blackbody * yellow15_0[i-300]
+		visible_y03 += blackbody * yellow15_03[i-300]
+		visible_y07 += blackbody * yellow15_07[i-300]
+		visible_y10 += blackbody * yellow15_10[i-300]
+		visible_g0 += blackbody * green58_0[i-300]
+		visible_g03 += blackbody * green58_03[i-300]
+		visible_g07 += blackbody * green58_07[i-300]
+		visible_g10 += blackbody * green58_10[i-300]
+		visible_b0 += blackbody * blue47_0[i-300]
+		visible_b03 += blackbody * blue47_03[i-300]
+		visible_b07 += blackbody * blue47_07[i-300]
+		visible_b10 += blackbody * blue47_10[i-300]
+		visible_gray0 += blackbody * gray_0[i-300]
+		visible_gray03 += blackbody * gray_03[i-300]
+		visible_gray07 += blackbody * gray_07[i-300]
+		visible_gray10 += blackbody * gray_10[i-300]
+
+		visible_bcd0 += blackbody * blue47_0[i-300] * candela
+		visible_bcd03 += blackbody * blue47_03[i-300] * candela
+		visible_bcd07 += blackbody * blue47_07[i-300] * candela
+		visible_bcd10 += blackbody * blue47_10[i-300] * candela
+		visible_rcd0 += blackbody * red25_0[i-300] * candela
+		visible_rcd03 += blackbody * red25_03[i-300] * candela
+		visible_rcd07 += blackbody * red25_07[i-300] * candela
+		visible_rcd10 += blackbody * red25_10[i-300] * candela
+		visible_ycd0 += blackbody * yellow15_0[i-300] * candela
+		visible_ycd03 += blackbody * yellow15_03[i-300] * candela
+		visible_ycd07 += blackbody * yellow15_07[i-300] * candela
+		visible_ycd10 += blackbody * yellow15_10[i-300] * candela
+		visible_gcd0 += blackbody * green58_0[i-300] * candela
+		visible_gcd03 += blackbody * green58_03[i-300] * candela
+		visible_gcd07 += blackbody * green58_07[i-300] * candela
+		visible_gcd10 += blackbody * green58_10[i-300] * candela
+		visible_graycd0 += blackbody * gray_0[i-300] * candela
+		visible_graycd03 += blackbody * gray_03[i-300] * candela
+		visible_graycd07 += blackbody * gray_07[i-300] * candela
+		visible_graycd10 += blackbody * gray_10[i-300] * candela
 	
 	print("Radiance from 300-700 nm (W/m^2/sr): " + str(visible))
-	print("Irradiance from 300-700 nm (W/m^2): " + str(visible*sr))
-	print("Irradiance from 300-700 nm (uW/cm^2): " + str(visible*sr*1000000/100**2))
+	print("Irradiance from 300-700 nm (W/m^2): " + str(visible*c.sr))
+	print("Irradiance from 300-700 nm (uW/cm^2): " + str(visible*c.sr*1000000/100**2))
 	
 	# scaled to specified watt number
 	print("")
 	print("Scaled radiance/irradiance:")
-	print("Radiance from 300-700 nm (W/m^2/sr): " + str(scale*visible))
+	print("Radiance from 300-700 nm (W/m^2/sr): " + str(c.scale*visible))
 	radiance = 0
 	for i in range(501):
-		radiance += ia[i]
+		radiance += c.incandescent_photons[i]
 	print("Radiance from 300-700 nm (photons/sec/sr): " + str(radiance))
-	print("Irradiance (W/m^2): " + str(scale*visible*sr))
-	print("Irradiance (uW/cm^2): " + str(scale*visible*sr*1000000/100**2))
+	print("Irradiance (W/m^2): " + str(c.scale*visible*c.sr))
+	print("Irradiance (uW/cm^2): " + str(c.scale*visible*c.sr*1000000/100**2))
 	# just multiply this by 100 to get uW/cm^2
 	print("Irradiance filtered through red 25 (uW/cm^2):")
-	print("0: " + str(scale*visible_r0*sr*100))
-	print("0.3: " + str(scale*visible_r03*sr*100))
-	print("0.7: " + str(scale*visible_r07*sr*100))
-	print("1.0: " + str(scale*visible_r10*sr*100))
+	print("0: " + str(c.scale*visible_r0*c.sr*100))
+	print("0.3: " + str(c.scale*visible_r03*c.sr*100))
+	print("0.7: " + str(c.scale*visible_r07*c.sr*100))
+	print("1.0: " + str(c.scale*visible_r10*c.sr*100))
 	print("Irradiance filtered through yellow 15 (uW/cm^2):")
-	print("0: " + str(scale*visible_y0*sr*100))
-	print("0.3: " + str(scale*visible_y03*sr*100))
-	print("0.7: " + str(scale*visible_y07*sr*100))
-	print("1.0: " + str(scale*visible_y10*sr*100))
+	print("0: " + str(c.scale*visible_y0*c.sr*100))
+	print("0.3: " + str(c.scale*visible_y03*c.sr*100))
+	print("0.7: " + str(c.scale*visible_y07*c.sr*100))
+	print("1.0: " + str(c.scale*visible_y10*c.sr*100))
 	print("Irradiance filtered through green 58 (uW/cm^2):")
-	print("0: " + str(scale*visible_g0*sr*100))
-	print("0.3: " + str(scale*visible_g03*sr*100))
-	print("0.7: " + str(scale*visible_g07*sr*100))
-	print("1.0: " + str(scale*visible_g10*sr*100))
+	print("0: " + str(c.scale*visible_g0*c.sr*100))
+	print("0.3: " + str(c.scale*visible_g03*c.sr*100))
+	print("0.7: " + str(c.scale*visible_g07*c.sr*100))
+	print("1.0: " + str(c.scale*visible_g10*c.sr*100))
 	print("Irradiance filtered through blue 47 (uW/cm^2):")
-	print("0: " + str(scale*visible_b0*sr*100))
-	print("0.3: " + str(scale*visible_b03*sr*100))
-	print("0.7: " + str(scale*visible_b07*sr*100))
-	print("1.0: " + str(scale*visible_b10*sr*100))
+	print("0: " + str(c.scale*visible_b0*c.sr*100))
+	print("0.3: " + str(c.scale*visible_b03*c.sr*100))
+	print("0.7: " + str(c.scale*visible_b07*c.sr*100))
+	print("1.0: " + str(c.scale*visible_b10*c.sr*100))
 	print("Irradiance filtered through gray (uW/cm^2):")
-	print("0: " + str(scale*visible_gray0*sr*100))
-	print("0.3: " + str(scale*visible_gray03*sr*100))
-	print("0.7: " + str(scale*visible_gray07*sr*100))
-	print("1.0: " + str(scale*visible_gray10*sr*100))
+	print("0: " + str(c.scale*visible_gray0*c.sr*100))
+	print("0.3: " + str(c.scale*visible_gray03*c.sr*100))
+	print("0.7: " + str(c.scale*visible_gray07*c.sr*100))
+	print("1.0: " + str(c.scale*visible_gray10*c.sr*100))
 	print("Luminance from 300-700 nm for blue 47 (cd/m^2):")
-	print("0: " + str(scale*visible_bcd0))
-	print("0.3: " + str(scale*visible_bcd03))
-	print("0.7: " + str(scale*visible_bcd07))
-	print("1.0: " + str(scale*visible_bcd10))
+	print("0: " + str(c.scale*visible_bcd0))
+	print("0.3: " + str(c.scale*visible_bcd03))
+	print("0.7: " + str(c.scale*visible_bcd07))
+	print("1.0: " + str(c.scale*visible_bcd10))
 	print("Luminance from 300-700 nm for red 25 (cd/m^2):")
-	print("0: " + str(scale*visible_rcd0))
-	print("0.3: " + str(scale*visible_rcd03))
-	print("0.7: " + str(scale*visible_rcd07))
-	print("1.0: " + str(scale*visible_rcd10))
+	print("0: " + str(c.scale*visible_rcd0))
+	print("0.3: " + str(c.scale*visible_rcd03))
+	print("0.7: " + str(c.scale*visible_rcd07))
+	print("1.0: " + str(c.scale*visible_rcd10))
 	print("Luminance from 300-700 nm for yellow 15 (cd/m^2):")
-	print("0: " + str(scale*visible_ycd0))
-	print("0.3: " + str(scale*visible_ycd03))
-	print("0.7: " + str(scale*visible_ycd07))
-	print("1.0: " + str(scale*visible_ycd10))
+	print("0: " + str(c.scale*visible_ycd0))
+	print("0.3: " + str(c.scale*visible_ycd03))
+	print("0.7: " + str(c.scale*visible_ycd07))
+	print("1.0: " + str(c.scale*visible_ycd10))
 	print("Luminance from 300-700 nm for green 58 (cd/m^2):")
-	print("0: " + str(scale*visible_gcd0))
-	print("0.3: " + str(scale*visible_gcd03))
-	print("0.7: " + str(scale*visible_gcd07))
-	print("1.0: " + str(scale*visible_gcd10))
+	print("0: " + str(c.scale*visible_gcd0))
+	print("0.3: " + str(c.scale*visible_gcd03))
+	print("0.7: " + str(c.scale*visible_gcd07))
+	print("1.0: " + str(c.scale*visible_gcd10))
 	print("Luminance from 300-700 nm for gray (cd/m^2):")
-	print("0: " + str(scale*visible_graycd0))
-	print("0.3: " + str(scale*visible_graycd03))
-	print("0.7: " + str(scale*visible_graycd07))
-	print("1.0: " + str(scale*visible_graycd10))
+	print("0: " + str(c.scale*visible_graycd0))
+	print("0.3: " + str(c.scale*visible_graycd03))
+	print("0.7: " + str(c.scale*visible_graycd07))
+	print("1.0: " + str(c.scale*visible_graycd10))
 	print("Illuminance for blue 47 (lx):")
-	print("0: " + str(scale*visible_lx0))
-	print("0.3: " + str(scale*visible_lx03))
-	print("0.7: " + str(scale*visible_lx07))
-	print("1.0: " + str(scale*visible_lx10))
-	# "candela equivalent" brightness
-	print("Luminance in candela equivalents (cde/m^2)")
-	print("Blue 47:")
-	print("0: " + str(scale*visible_bcde0))
-	print("0.3: " + str(scale*visible_bcde03))
-	print("0.7: " + str(scale*visible_bcde07))
-	print("1.0: " + str(scale*visible_bcde10))
-	print("Red 25:")
-	print("0: " + str(scale*visible_rcde0))
-	print("0.3: " + str(scale*visible_rcde03))
-	print("0.7: " + str(scale*visible_rcde07))
-	print("1.0: " + str(scale*visible_rcde10))
-	print("Yellow 15:")
-	print("0: " + str(scale*visible_ycde0))
-	print("0.3: " + str(scale*visible_ycde03))
-	print("0.7: " + str(scale*visible_ycde07))
-	print("1.0: " + str(scale*visible_ycde10))
-	print("Green 58:")
-	print("0: " + str(scale*visible_gcde0))
-	print("0.3: " + str(scale*visible_gcde03))
-	print("0.7: " + str(scale*visible_gcde07))
-	print("1.0: " + str(scale*visible_gcde10))
-	print("Gray:")
-	print("0: " + str(scale*visible_graycde0))
-	print("0.3: " + str(scale*visible_graycde03))
-	print("0.7: " + str(scale*visible_graycde07))
-	print("1.0: " + str(scale*visible_graycde10))
+	print("0: " + str(c.scale*visible_lx0))
+	print("0.3: " + str(c.scale*visible_lx03))
+	print("0.7: " + str(c.scale*visible_lx07))
+	print("1.0: " + str(c.scale*visible_lx10))
+
+	# print execution time
+	print("%s seconds" % (time.time() - start_time))
 	
 	# plot curve
 	xvalues = np.empty(61)
@@ -5121,81 +4902,806 @@ if (args.blackbody != 0):
 	print("")
 	
 	# plot brightness
-	plt.subplot(1, 2, 1)
-	plt.plot([0, 0.3, 0.7, 1.0], [scale*visible_rcd0, scale*visible_rcd03, scale*visible_rcd07, scale*visible_rcd10], 'sr', mec='k')
-	plt.plot([0, 0.3, 0.7, 1.0], [scale*visible_ycd0, scale*visible_ycd03, scale*visible_ycd07, scale*visible_ycd10], 'Dy', mec='k')
-	plt.plot([0, 0.3, 0.7, 1.0], [scale*visible_gcd0, scale*visible_gcd03, scale*visible_gcd07, scale*visible_gcd10], '^g', mec='k')
-	plt.plot([0, 0.3, 0.7, 1.0], [scale*visible_bcd0, scale*visible_bcd03, scale*visible_bcd07, scale*visible_bcd10], 'ob', mec='k')
-	plt.plot([0, 0.3, 0.7, 1.0], [scale*visible_graycd0, scale*visible_graycd03, scale*visible_graycd07, scale*visible_graycd10], marker='v', linestyle='', color='gray', mec='k')
-	plt.yscale('log')
-	plt.subplot(1, 2, 2)
-	plt.plot([0, 0.3, 0.7, 1.0], [scale*visible_rcde0, scale*visible_rcde03, scale*visible_rcde07, scale*visible_rcde10], 'sr', mec='k')
-	plt.plot([0, 0.3, 0.7, 1.0], [scale*visible_ycde0, scale*visible_ycde03, scale*visible_ycde07, scale*visible_ycde10], 'Dy', mec='k')
-	plt.plot([0, 0.3, 0.7, 1.0], [scale*visible_gcde0, scale*visible_gcde03, scale*visible_gcde07, scale*visible_gcde10], '^g', mec='k')
-	plt.plot([0, 0.3, 0.7, 1.0], [scale*visible_bcde0, scale*visible_bcde03, scale*visible_bcde07, scale*visible_bcde10], 'ob', mec='k')
-	plt.plot([0, 0.3, 0.7, 1.0], [scale*visible_graycde0, scale*visible_graycde03, scale*visible_graycde07, scale*visible_graycde10], marker='v', linestyle='', color='gray', mec='k')
+	plt.plot([0, 0.3, 0.7, 1.0], [c.scale*visible_rcd0, c.scale*visible_rcd03, c.scale*visible_rcd07, c.scale*visible_rcd10], 'sr', mec='k')
+	plt.plot([0, 0.3, 0.7, 1.0], [c.scale*visible_ycd0, c.scale*visible_ycd03, c.scale*visible_ycd07, c.scale*visible_ycd10], 'Dy', mec='k')
+	plt.plot([0, 0.3, 0.7, 1.0], [c.scale*visible_gcd0, c.scale*visible_gcd03, c.scale*visible_gcd07, c.scale*visible_gcd10], '^g', mec='k')
+	plt.plot([0, 0.3, 0.7, 1.0], [c.scale*visible_bcd0, c.scale*visible_bcd03, c.scale*visible_bcd07, c.scale*visible_bcd10], 'ob', mec='k')
+	plt.plot([0, 0.3, 0.7, 1.0], [c.scale*visible_graycd0, c.scale*visible_graycd03, c.scale*visible_graycd07, c.scale*visible_graycd10], marker='v', linestyle='', color='gray', mec='k')
 	plt.yscale('log')
 	plt.show()
 
-w_range = args.lw - args.sw
-# test different values for rod pigment
+# variables used in tests
+w_range = r2 - r1 + 1 # inclusive
+xvalues = np.empty(w_range)
+for i in range(w_range): xvalues[i] = i + r2
+"""
+Test 1: probability of success
+I previously tested varying the relative contribution of rods and cones, but other papers just measure rod
+and cone contrast separately. This is simpler and addresses the issue of whether 493 nm is accurate for
+living rods or they're red-shifted closer to other marsupials.
+
+This is really slow. brightness_disc and color_disc potentially have O(n^2) running time because they
+have a nested for loop, but in practice it's always exactly 16 passes because there are 8 items to
+compare. (If there were 2, it would be 1 pass; 4, 4; 6, 9; 8, 16; 10, 25; etc. n^2/2) Meanwhile, the code
+below is O(n). This means each round of the for loop is doing 16 comparisons * 10 color pairs = 160. Is
+there any way we can not do this? I can't think of one. Instead I recommend saving computing power by
+setting -s to 480 nm because values below this are implausible for both L cone and rod pigments (in
+terrestrial vertebrates).
+
+Considerably better now that the custom luminosity is set once as an array in brightness_disc() rather
+than doing all the calculations every time we run brightness_contrast(). The latest improvement took it
+from ~67 s to ~24 s.
+"""
 if (args.wopt1):
-        print("optimizing rod contrast")
-        xvalues = np.empty(w_range)
-        rod_ry = np.empty(w_range)
-        rod_rg = np.empty(w_range)
-        rod_rb = np.empty(w_range)
-        rod_yg = np.empty(w_range)
-        rod_yb = np.empty(w_range)
-        rod_gb = np.empty(w_range)
-        rod_rgray = np.empty(w_range)
-        rod_ygray = np.empty(w_range)
-        rod_ggray = np.empty(w_range)
-        rod_bgray = np.empty(w_range)
-        
-        for i in range(w_range):
-                w = args.sw + i
-                print(w)
-                xvalues[i] = w
-                rod_ry[i] = c.brightness_disc(red25_0, red25_03, red25_07, red25_10, yellow15_0, yellow15_03, yellow15_07, yellow15_10, lw=w, output=False)[0]
-                print("RY: " + str(rod_ry[i]))
-                rod_rg[i] = c.brightness_disc(red25_0, red25_03, red25_07, red25_10, green58_0, green58_03, green58_07, green58_10, lw=w, output=False)[0]
-                print("RG: " + str(rod_rg[i]))
-                rod_rb[i] = c.brightness_disc(red25_0, red25_03, red25_07, red25_10, blue47_0, blue47_03, blue47_07, blue47_10, lw=w, output=False)[0]
-                print("RB: " + str(rod_rb[i]))
-                rod_yg[i] = c.brightness_disc(yellow15_0, yellow15_03, yellow15_07, yellow15_10, green58_0, green58_03, green58_07, green58_10, lw=w, output=False)[0]
-                print("YG: " + str(rod_yg[i]))
-                rod_yb[i] = c.brightness_disc(yellow15_0, yellow15_03, yellow15_07, yellow15_10, blue47_0, blue47_03, blue47_07, blue47_10, lw=w, output=False)[0]
-                print("YB: " + str(rod_yb[i]))
-                rod_gb[i] = c.brightness_disc(green58_0, green58_03, green58_07, green58_10, blue47_0, blue47_03, blue47_07, blue47_10, lw=w, output=False)[0]
-                print("GB: " + str(rod_gb[i]))
-                rod_rgray[i] = c.brightness_disc(red25_0, red25_03, red25_07, red25_10, gray_0, gray_03, gray_07, gray_10, correct=68, trials=80, lw=w, output=False)[0]
-                print("R-gray: " + str(rod_rgray[i]))
-                rod_ygray[i] = c.brightness_disc(yellow15_0, yellow15_03, yellow15_07, yellow15_10, gray_0, gray_03, gray_07, gray_10, correct=68, trials=80, lw=w, output=False)[0]
-                print("Y-gray: " + str(rod_ygray[i]))
-                rod_ggray[i] = c.brightness_disc(green58_0, green58_03, green58_07, green58_10, gray_0, gray_03, gray_07, gray_10, correct=68, trials=80, lw=w, output=False)[0]
-                print("G-gray: " + str(rod_ggray[i]))
-                rod_bgray[i] = c.brightness_disc(blue47_0, blue47_03, blue47_07, blue47_10, gray_0, gray_03, gray_07, gray_10, correct=68, trials=80, lw=w, output=False)[0]
-                print("B-gray: " + str(rod_bgray[i]))
-                
-        plt.plot(xvalues, rod_ry, 'r', label="RY")
-        plt.plot(xvalues, rod_rg, '--r', label="RG")
-        plt.plot(xvalues, rod_rb, ':r', label="RB")
-        plt.plot(xvalues, rod_yg, 'k', label="YG")
-        plt.plot(xvalues, rod_yb, '--k', label="YB")
-        plt.plot(xvalues, rod_gb, ':k', label="GB")
-        plt.plot([args.sw, args.lw], [0.05, 0.05], ':k')
-        plt.xlabel("λmax (nm)")
-        plt.ylabel("Probability of success")
-        plt.legend()
-        plt.show()
-        
-        plt.plot(xvalues, rod_rgray, color='gray', label="R-gray")
-        plt.plot(xvalues, rod_ygray, '--', color='gray', label="Y-gray")
-        plt.plot(xvalues, rod_ggray, '-.', color='gray', label="G-gray")
-        plt.plot(xvalues, rod_bgray, ':', color='gray', label="B-gray")
-        plt.plot([args.sw, args.lw], [0.05, 0.05], ':k')
-        plt.xlabel("λmax (nm)")
-        plt.ylabel("Probability of success")
-        plt.legend()
-        plt.show()
+	#plot test
+	rod_ry = np.empty(w_range)
+	rod_rg = np.empty(w_range)
+	rod_rb = np.empty(w_range)
+	rod_yg = np.empty(w_range)
+	rod_yb = np.empty(w_range)
+	rod_gb = np.empty(w_range)
+	rod_rgray = np.empty(w_range)
+	rod_ygray = np.empty(w_range)
+	rod_ggray = np.empty(w_range)
+	rod_bgray = np.empty(w_range)
+	plus_ry = 0
+	plus_rg = 0
+	plus_rb = 0
+	plus_yg = 0
+	plus_yb = 0
+	plus_gb = 0
+	plus_rgray = 0
+	plus_ygray = 0
+	plus_ggray = 0
+	plus_bgray = 0
+	minus_ry = 0
+	minus_rg = 0
+	minus_rb = 0
+	minus_yg = 0
+	minus_yb = 0
+	minus_gb = 0
+	minus_rgray = 0
+	minus_ygray = 0
+	minus_ggray = 0
+	minus_bgray = 0
+
+	for i in range(w_range):
+		w = r2 + i
+		print(w)
+		rod_ry[i] = c.brightness_disc(red25_all, yellow15_all, r1=w, output=False)[0]
+		rod_rg[i] = c.brightness_disc(red25_all, green58_all, r1=w, output=False)[0]
+		rod_rb[i] = c.brightness_disc(red25_all, blue47_all, r1=w, output=False)[0]
+		rod_yg[i] = c.brightness_disc(yellow15_all, green58_all, r1=w, output=False)[0]
+		rod_yb[i] = c.brightness_disc(yellow15_all, blue47_all, r1=w, output=False)[0]
+		rod_gb[i] = c.brightness_disc(green58_all, blue47_all, r1=w, output=False)[0]
+		rod_rgray[i] = c.brightness_disc(red25_all, gray_all, correct=68, trials=80, r1=w, output=False)[0]
+		rod_ygray[i] = c.brightness_disc(yellow15_all, gray_all, correct=68, trials=80, r1=w, output=False)[0]
+		rod_ggray[i] = c.brightness_disc(green58_all, gray_all, correct=68, trials=80, r1=w, output=False)[0]
+		rod_bgray[i] = c.brightness_disc(blue47_all, gray_all, correct=68, trials=80, r1=w, output=False)[0]
+		if (args.verbose):
+			print("RY: " + str(rod_ry[i]))
+			print("RG: " + str(rod_rg[i]))
+			print("RB: " + str(rod_rb[i]))
+			print("YG: " + str(rod_yg[i]))
+			print("YB: " + str(rod_yb[i]))
+			print("GB: " + str(rod_gb[i]))
+			print("R-gray: " + str(rod_rgray[i]))
+			print("Y-gray: " + str(rod_ygray[i]))
+			print("G-gray: " + str(rod_ggray[i]))
+			print("B-gray: " + str(rod_bgray[i]))
+		
+		# threshold crossings
+		if ((rod_ry[i] < 0.05) and (rod_ry[i-1] > 0.05)): minus_ry = w
+		if ((rod_rg[i] < 0.05) and (rod_rg[i-1] > 0.05)): minus_rg = w
+		if ((rod_rb[i] < 0.05) and (rod_rb[i-1] > 0.05)): minus_rb = w
+		if ((rod_yg[i] < 0.05) and (rod_yg[i-1] > 0.05)): minus_yg = w
+		if ((rod_yb[i] < 0.05) and (rod_yb[i-1] > 0.05)): minus_yb = w
+		if ((rod_gb[i] < 0.05) and (rod_gb[i-1] > 0.05)): minus_gb = w
+		if ((rod_rgray[i] < 0.05) and (rod_rgray[i-1] > 0.05)): minus_rgray = w
+		if ((rod_ygray[i] < 0.05) and (rod_ygray[i-1] > 0.05)): minus_ygray = w
+		if ((rod_ggray[i] < 0.05) and (rod_ggray[i-1] > 0.05)): minus_ggray = w
+		if ((rod_bgray[i] < 0.05) and (rod_bgray[i-1] > 0.05)): minus_bgray = w
+		if ((rod_ry[i] > 0.05) and (rod_ry[i-1] < 0.05)): plus_ry = w
+		if ((rod_rg[i] > 0.05) and (rod_rg[i-1] < 0.05)): plus_rg = w
+		if ((rod_rb[i] > 0.05) and (rod_rb[i-1] < 0.05)): plus_rb = w
+		if ((rod_yg[i] > 0.05) and (rod_yg[i-1] < 0.05)): plus_yg = w
+		if ((rod_yb[i] > 0.05) and (rod_yb[i-1] < 0.05)): plus_yb = w
+		if ((rod_gb[i] > 0.05) and (rod_gb[i-1] < 0.05)): plus_gb = w
+		if ((rod_rgray[i] > 0.05) and (rod_rgray[i-1] < 0.05)): plus_rgray = w
+		if ((rod_ygray[i] > 0.05) and (rod_ygray[i-1] < 0.05)): plus_ygray = w
+		if ((rod_ggray[i] > 0.05) and (rod_ggray[i-1] < 0.05)): plus_ggray = w
+		if ((rod_bgray[i] > 0.05) and (rod_bgray[i-1] < 0.05)): plus_bgray = w
+		
+	print("Threshold crossings (- => +):")
+	print("R-Y: " + str(plus_ry))
+	print("R-G: " + str(plus_rg))
+	print("R-B: " + str(plus_rb))
+	print("Y-G: " + str(plus_yg))
+	print("Y-B: " + str(plus_yb))
+	print("G-B: " + str(plus_gb))
+	print("R-gray: " + str(plus_rgray))
+	print("Y-gray: " + str(plus_ygray))
+	print("G-gray: " + str(plus_ggray))
+	print("B-gray: " + str(plus_bgray))
+	print("Threshold crossings (+ => -):")
+	print("R-Y: " + str(minus_ry))
+	print("R-G: " + str(minus_rg))
+	print("R-B: " + str(minus_rb))
+	print("Y-G: " + str(minus_yg))
+	print("Y-B: " + str(minus_yb))
+	print("G-B: " + str(minus_gb))
+	print("R-gray: " + str(minus_rgray))
+	print("Y-gray: " + str(minus_ygray))
+	print("G-gray: " + str(minus_ggray))
+	print("B-gray: " + str(minus_bgray))
+
+	# print execution time
+	print("%s seconds" % (time.time() - start_time))
+	
+	plt.plot(xvalues, rod_ry, 'k', label="RY")
+	plt.plot(xvalues, rod_rg, '--k', label="RG")
+	plt.plot(xvalues, rod_rb, '-.b', label="RB")
+	plt.plot(xvalues, rod_yg, 'k', dashes=[1,5], label="YG")
+	plt.plot(xvalues, rod_yb, 'b', dashes=[8,1], label="YB")
+	plt.plot(xvalues, rod_gb, 'b', dashes=[8,1,1,1,1,1], label="GB")
+	plt.plot([r2, r1], [0.05, 0.05], ':', color="gray")
+	plt.xlabel("λmax (nm)")
+	plt.ylabel("Probability of success")
+	plt.legend()
+	plt.show()
+	
+	plt.plot(xvalues, rod_rgray, 'k', label="R-gray")
+	plt.plot(xvalues, rod_ygray, '--k',label="Y-gray")
+	plt.plot(xvalues, rod_ggray, '-.k', label="G-gray")
+	plt.plot(xvalues, rod_bgray, 'b', dashes=[8,1], label="B-gray")
+	plt.plot([r2, r1], [0.05, 0.05], ':', color="gray")
+	plt.xlabel("λmax (nm)")
+	plt.ylabel("Probability of success")
+	plt.legend()
+	plt.show()
+
+"""
+Test 2: order
+The opossums are described as ordering the colors as red-yellow-gray-green-blue. This doesn't tell us
+whether they used color, but it does tell us (a) they used visual cues, (b) there were probably no more
+than two pigments involved (dichromatic species prefer relative discrimination), (c) the contrast must
+be such that they appear in this order.
+
+This should be quicker than 1. (It is.)
+"""
+if (args.wopt2):
+	# 2a: brightness contrast with 1 pigment
+	print("brightness order")
+	r = np.empty(w_range)
+	y = np.empty(w_range)
+	g = np.empty(w_range)
+	b = np.empty(w_range)
+	gray = np.empty(w_range)
+	plus_ry = 0
+	plus_yg = 0
+	plus_gb = 0
+	plus_ygray = 0
+	plus_grayg = 0
+	minus_ry = 0
+	minus_yg = 0
+	minus_gb = 0
+	minus_ygray = 0
+	minus_grayg = 0
+
+	for i in range(w_range):
+		w = r2 + i
+		print(w)
+		brightness_r = 0
+		brightness_y = 0
+		brightness_g = 0
+		brightness_b = 0
+		brightness_gray = 0
+		
+		for j in range(red25_0.shape[0]):
+			w1 = j + 300
+			brightness_r += c.vpt(w1, w) * red25_0[j]
+			brightness_y += c.vpt(w1, w) * yellow15_0[j]
+			brightness_g += c.vpt(w1, w) * green58_0[j]
+			brightness_b += c.vpt(w1, w) * blue47_0[j]
+			brightness_gray += c.vpt(w1, w) * gray_0[j]
+		r[i] = brightness_r
+		y[i] = brightness_y
+		g[i] = brightness_g
+		b[i] = brightness_b
+		gray[i] = brightness_gray
+		
+		# sign changes
+		if (r[i] < y[i] and r[i-1] > y[i-1]): minus_ry = w
+		if (y[i] < g[i] and y[i-1] > g[i-1]): minus_yg = w
+		if (g[i] < b[i] and g[i-1] > b[i-1]): minus_gb = w
+		if (y[i] < gray[i] and y[i-1] > gray[i-1]): minus_ygray = w
+		if (gray[i] < g[i] and gray[i-1] > g[i-1]): minus_grayg = w
+		if (r[i] > y[i] and r[i-1] < y[i-1]): plus_ry = w
+		if (y[i] > g[i] and y[i-1] < g[i-1]): plus_yg = w
+		if (g[i] > b[i] and g[i-1] < b[i-1]): plus_gb = w
+		if (y[i] > gray[i] and y[i-1] < gray[i-1]): plus_ygray = w
+		if (gray[i] > g[i] and gray[i-1] < g[i-1]): plus_grayg = w
+		
+		if (args.verbose):
+			print("R: " + str(r[i]))
+			print("Y: " + str(y[i]))
+			print("G: " + str(g[i]))
+			print("B: " + str(b[i]))
+			print("Gray: " + str(gray[i]))
+	
+	print("Sign changes (- => +):")
+	print("R-Y: " + str(plus_ry))
+	print("Y-G: " + str(plus_yg))
+	print("G-B: " + str(plus_gb))
+	print("Y-gray: " + str(plus_ygray))
+	print("Gray-G: " + str(plus_grayg))
+	print("Sign changes (+ => -):")
+	print("R-Y: " + str(minus_ry))
+	print("Y-G: " + str(minus_yg))
+	print("G-B: " + str(minus_gb))
+	print("Y-gray: " + str(minus_ygray))
+	print("Gray-G: " + str(minus_grayg))
+	
+	plt.plot(xvalues, r, 'r', label="Red")
+	plt.plot(xvalues, y, '--y', label="Yellow")
+	plt.plot(xvalues, g, '-.g', label="Green")
+	plt.plot(xvalues, b, 'b', dashes=[8,1], label="Blue")
+	plt.plot(xvalues, gray, color='gray', dashes=[8,1,1,1,1,1], label="Gray")
+	plt.xlabel("λmax (nm)")
+	plt.ylabel("Brightness (arbitrary units)")
+	plt.yscale("log")
+	plt.legend()
+	plt.show()
+
+	# 2b: color contrast with 2 pigments
+	# This is similar to the above but slightly different because it takes both into account.
+	print("color order")
+	r = np.empty(w_range)
+	y = np.empty(w_range)
+	g = np.empty(w_range)
+	b = np.empty(w_range)
+	gray = np.empty(w_range)
+	plus_ry = 0
+	plus_yg = 0
+	plus_gb = 0
+	plus_ygray = 0
+	plus_grayg = 0
+	minus_ry = 0
+	minus_yg = 0
+	minus_gb = 0
+	minus_ygray = 0
+	minus_grayg = 0
+
+	for i in range(w_range):
+		w = r2 + i
+		print(w)
+		wpl = 0
+		wpm = 0
+		l_r = 0
+		l_y = 0
+		l_g = 0
+		l_b = 0
+		l_gray = 0
+		m_r = 0
+		m_y = 0
+		m_g = 0
+		m_b = 0
+		m_gray = 0
+
+		for j in range(red25_0.shape[0]):
+			w1 = j + 300
+			l = c.vpt(w1, r1) * c.media_1nm[j] * c.wp_1nm[j]
+			m = c.vpt(w1, w) * c.media_1nm[j] * c.wp_1nm[j]
+			wpl += c.vpt(w1, r1) * c.media_1nm[j] * c.wp_1nm[j]
+			wpm += c.vpt(w1, w) * c.media_1nm[j] * c.wp_1nm[j]
+			l_r += l * red25_0[j]
+			l_y += l * yellow15_0[j]
+			l_g += l * green58_0[j]
+			l_b += l * blue47_0[j]
+			l_gray += l * gray_0[j]
+			m_r += m * red25_0[j]
+			m_y += m * yellow15_0[j]
+			m_g += m * green58_0[j]
+			m_b += m * blue47_0[j]
+			m_gray += m * gray_0[j]
+		
+		l_r = l_r / wpl
+		l_y = l_y / wpl
+		l_g = l_g / wpl
+		l_b = l_b / wpl
+		l_gray = l_gray / wpl
+		m_r = m_r / wpm
+		m_y = m_y / wpm
+		m_g = m_g / wpm
+		m_b = m_b / wpm
+		m_gray = m_gray / wpm
+		
+		r[i] = (l_r - m_r) / (l_r + m_r)
+		y[i] = (l_y - m_y) / (l_y + m_y)
+		g[i] = (l_g - m_g) / (l_g + m_g)
+		b[i] = (l_b - m_b) / (l_b + m_b)
+		gray[i] = (l_gray - m_gray) / (l_gray + m_gray)
+		
+		# sign changes
+		if (r[i] < y[i] and r[i-1] > y[i-1]): minus_ry = w
+		if (y[i] < g[i] and y[i-1] > g[i-1]): minus_yg = w
+		if (g[i] < b[i] and g[i-1] > b[i-1]): minus_gb = w
+		if (y[i] < gray[i] and y[i-1] > gray[i-1]): minus_ygray = w
+		if (gray[i] < g[i] and gray[i-1] > g[i-1]): minus_grayg = w
+		if (r[i] > y[i] and r[i-1] < y[i-1]): plus_ry = w
+		if (y[i] > g[i] and y[i-1] < g[i-1]): plus_yg = w
+		if (g[i] > b[i] and g[i-1] < b[i-1]): plus_gb = w
+		if (y[i] > gray[i] and y[i-1] < gray[i-1]): plus_ygray = w
+		if (gray[i] > g[i] and gray[i-1] < g[i-1]): plus_grayg = w
+		
+		if (args.verbose):
+			print("R: " + str(r[i]))
+			print("Y: " + str(y[i]))
+			print("G: " + str(g[i]))
+			print("B: " + str(b[i]))
+			print("Gray: " + str(gray[i]))
+	
+	print("Sign changes (- => +):")
+	print("R-Y: " + str(plus_ry))
+	print("Y-G: " + str(plus_yg))
+	print("G-B: " + str(plus_gb))
+	print("Y-gray: " + str(plus_ygray))
+	print("Gray-G: " + str(plus_grayg))
+	print("Sign changes (+ => -):")
+	print("R-Y: " + str(minus_ry))
+	print("Y-G: " + str(minus_yg))
+	print("G-B: " + str(minus_gb))
+	print("Y-gray: " + str(minus_ygray))
+	print("Gray-G: " + str(minus_grayg))
+	
+	plt.plot(xvalues, r, 'r', label="Red")
+	plt.plot(xvalues, y, '--y', label="Yellow")
+	plt.plot(xvalues, g, '-.g', label="Green")
+	plt.plot(xvalues, b, 'b', dashes=[8,1], label="Blue")
+	plt.plot(xvalues, gray, color='gray', dashes=[8,1,1,1,1,1], label="Gray")
+	plt.xlabel("λmax (nm)")
+	plt.ylabel("Chromaticity ((L-M)/(L+M))")
+	plt.legend()
+	plt.show()
+	
+	# 2c
+	print("brightness order")
+	r = np.empty(w_range)
+	r3 = np.empty(w_range)
+	r7 = np.empty(w_range)
+	r10 = np.empty(w_range)
+	y = np.empty(w_range)
+	y3 = np.empty(w_range)
+	y7 = np.empty(w_range)
+	y10 = np.empty(w_range)
+	g = np.empty(w_range)
+	g3 = np.empty(w_range)
+	g7 = np.empty(w_range)
+	g10 = np.empty(w_range)
+	b = np.empty(w_range)
+	b3 = np.empty(w_range)
+	b7 = np.empty(w_range)
+	b10 = np.empty(w_range)
+	gray = np.empty(w_range)
+	gray3 = np.empty(w_range)
+	gray7 = np.empty(w_range)
+	gray10 = np.empty(w_range)
+
+	for i in range(w_range):
+		w = r2 + i
+		print(w)
+		brightness_r = 0
+		brightness_r3 = 0
+		brightness_r7 = 0
+		brightness_r10 = 0
+		brightness_y = 0
+		brightness_y3 = 0
+		brightness_y7 = 0
+		brightness_y10 = 0
+		brightness_g = 0
+		brightness_g3 = 0
+		brightness_g7 = 0
+		brightness_g10 = 0
+		brightness_b = 0
+		brightness_b3 = 0
+		brightness_b7 = 0
+		brightness_b10 = 0
+		brightness_gray = 0
+		brightness_gray3 = 0
+		brightness_gray7 = 0
+		brightness_gray10 = 0
+		
+		for j in range(red25_0.shape[0]):
+			w1 = j + 300
+			brightness_r += c.vpt(w1, w) * red25_0[j]
+			brightness_r3 += c.vpt(w1, w) * red25_03[j]
+			brightness_r7 += c.vpt(w1, w) * red25_07[j]
+			brightness_r10 += c.vpt(w1, w) * red25_10[j]
+			brightness_y += c.vpt(w1, w) * yellow15_0[j]
+			brightness_y3 += c.vpt(w1, w) * yellow15_03[j]
+			brightness_y7 += c.vpt(w1, w) * yellow15_07[j]
+			brightness_y10 += c.vpt(w1, w) * yellow15_10[j]
+			brightness_g += c.vpt(w1, w) * green58_0[j]
+			brightness_g3 += c.vpt(w1, w) * green58_03[j]
+			brightness_g7 += c.vpt(w1, w) * green58_07[j]
+			brightness_g10 += c.vpt(w1, w) * green58_10[j]
+			brightness_b += c.vpt(w1, w) * blue47_0[j]
+			brightness_b3 += c.vpt(w1, w) * blue47_03[j]
+			brightness_b7 += c.vpt(w1, w) * blue47_07[j]
+			brightness_b10 += c.vpt(w1, w) * blue47_10[j]
+			brightness_gray += c.vpt(w1, w) * gray_0[j]
+			brightness_gray3 += c.vpt(w1, w) * gray_03[j]
+			brightness_gray7 += c.vpt(w1, w) * gray_07[j]
+			brightness_gray10 += c.vpt(w1, w) * gray_10[j]
+		r[i] = brightness_r
+		r3[i] = brightness_r3
+		r7[i] = brightness_r7
+		r10[i] = brightness_r10
+		y[i] = brightness_y
+		y3[i] = brightness_y3
+		y7[i] = brightness_y7
+		y10[i] = brightness_y10
+		g[i] = brightness_g
+		g3[i] = brightness_g3
+		g7[i] = brightness_g7
+		g10[i] = brightness_g10
+		b[i] = brightness_b
+		b3[i] = brightness_b3
+		b7[i] = brightness_b7
+		b10[i] = brightness_b10
+		gray[i] = brightness_gray
+		gray3[i] = brightness_gray3
+		gray7[i] = brightness_gray7
+		gray10[i] = brightness_gray10
+	
+	plt.plot(xvalues, r, 'r', label="Red")
+	plt.plot(xvalues, r3, 'r')
+	plt.plot(xvalues, r7, 'r')
+	plt.plot(xvalues, r10, 'r')
+	plt.plot(xvalues, y, '--y', label="Yellow")
+	plt.plot(xvalues, y3, '--y')
+	plt.plot(xvalues, y7, '--y')
+	plt.plot(xvalues, y10, '--y')
+	plt.plot(xvalues, g, 'g', label="Green")
+	plt.plot(xvalues, g3, 'g')
+	plt.plot(xvalues, g7, 'g')
+	plt.plot(xvalues, g10, 'g')
+	plt.plot(xvalues, b, 'b', dashes=[8,1], label="Blue")
+	plt.plot(xvalues, b3, 'b', dashes=[8,1])
+	plt.plot(xvalues, b7, 'b', dashes=[8,1])
+	plt.plot(xvalues, b10, 'b', dashes=[8,1])
+	plt.plot(xvalues, gray, 'gray', dashes=[8,1,1,1,1,1], label="Gray")
+	plt.plot(xvalues, gray3, 'gray', dashes=[8,1,1,1,1,1])
+	plt.plot(xvalues, gray7, 'gray', dashes=[8,1,1,1,1,1])
+	plt.plot(xvalues, gray10, 'gray', dashes=[8,1,1,1,1,1])
+	plt.xlabel("λmax (nm)")
+	plt.ylabel("Brightness (arbitrary units)")
+	plt.yscale("log")
+	plt.legend()
+	plt.show()
+
+	# 2d
+	print("color order")
+	r = np.empty(w_range)
+	r3 = np.empty(w_range)
+	r7 = np.empty(w_range)
+	r10 = np.empty(w_range)
+	y = np.empty(w_range)
+	y3 = np.empty(w_range)
+	y7 = np.empty(w_range)
+	y10 = np.empty(w_range)
+	g = np.empty(w_range)
+	g3 = np.empty(w_range)
+	g7 = np.empty(w_range)
+	g10 = np.empty(w_range)
+	b = np.empty(w_range)
+	b3 = np.empty(w_range)
+	b7 = np.empty(w_range)
+	b10 = np.empty(w_range)
+	gray = np.empty(w_range)
+	gray3 = np.empty(w_range)
+	gray7 = np.empty(w_range)
+	gray10 = np.empty(w_range)
+
+	for i in range(w_range):
+		w = r2 + i
+		print(w)
+		wpl = 0
+		wpm = 0
+		l_r = 0
+		l_r3 = 0
+		l_r7 = 0
+		l_r10 = 0
+		l_y = 0
+		l_y3 = 0
+		l_y7 = 0
+		l_y10 = 0
+		l_g = 0
+		l_g3 = 0
+		l_g7 = 0
+		l_g10 = 0
+		l_b = 0
+		l_b3 = 0
+		l_b7 = 0
+		l_b10 = 0
+		l_gray = 0
+		l_gray3 = 0
+		l_gray7 = 0
+		l_gray10 = 0
+		m_r = 0
+		m_r3 = 0
+		m_r7 = 0
+		m_r10 = 0
+		m_y = 0
+		m_y3 = 0
+		m_y7 = 0
+		m_y10 = 0
+		m_g = 0
+		m_g3 = 0
+		m_g7 = 0
+		m_g10 = 0
+		m_b = 0
+		m_b3 = 0
+		m_b7 = 0
+		m_b10 = 0
+		m_gray = 0
+		m_gray3 = 0
+		m_gray7 = 0
+		m_gray10 = 0
+
+		for j in range(red25_0.shape[0]):
+			w1 = j + 300
+			l = c.vpt(w1, r1) * c.media_1nm[j] * c.wp_1nm[j]
+			m = c.vpt(w1, w) * c.media_1nm[j] * c.wp_1nm[j]
+			wpl += c.vpt(w1, r1) * c.media_1nm[j] * c.wp_1nm[j]
+			wpm += c.vpt(w1, w) * c.media_1nm[j] * c.wp_1nm[j]
+			l_r += l * red25_0[j]
+			l_r3 += l * red25_03[j]
+			l_r7 += l * red25_07[j]
+			l_r10 += l * red25_10[j]
+			l_y += l * yellow15_0[j]
+			l_y3 += l * yellow15_03[j]
+			l_y7 += l * yellow15_07[j]
+			l_y10 += l * yellow15_10[j]
+			l_g += l * green58_0[j]
+			l_g3 += l * green58_03[j]
+			l_g7 += l * green58_07[j]
+			l_g10 += l * green58_10[j]
+			l_b += l * blue47_0[j]
+			l_b3 += l * blue47_03[j]
+			l_b7 += l * blue47_07[j]
+			l_b10 += l * blue47_10[j]
+			l_gray += l * gray_0[j]
+			l_gray3 += l * gray_03[j]
+			l_gray7 += l * gray_07[j]
+			l_gray10 += l * gray_10[j]
+			m_r += m * red25_0[j]
+			m_r3 += m * red25_03[j]
+			m_r7 += m * red25_07[j]
+			m_r10 += m * red25_10[j]
+			m_y += m * yellow15_0[j]
+			m_y3 += m * yellow15_03[j]
+			m_y7 += m * yellow15_07[j]
+			m_y10 += m * yellow15_10[j]
+			m_g += m * green58_0[j]
+			m_g3 += m * green58_03[j]
+			m_g7 += m * green58_07[j]
+			m_g10 += m * green58_10[j]
+			m_b += m * blue47_0[j]
+			m_b3 += m * blue47_03[j]
+			m_b7 += m * blue47_07[j]
+			m_b10 += m * blue47_10[j]
+			m_gray += m * gray_0[j]
+			m_gray3 += m * gray_03[j]
+			m_gray7 += m * gray_07[j]
+			m_gray10 += m * gray_10[j]
+		
+		l_r = l_r / wpl
+		l_r3 = l_r3 / wpl
+		l_r7 = l_r7 / wpl
+		l_r10 = l_r10 / wpl
+		l_y = l_y / wpl
+		l_y3 = l_y3 / wpl
+		l_y7 = l_y7 / wpl
+		l_y10 = l_y10 / wpl
+		l_g = l_g / wpl
+		l_g3 = l_g3 / wpl
+		l_g7 = l_g7 / wpl
+		l_g10 = l_g10 / wpl
+		l_b = l_b / wpl
+		l_b3 = l_b3 / wpl
+		l_b7 = l_b7 / wpl
+		l_b10 = l_b10 / wpl
+		l_gray = l_gray / wpl
+		l_gray3 = l_gray3 / wpl
+		l_gray7 = l_gray7 / wpl
+		l_gray10 = l_gray10 / wpl
+		m_r = m_r / wpm
+		m_r3 = m_r3 / wpm
+		m_r7 = m_r7 / wpm
+		m_r10 = m_r10 / wpm
+		m_y = m_y / wpm
+		m_y3 = m_y3 / wpm
+		m_y7 = m_y7 / wpm
+		m_y10 = m_y10 / wpm
+		m_g = m_g / wpm
+		m_g3 = m_g3 / wpm
+		m_g7 = m_g7 / wpm
+		m_g10 = m_g10 / wpm
+		m_b = m_b / wpm
+		m_b3 = m_b3 / wpm
+		m_b7 = m_b7 / wpm
+		m_b10 = m_b10 / wpm
+		m_gray = m_gray / wpm
+		m_gray3 = m_gray3 / wpm
+		m_gray7 = m_gray7 / wpm
+		m_gray10 = m_gray10 / wpm
+		
+		r[i] = (l_r - m_r) / (l_r + m_r)
+		r3[i] = (l_r3 - m_r3) / (l_r3 + m_r3)
+		r7[i] = (l_r7 - m_r7) / (l_r7 + m_r7)
+		r10[i] = (l_r10 - m_r10) / (l_r10 + m_r10)
+		y[i] = (l_y - m_y) / (l_y + m_y)
+		y3[i] = (l_y3 - m_y3) / (l_y3 + m_y3)
+		y7[i] = (l_y7 - m_y7) / (l_y7 + m_y7)
+		y10[i] = (l_y10 - m_y10) / (l_y10 + m_y10)
+		g[i] = (l_g - m_g) / (l_g + m_g)
+		g3[i] = (l_g3 - m_g3) / (l_g3 + m_g3)
+		g7[i] = (l_g7 - m_g7) / (l_g7 + m_g7)
+		g10[i] = (l_g10 - m_g10) / (l_g10 + m_g10)
+		b[i] = (l_b - m_b) / (l_b + m_b)
+		b3[i] = (l_b3 - m_b3) / (l_b3 + m_b3)
+		b7[i] = (l_b7 - m_b7) / (l_b7 + m_b7)
+		b10[i] = (l_b10 - m_b10) / (l_b10 + m_b10)
+		gray[i] = (l_gray - m_gray) / (l_gray + m_gray)
+		gray3[i] = (l_gray3 - m_gray3) / (l_gray3 + m_gray3)
+		gray7[i] = (l_gray7 - m_gray7) / (l_gray7 + m_gray7)
+		gray10[i] = (l_gray10 - m_gray10) / (l_gray10 + m_gray10)
+	
+	plt.plot(xvalues, r10, color=c.spec2rgb(red25_10))
+	plt.plot(xvalues, r7, color=c.spec2rgb(red25_07))
+	plt.plot(xvalues, r3, color=c.spec2rgb(red25_03))
+	plt.plot(xvalues, r, color=c.spec2rgb(red25_0), label="Red")
+	plt.plot(xvalues, y10, '--', color=c.spec2rgb(yellow15_10))
+	plt.plot(xvalues, y7, '--', color=c.spec2rgb(yellow15_07))
+	plt.plot(xvalues, y3, '--', color=c.spec2rgb(yellow15_03))
+	plt.plot(xvalues, y, '--', color=c.spec2rgb(yellow15_0), label="Yellow")
+	plt.plot(xvalues, g10, color=c.spec2rgb(green58_10))
+	plt.plot(xvalues, g7, color=c.spec2rgb(green58_07))
+	plt.plot(xvalues, g3, color=c.spec2rgb(green58_03))
+	plt.plot(xvalues, g, color=c.spec2rgb(green58_0), label="Green")
+	plt.plot(xvalues, b10, color=c.spec2rgb(blue47_10), dashes=[8,1])
+	plt.plot(xvalues, b7, color=c.spec2rgb(blue47_07), dashes=[8,1])
+	plt.plot(xvalues, b3, color=c.spec2rgb(blue47_03), dashes=[8,1])
+	plt.plot(xvalues, b, color=c.spec2rgb(blue47_0), dashes=[8,1], label="Blue")
+	plt.plot(xvalues, gray10, color=c.spec2rgb(gray_10), dashes=[8,1,1,1,1,1])
+	plt.plot(xvalues, gray7, color=c.spec2rgb(gray_07), dashes=[8,1,1,1,1,1])
+	plt.plot(xvalues, gray3, color=c.spec2rgb(gray_03), dashes=[8,1,1,1,1,1])
+	plt.plot(xvalues, gray, color=c.spec2rgb(gray_0), dashes=[8,1,1,1,1,1], label="Gray")
+	plt.xlabel("λmax (nm)")
+	plt.ylabel("Chromaticity ((L-M)/(L+M))")
+	plt.legend()
+	plt.show()
+
+"""
+Test 3: discrimination
+
+Here we test different values of a second pigment. This is set up so there are only two because we assume
+S/UV cones are only negligibly involved.
+
+As expected, this one runs slower than a dog in January. (07/10: 776.850195646286 s) Not much we can do about that unless I use only
+the brightest variant instead of all four.
+
+I shaved it down to 165.02264022827148. It still isn't fast, but it's more reasonable.
+"""
+if (args.wopt3):
+	median_ry = np.empty(w_range)
+	median_rg = np.empty(w_range)
+	median_rb = np.empty(w_range)
+	median_yg = np.empty(w_range)
+	median_yb = np.empty(w_range)
+	median_gb = np.empty(w_range)
+	median_rgray = np.empty(w_range)
+	median_ygray = np.empty(w_range)
+	median_ggray = np.empty(w_range)
+	median_bgray = np.empty(w_range)
+	median_min = np.empty(w_range)
+	best_ry = 0
+	best_ryy = 0
+	best_rg = 0
+	best_rgy = 0
+	best_rb = 0
+	best_rby = 0
+	best_yg = 0
+	best_ygy = 0
+	best_yb = 0
+	best_yby = 0
+	best_gb = 0
+	best_gby = 0
+	best_rgray = 0
+	best_rgrayy = 0
+	best_ygray = 0
+	best_ygrayy = 0
+	best_ggray = 0
+	best_ggrayy = 0
+	best_bgray = 0
+	best_bgrayy = 0
+	best_min = 0
+	best_miny = 0
+	
+	for i in range(w_range):
+		w = r2 + i
+		median_ry[i] = c.color_disc(red25_all, yellow15_all, r2=w, output=False, customize_s=True)[0]
+		median_rg[i] = c.color_disc(red25_all, green58_all, r2=w, output=False, customize_s=True)[0]
+		median_rb[i] = c.color_disc(red25_all, blue47_all, r2=w, output=False, customize_s=True)[0]
+		median_yg[i] = c.color_disc(yellow15_all, green58_all, r2=w, output=False, customize_s=True)[0]
+		median_yb[i] = c.color_disc(yellow15_all, blue47_all, r2=w, output=False, customize_s=True)[0]
+		median_gb[i] = c.color_disc(green58_all, blue47_all, r2=w, output=False, customize_s=True)[0]
+		median_rgray[i] = c.color_disc(gray_all, red25_all, r2=w, output=False, customize_s=True)[0]
+		median_ygray[i] = c.color_disc(gray_all, yellow15_all, r2=w, output=False, customize_s=True)[0]
+		median_ggray[i] = c.color_disc(gray_all, green58_all, r2=w, output=False, customize_s=True)[0]
+		median_bgray[i] = c.color_disc(gray_all, blue47_all, r2=w, output=False, customize_s=True)[0]
+		median_min[i] = min(median_ry[i], median_rg[i], median_rb[i], median_yg[i], median_yb[i], median_gb[i], median_rgray[i], median_ygray[i], median_ggray[i], median_bgray[i])
+		print(w)
+		if (median_ry[i] > best_ryy):
+		    best_ryy = median_ry[i]
+		    best_ry = w
+		if (median_rg[i] > best_rgy):
+		    best_rgy = median_rg[i]
+		    best_rg = w
+		if (median_rb[i] > best_rby):
+		    best_rby = median_rb[i]
+		    best_rb = w
+		if (median_yg[i] > best_ygy):
+		    best_ygy = median_yg[i]
+		    best_yg = w
+		if (median_yb[i] > best_yby):
+		    best_yby = median_yb[i]
+		    best_yb = w
+		if (median_gb[i] > best_gby):
+		    best_gby = median_gb[i]
+		    best_gb = w
+		if (median_rgray[i] > best_rgrayy):
+		    best_rgrayy = median_rgray[i]
+		    best_rgray = w
+		if (median_ygray[i] > best_ygrayy):
+		    best_ygrayy = median_ygray[i]
+		    best_ygray = w
+		if (median_ggray[i] > best_ggrayy):
+		    best_ggrayy = median_ggray[i]
+		    best_ggray = w
+		if (median_bgray[i] > best_bgrayy):
+		    best_bgrayy = median_bgray[i]
+		    best_bgray = w
+		if (median_min[i] > best_miny):
+		    best_miny = median_min[i]
+		    best_min = w
+	print("Best R-Y: " + str(best_ry))
+	print("Best R-G: " + str(best_rg))
+	print("Best R-B: " + str(best_rb))
+	print("Best Y-G: " + str(best_yg))
+	print("Best Y-B: " + str(best_yb))
+	print("Best G-B: " + str(best_gb))
+	print("Best R-gray: " + str(best_rgray))
+	print("Best Y-gray: " + str(best_ygray))
+	print("Best G-gray: " + str(best_ggray))
+	print("Best B-gray: " + str(best_bgray))
+	print("Best lowest median: " + str(best_min))
+
+	# print execution time
+	print("%s seconds" % (time.time() - start_time))
+	
+	plt.plot(xvalues, median_ry, 'k', label="R-Y")
+	plt.plot(xvalues, median_rg, '--k', label="R-G")
+	plt.plot(xvalues, median_rb, '-.k', label="R-B")
+	plt.plot(xvalues, median_yg, ':k', label="Y-G")
+	plt.plot(xvalues, median_yb, 'k', dashes=[8,1], label="Y-B")
+	plt.plot(xvalues, median_gb, 'k', dashes=[8,1,1,1,1,1], label="G-B")
+	plt.plot(xvalues, median_rgray, color='0.6', label="R-gray")
+	plt.plot(xvalues, median_ygray, '--', color='0.6', label="Y-gray")
+	plt.plot(xvalues, median_ggray, '-.', color='0.6', label="G-gray")
+	plt.plot(xvalues, median_bgray, color='0.6', dashes=[8,1], label="B-gray")
+	plt.xlabel("λmax (nm)")
+	plt.ylabel("Median contrast (JND)")
+	plt.legend()
+	plt.show()
