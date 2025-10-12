@@ -20,51 +20,70 @@ carotenoid example).
 """
 import central as c
 import numpy as np
+import matplotlib.pyplot as plt
 
+# Fixed the ranges -- you have to go to one more than the number you want, or it leaves a gap.
+# An empty spot in an array gets filled with something weird.
+
+spectra = []
 # 300-nm ramp
 ramp300 = np.empty(401)
 for i in range(401): ramp300[i] = i/401
-print("300-nm ramp function")
-c.spectral_rendering(ramp300)
+spectra.append(ramp300)
 
 # 350-nm ramp
 ramp350 = np.empty(401)
-for i in range(49): ramp350[i] = 0
+for i in range(50): ramp350[i] = 0
 for i in range(50, 401): ramp350[i] = (i-50)/351
-print("350-nm ramp function")
-c.spectral_rendering(ramp350)
+spectra.append(ramp350)
 
 # 400-nm ramp
 ramp400 = np.empty(401)
-for i in range(99): ramp400[i] = 0
+for i in range(100): ramp400[i] = 0
 for i in range(100, 401): ramp400[i] = (i-100)/301
-print("400-nm ramp function")
-c.spectral_rendering(ramp400)
+spectra.append(ramp400)
 
 # 450-nm ramp
 ramp450 = np.empty(401)
-for i in range(149): ramp450[i] = 0
+for i in range(150): ramp450[i] = 0
 for i in range(150, 401): ramp450[i] = (i-150)/251
-print("450-nm ramp function")
-c.spectral_rendering(ramp450)
+spectra.append(ramp450)
 
 # 500-nm ramp
 ramp500 = np.empty(401)
-for i in range(199): ramp500[i] = 0
+for i in range(200): ramp500[i] = 0
 for i in range(200, 401): ramp500[i] = (i-200)/201
-print("500-nm ramp function")
-c.spectral_rendering(ramp500)
+spectra.append(ramp500)
 
 # 550-nm ramp
 ramp550 = np.empty(401)
-for i in range(249): ramp550[i] = 0
+for i in range(250): ramp550[i] = 0
 for i in range(250, 401): ramp550[i] = (i-250)/151
-print("550-nm ramp function")
-c.spectral_rendering(ramp550)
+spectra.append(ramp550)
 
 # 600-nm ramp
 ramp600 = np.empty(401)
-for i in range(299): ramp600[i] = 0
+for i in range(300): ramp600[i] = 0
 for i in range(300, 401): ramp600[i] = (i-300)/101
-print("600-nm ramp function")
-c.spectral_rendering(ramp600)
+spectra.append(ramp600)
+
+# plots
+colors = []
+text = []
+for i in range(len(spectra)):
+	colors.append(c.spec2rgb(spectra[i]))
+	text.append(i*50 + 350)
+
+for i in range(len(spectra)):
+	plt.plot(c.x_1nm, spectra[i], color=colors[i])
+plt.show()
+
+c.triangle(
+	spectra=spectra,
+	colors=colors,
+	gamut=True,
+	gamutcolor="0.7",
+	gamutedge='',
+	text=text,
+	legend=True
+	)
