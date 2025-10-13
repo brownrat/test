@@ -130,8 +130,11 @@ parser.add_argument("-v", "--verbose", help="", action="store_true")
 parser.add_argument("-i", "--image", default="none", help="path to input image")
 parser.add_argument("--spreset", default="none", help="preset source phenotype")
 parser.add_argument("--source", nargs="+", type=int, help="custom source phenotype")
-parser.add_argument("--stplot", help="source->target transform plot", action="store_true")
+parser.add_argument("--s2tplot", help="source->target transform plot", action="store_true")
 parser.add_argument("--bound", default=-np.inf, type=float, help="lower bound for source->target coefficients")
+parser.add_argument("--gamma", default=-1, type=float, help="gamma value for false colors and image processing")
+parser.add_argument("--interactions", default=1, type=int, help="interactions between terms for curve fitting")
+parser.add_argument("--whitebalance", default="on", help="adjust white balance")
 args = parser.parse_args()
 
 # X values representing wavelengths 300-700 nm, used by multiple functions
@@ -2727,27 +2730,27 @@ if (args.image != "none" or args.stplot):
 		sr3 = cie2_s
 		sluminosity = cie10_luminosity
 			
-		srlist.append(r1_1nm)
-		srlist.append(r2_1nm)
-		srlist.append(r3_1nm)
+		srlist.append(sr1)
+		srlist.append(sr2)
+		srlist.append(sr3)
 	# CIE 10-deg fundamentals
 	elif (args.spreset == "cie10"):
 		sr1 = cie10_l
 		sr2 = cie10_m
 		sr3 = cie10_s
 
-		rlist.append(r1_1nm)
-		rlist.append(r2_1nm)
-		rlist.append(r3_1nm)
+		srlist.append(sr1)
+		srlist.append(sr2)
+		srlist.append(sr3)
 	# digital camera
 	elif (args.spreset == "camera"):
 		sr1 = red
 		sr2 = green
 		sr3 = blue
-
-		srlist.append(r1_1nm)
-		srlist.append(r2_1nm)
-		srlist.append(r3_1nm)
+			
+		srlist.append(sr1)
+		srlist.append(sr2)
+		srlist.append(sr3)
 	else:
 		for i in range(3):
 			# whole list
@@ -2766,21 +2769,7 @@ if (args.image != "none" or args.stplot):
 	sr2 *= wp_1nm
 	sr3 *= wp_1nm
 
-	# find best fit to target
-	def camera2target(xdata, rscale, gscale, bscale):
-		ydata = np.empty(xdata.shape[0])
-		for i in range(xdata.shape[0]):
-			ydata[i] = rscale*sr1[i] + gscale*sr2[i] + bscale*sr3[i]
-		return(ydata)
-
-	wptr1 = 1
-	wptr2 = 1
-	wptr3 = 1
-
-	tr1 = np.zeros(401)
-	tr2 = np.zeros(401)
-	tr3 = np.zeros(401)
-
+	# use CMFs instead of raw receptors -- not yet implemented
 	#if (args.fcmode == 'cmf'):
 	#	matrix_cmf = cmf()
 	#	r1 = matrix_cmf[0]
@@ -2804,42 +2793,87 @@ if (args.image != "none" or args.stplot):
 	tr1 /= wptr1
 	if (wptr2 > 0): tr2 /= wptr2
 	if (wptr3 > 0): tr3 /= wptr3
+	
+	# 0-1
+	#sr1_c = sr1 / max(*sr1)
+	#sr2_c = sr2 / max(*sr2)
+	#sr3_c = sr3 / max(*sr3)
+	#tr1_c = tr1 / max(*tr1)
+	#tr2_c = tr2 / max(*tr2)
+	#tr3_c = tr3 / max(*tr3)
+	
+	# chromaticity
+	
+	sr1_c = np.zeros(401)
+	sr2_c = np.zeros(401)
+	sr3_c = np.zeros(401)
+	tr1_c = np.zeros(401)
+	tr2_c = np.zeros(401)
+	tr3_c = np.zeros(401)
+	for i in range(401):
+		stotal = sr1[i] + sr2[i] + sr3[i]
+		ttotal = tr1[i] + tr2[i] + tr3[i]
+		if (stotal > 0):
+			sr1_c[i] = sr1[i] / stotal
+			sr2_c[i] = sr2[i] / stotal
+			sr3_c[i] = sr3[i] / stotal
+		if (ttotal > 0):
+			tr1_c[i] = tr1[i] / ttotal
+			tr2_c[i] = tr2[i] / ttotal
+			tr3_c[i] = tr3[i] / ttotal
+	
 
-	# set lower bound to 0 because weird stuff happens if I let it choose negative numbers
-	popt, pcov = scipy.optimize.curve_fit(camera2target, x_1nm, tr1, p0=[1, 0, 0], bounds=[args.bound,np.inf])
-	print(popt)
-	red_r1 = popt[0]
-	green_r1 = popt[1]
-	blue_r1 = popt[2]
-	popt, pcov = scipy.optimize.curve_fit(camera2target, x_1nm, tr2, p0=[0, 1, 0], bounds=[args.bound,np.inf])
-	print(popt)
-	red_r2 = popt[0]
-	green_r2 = popt[1]
-	blue_r2 = popt[2]
-	popt, pcov = scipy.optimize.curve_fit(camera2target, x_1nm, tr3, p0=[0, 0, 1], bounds=[args.bound,np.inf])
-	print(popt)
-	red_r3 = popt[0]
-	green_r3 = popt[1]
-	blue_r3 = popt[2]
+	# find best fit to target
+	def source2target(xdata, r, g, b, rg, rb, gb):
+		first_order = r*sr1_c + g*sr2_c + b*sr3_c
+		second_order = rg*(sr1_c*sr2_c) + rb*(sr1_c*sr3_c) + gb*(sr2_c*sr3_c)
+		if (args.interactions == 2): ydata = first_order + second_order
+		else: ydata = first_order
+		return(ydata)
 
-	if (args.stplot):
-		plt.plot(x_1nm, tr1, color=colorcode(receptors[0]))
-		plt.plot(x_1nm, red_r1*sr1 + green_r1*sr2 + blue_r1*sr3, '--', color=colorcode(receptors[0]))
+	popt, pcov = scipy.optimize.curve_fit(source2target, x_1nm, tr1_c, p0=[1, 0, 0, 0, 0, 0], bounds=[args.bound, np.inf])
+	print(popt)
+	s2t_r1 = popt
+	popt, pcov = scipy.optimize.curve_fit(source2target, x_1nm, tr2_c, p0=[0, 1, 0, 0, 0, 0], bounds=[args.bound, np.inf])
+	print(popt)
+	s2t_r2 = popt
+	popt, pcov = scipy.optimize.curve_fit(source2target, x_1nm, tr3_c, p0=[0, 0, 1, 0, 0, 0], bounds=[args.bound, np.inf])
+	print(popt)
+	s2t_r3 = popt
+	if (args.s2tplot):
+		plt.plot(x_1nm, tr1_c, color=colorcode(receptors[0]))
+		plt.plot(x_1nm, source2target(x_1nm, *s2t_r1), '--', color=colorcode(receptors[0]))
 		if (dimension > 1):
-			plt.plot(x_1nm, tr2, color=colorcode(receptors[1]))
-			plt.plot(x_1nm, red_r2*sr1 + green_r2*sr2 + blue_r2*sr3, '--', color=colorcode(receptors[1]))
+			plt.plot(x_1nm, tr2_c, color=colorcode(receptors[1]))
+			plt.plot(x_1nm, source2target(x_1nm, *s2t_r2), '--', color=colorcode(receptors[1]))
+			plt.plot(x_1nm, sr1_c, ':r')
+			plt.plot(x_1nm, sr2_c, ':g')
+			plt.plot(x_1nm, sr1_c*sr2_c, ':y')
 		if (dimension > 2):
-			plt.plot(x_1nm, tr3, color=colorcode(receptors[2]))
-			plt.plot(x_1nm, red_r3*sr1 + green_r3*sr2 + blue_r3*sr3, '--', color=colorcode(receptors[2]))
+			plt.plot(x_1nm, tr3_c, color=colorcode(receptors[2]))
+			plt.plot(x_1nm, source2target(x_1nm, *s2t_r3), '--', color=colorcode(receptors[2]))
+			plt.plot(x_1nm, sr3_c, ':b')
+			plt.plot(x_1nm, sr1_c*sr3_c, ':m')
+			plt.plot(x_1nm, sr2_c*sr3_c, ':c')
 		plt.show()
 
-# gamma correction (see color_conversions.py from the colormath module)
-def gamma(v):
-	if v <= 0.0031308: return v * 12.92
-	else: return 1.055 * math.pow(v, 1 / 2.4) - 0.055
-	#if (v < 0): return 0
-	#return math.pow(v, 1 / 2.2)
-	#return v
+# gamma functions -- see https://en.wikipedia.org/wiki/Gamma_correction
+# The default value is -1 and produces a standard sRGB gamma. Set to 1 to disable.
+def linearize(v): # decoding
+	if (args.gamma == -1):
+		if v <= 0.04045: return np.float64(v / 12.92)
+		else: return np.float64(math.pow((v + 0.055) / 1.055, 2.4))
+	else:
+		if (v <= 0): return 0
+		return np.float64(math.pow(v, args.gamma))
+
+def gamma(v): # encoding
+	if (args.gamma == -1):
+		if v <= 0.0031308: return v * 12.92
+		else: return np.float64(1.055 * math.pow(v, 1 / 2.4) - 0.055)
+	else:
+		if (v <= 0): return 0
+		return np.float64(math.pow(v, 1 / args.gamma))
 
 """
 generate an RGB color from a spectral power distribution
