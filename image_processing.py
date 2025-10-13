@@ -7,17 +7,21 @@ to do that. Human color appearance is not derived from LMS in the way CVS seems 
 Instead I decided to skip that step and directly transform the source chromaticity into the target
 chromaticity by fitting the source sensitivity curves to the target, somewhat similar to a method
 available in micaToolbox (https://www.empiricalimaging.com/knowledge-base/spectral-sensitivity-based-cone-catch-models/).
-If the "source" and "target" are specified as described (CIE 10-deg fundamentals -> standard templates
-+ human ocular media), the output closely resembles CVS images except when the target includes an M
-cone with a peak wavelength less than the human M cone (about 540 nm). This prevents the red channel
-from being mapped on to it at all. CVS has a similar flaw where dichromatic simulations with an L cone
-close to the human L cone cause the green channel to be removed and blue-green regions to turn pure
-blue, which my code also replicates.
 
 The RGB values are scaled to the desired intensity using HSV. This is obviously not as good as
 converting to a color space designed to be more perceptually uniform like Lab or the LCH spaces,
 but any kind of conversion between sRGB and another color space seems to distort the hue and/or
 saturation.
+
+micaToolbox uses not just a linear sum of the RGB channels but also up to 3-way interactions between
+them. I tried including 2-way interactions. The fitted curves look great on a plot, but the image
+looks like garbage. Using the monochromatic colors from optimal.py as a color chart, it seems the fit is
+only valid for monochromatic or fully saturated colors whereas anything closer to white is increasingly
+wrong. It's also strongly affected by the scale of both the input curves and input RGB values because
+they're multiplied. I get the closest to reasonable results by converting the curves and input to
+chromaticity and correcting the white balance of the output, but the original paper (https://doi.org/10.1111/2041-210X.12439)
+doesn't mention doing either of these. I also find the results are less likely to turn bright magenta
+and such if the lower bound is set to 0.
 """
 
 import math
@@ -41,24 +45,6 @@ wptr1 = c.wptr1
 wptr2 = c.wptr2
 wptr3 = c.wptr3
 
-red_r1 = c.red_r1
-green_r1 = c.green_r1
-blue_r1 = c.blue_r1
-
-red_r2 = c.red_r2
-green_r2 = c.green_r2
-blue_r2 = c.blue_r2
-
-red_r3 = c.red_r3
-green_r3 = c.green_r3
-blue_r3 = c.blue_r3
-
-# gamma correction
-def linear(v):
-            if v <= 0.04045: return v / 12.92
-            else: return math.pow((v + 0.055) / 1.055, 2.4)
-            #return math.pow(v, 2.2)
-
 # image processing
 imagename = args.image
 # Convert image from BGR to HLS. We use BGR because this is how OpenCV reads images.
@@ -67,6 +53,12 @@ imagename = args.image
 img = cv2.imread(imagename)
 img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 img_hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+
+# white balance
+gray = [1/3,1/3,1/3,1/9,1/9,1/9]
+gray_r1 = sum(gray * c.s2t_r1)
+gray_r2 = sum(gray * c.s2t_r2)
+gray_r3 = sum(gray * c.s2t_r3)
 
 # transform hues for each pixel
 for x in range(img.shape[0]):
@@ -81,21 +73,54 @@ for x in range(img.shape[0]):
 		rgb_r = pixel[0] / 255
 		rgb_g = pixel[1] / 255
 		rgb_b = pixel[2] / 255
+		#print(rgb_r)
+		#print(type(rgb_r))
 		
 		# undo gamma
-		rgb_r = linear(rgb_r)
-		rgb_g = linear(rgb_g)
-		rgb_b = linear(rgb_b)
+		rgb_r = c.linearize(rgb_r)
+		rgb_g = c.linearize(rgb_g)
+		rgb_b = c.linearize(rgb_b)
+		#print(type(rgb_r))
+		
+		# chromaticity
+		total = rgb_r + rgb_g + rgb_b
+		if (total > 0):
+			rgb_r /= total
+			rgb_g /= total
+			rgb_b /= total
+		#print(type(rgb_r))
 		
 		# combine
-		rgb_r1 = red_r1*rgb_r + green_r1*rgb_g + blue_r1*rgb_b
-		rgb_r2 = red_r2*rgb_r + green_r2*rgb_g + blue_r2*rgb_b
-		rgb_r3 = red_r3*rgb_r + green_r3*rgb_g + blue_r3*rgb_b
+		rgb_terms = [rgb_r, rgb_g, rgb_b, rgb_r*rgb_g, rgb_r*rgb_b, rgb_g*rgb_b]
+		##print(rgb_terms)
+		#print(rgb_terms * c.s2t_r1)
+		#print(rgb_terms * c.s2t_r2)
+		#print(rgb_terms * c.s2t_r3)
+		rgb_r1 = sum(rgb_terms * c.s2t_r1)
+		rgb_r2 = sum(rgb_terms * c.s2t_r2)
+		rgb_r3 = sum(rgb_terms * c.s2t_r3)
+		#print((rgb_r1,rgb_r2,rgb_r3))
+		#print(type(rgb_r1))
+		
+		if (args.whitebalance == "on"):
+			# white balance
+			if (gray_r1 > 0): rgb_r1 /= gray_r1
+			if (gray_r2 > 0): rgb_r2 /= gray_r2
+			if (gray_r3 > 0): rgb_r3 /= gray_r3
+		
+		# cut off
+		#rgb_r1 = min(rgb_r1,1)
+		#rgb_r2 = min(rgb_r2,1)
+		#rgb_r3 = min(rgb_r3,1)
+		rgb_r1 = max(rgb_r1,0)
+		rgb_r2 = max(rgb_r2,0)
+		rgb_r3 = max(rgb_r3,0)
 		
 		# redo gamma
 		rgb_r1 = c.gamma(rgb_r1)
 		rgb_r2 = c.gamma(rgb_r2)
 		rgb_r3 = c.gamma(rgb_r3)
+		#print(type(rgb_r1))
 		
 		# remove junk channels for lower dimensions
 		if (c.dimension == 2):
@@ -106,7 +131,7 @@ for x in range(img.shape[0]):
 			rgb_r2 = rgb_r1
 			rgb_r3 = rgb_r1
 
-		# HSV lightness. This makes the chromaticity conversion redundant.
+		# HSV lightness
 		c_max = max(rgb_r1,rgb_r2,rgb_r3)
 		
 		if (c_max > 0):
