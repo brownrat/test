@@ -128,13 +128,15 @@ parser.add_argument("--primaries", nargs="+", type=int, default=[700, 546.1, 435
 parser.add_argument("-p", "--preset", help="use specified preset vision system", default="none")
 parser.add_argument("-v", "--verbose", help="", action="store_true")
 parser.add_argument("-i", "--image", default="none", help="path to input image")
+parser.add_argument("-u", "--uvimage", default="none", help="path to input UV image")
 parser.add_argument("--spreset", default="none", help="preset source phenotype")
 parser.add_argument("--source", nargs="+", type=int, help="custom source phenotype")
 parser.add_argument("--s2tplot", help="source->target transform plot", action="store_true")
 parser.add_argument("--bound", default=-np.inf, type=float, help="lower bound for source->target coefficients")
-parser.add_argument("--gamma", default=-1, type=float, help="gamma value for false colors and image processing")
+parser.add_argument("--ingamma", default=-1, type=float, help="input gamma")
+parser.add_argument("--outgamma", default=-1, type=float, help="output gamma")
 parser.add_argument("--interactions", default=1, type=int, help="interactions between terms for curve fitting")
-parser.add_argument("--whitebalance", default="on", help="adjust white balance")
+parser.add_argument("--changelum", help="change to target luminosity", action="store_true")
 args = parser.parse_args()
 
 # X values representing wavelengths 300-700 nm, used by multiple functions
@@ -178,7 +180,20 @@ def csv2spec(filename):
 				if (args.warnings):
 					print("The following row of " + filename + " was ignored: "
 					+ str(row))
-	return [wl, values]
+	
+	# interpolate to 300-700
+	values_1nm = np.interp(x_1nm, wl, values)
+
+	# remove extrapolation
+	wl_min = min(*wl)
+	wl_max = max(*wl)
+	
+	if (wl_min > 300):
+		for i in range(math.floor(wl_min) - 300): values_1nm[i] = 0
+	if (wl_max < 700):
+		for i in range(math.ceil(wl_max) - 300, 401): values_1nm[i] = 0
+	
+	return values_1nm
 
 # types of ocular media
 
@@ -264,10 +279,8 @@ elif (args.media == "human"):
 		except OverflowError:
 			media_10nm[i] = 0
 elif (args.media != "none"):
-	wl, values = csv2spec(args.media)
-
-	media_10nm = np.interp(x_10nm, wl, values)
-	media_1nm = np.interp(x_1nm, wl, values)
+	media_1nm = csv2spec(args.media)
+	media_10nm = np.interp(x_10nm, x_1nm, values)
 	
 	# set to 1 at 700 nm
 	media_10nm = media_10nm / media_10nm[40]
@@ -1461,9 +1474,8 @@ elif (args.white == "a" or args.white == "i"):
 	wp_photons = incandescent_photons
 # custom illuminant
 else:
-	wl, values = csv2spec(args.white)
-	wp_10nm = np.interp(x_10nm, wl, values)
-	wp_1nm = np.interp(x_1nm, wl, values)
+	wp_1nm = csv2spec(args.white)
+	wp_10nm = np.interp(x_10nm, x_1nm, wp_1nm)
 
 # 2-deg quantal human cone fundamentals -- http://www.cvrl.org/cones.htm
 # Negative infinities (log(0)) were inserted for consistent array length.
@@ -2414,6 +2426,7 @@ for i in range(390, 701):
 	cie2_l[i-300] = 10**(hcf2deg[int(round(i))-390][1])
 	cie2_m[i-300] = 10**(hcf2deg[int(round(i))-390][2])
 	cie2_s[i-300] = 10**(hcf2deg[int(round(i))-390][3])
+cie2 = [cie2_l, cie2_m, cie2_s]
 
 # CIE 10-deg fundamentals
 cie10_l = np.zeros(401)
@@ -2424,23 +2437,59 @@ for i in range(390, 701):
 	cie10_l[i-300] = 10**(hcf10deg[int(round(i))-390][1])
 	cie10_m[i-300] = 10**(hcf10deg[int(round(i))-390][2])
 	cie10_s[i-300] = 10**(hcf10deg[int(round(i))-390][3])
-	cie10_luminosity = cie_luminosity[i-300] # just so it's the right length
+	cie10_luminosity[i-300] = cie_luminosity[i-300] # just so it's the right length
+cie10 = [cie10_l, cie10_m, cie10_s]
 
 # data for typical camera channels (Kolláth et al. 2020 https://doi.org/10.1016/j.jqsrt.2020.107162)
 # digitized with WebPlotDigitizer
 # I tried to pick a single curve that runs close to the middle, but they overlap a lot. Oh well.
-red_xy = csv2spec('red.csv')
-green_xy = csv2spec('green2.csv')
-blue_xy = csv2spec('blue.csv')
-red = np.interp(x_1nm, *red_xy)
-green = np.interp(x_1nm, *green_xy)
-blue = np.interp(x_1nm, *blue_xy)
+# Also includes a UV channel using data for the commonly used Baader-U filter:
+# http://www.company7.com/baader/options/u-filter.html
+camera_red = csv2spec('red.csv')
+camera_green = csv2spec('green2.csv')
+camera_blue = csv2spec('blue.csv')
+camera_uv = csv2spec('baader-u.csv')
+camera = [camera_red,camera_green,camera_blue,camera_uv]
 
-# remove extrapolation below ~400 nm
-for i in range(99):
-	red[i] = 0
-	green[i] = 0
-	blue[i] = 0
+# typical sRGB display primaries
+# source: http://scottburns.us/fast-rgb-to-spectrum-conversion-for-reflectances/
+srgb_x = np.empty(36)
+for i in range(36): srgb_x[i] = 380 + i*10 # 380-730
+
+srgb_red_380730 = np.array([
+	0.021592459, 0.020293111, 0.021807906, 0.023803297, 0.025208132, 0.025414957, 0.024621282, 0.020973705, 0.015752802, 0.01116804, 0.008578277, 0.006581877, 0.005171723, 0.004545205, 0.00414512, 0.004343112, 0.005238155, 0.007251939, 0.012543656, 0.028067132, 0.091342277, 0.484081092, 0.870378324, 0.939513128, 0.960926994, 0.968623763, 0.971263883, 0.972285819, 0.971898742, 0.972691859, 0.971734812, 0.97234454, 0.97150339, 0.970857997, 0.970553866, 0.969671404
+])
+srgb_green_380730 = np.array([
+	0.010542406, 0.010878976, 0.011063512, 0.010736566, 0.011681813, 0.012434719, 0.014986907, 0.020100392, 0.030356263, 0.063388962, 0.173423837, 0.568321142, 0.827791998, 0.916560468, 0.952002841, 0.964096452, 0.970590861, 0.972502542, 0.969148203, 0.955344651, 0.892637233, 0.5003641, 0.116236717, 0.047951391, 0.027873526, 0.020057963, 0.017382174, 0.015429109, 0.01543808, 0.014546826, 0.015197773, 0.014285896, 0.015069123, 0.015506263, 0.015545797, 0.016302839
+])
+srgb_blue_380730 = np.array([
+	0.967865135, 0.968827912, 0.967128582, 0.965460137, 0.963110055, 0.962150324, 0.960391811, 0.958925903, 0.953890935, 0.925442998, 0.817997886, 0.42509696, 0.167036273, 0.078894327, 0.043852038, 0.031560435, 0.024170984, 0.020245519, 0.01830814, 0.016588218, 0.01602049, 0.015554808, 0.013384959, 0.012535491, 0.011199484, 0.011318274, 0.011353953, 0.012285073, 0.012663188, 0.012761325, 0.013067426, 0.013369566, 0.013427487, 0.01363574, 0.013893597, 0.014025757
+])
+
+srgb_red = np.interp(x_1nm, srgb_x, srgb_red_380730)
+srgb_green = np.interp(x_1nm, srgb_x, srgb_green_380730)
+srgb_blue = np.interp(x_1nm, srgb_x, srgb_blue_380730)
+
+# remove extrapolation below 380 nm
+for i in range(79):
+	srgb_red[i] = 0
+	srgb_green[i] = 0
+	srgb_blue[i] = 0
+
+srgb = [srgb_red,srgb_green,srgb_blue]
+
+# typical UVS and VS birds, digitized with WebPlotDigitizer
+# source: https://www.nature.com/articles/s41467-018-08142-5
+# licensed under Creative Commons 4.0 http://creativecommons.org/licenses/by/4.0/
+bird_l = csv2spec('bird-l.csv')
+bird_m = csv2spec('bird-m.csv')
+bird_su = csv2spec('bird-su.csv')
+bird_sv = csv2spec('bird-sv.csv')
+bird_uv = csv2spec('bird-uv.csv')
+bird_v = csv2spec('bird-v.csv')
+
+uvbird = [bird_l,bird_m,bird_su,bird_uv]
+vbird = [bird_l,bird_m,bird_sv,bird_v]
 
 # set receptors and luminosity
 rlist = []
@@ -2454,37 +2503,34 @@ luminosity = np.empty(401)
 if (args.preset == "cie2"):
 	dimension = 3
 	receptors = [566, 541, 441]
-	r1_1nm = cie2_l
-	r2_1nm = cie2_m
-	r3_1nm = cie2_s
+	rlist = cie2
 	luminosity = cie10_luminosity
-		
-	rlist.append(r1_1nm)
-	rlist.append(r2_1nm)
-	rlist.append(r3_1nm)
 # CIE 10-deg fundamentals
 elif (args.preset == "cie10"):
 	dimension = 3
 	receptors = [565, 540, 447]
-	r1_1nm = cie10_l
-	r2_1nm = cie10_m
-	r3_1nm = cie10_s
+	rlist = cie10
 	luminosity = cie10_luminosity
-
-	rlist.append(r1_1nm)
-	rlist.append(r2_1nm)
-	rlist.append(r3_1nm)
 # digital camera
 elif (args.preset == "camera"):
+	dimension = 4
+	receptors = [595, 532, 450, 359]
+	rlist = camera
+# sRGB display
+elif (args.preset == "srgb"):
 	dimension = 3
-	receptors = [595, 532, 450]
-	r1_1nm = red
-	r2_1nm = green
-	r3_1nm = blue
-
-	rlist.append(r1_1nm)
-	rlist.append(r2_1nm)
-	rlist.append(r3_1nm)
+	receptors = [610, 550, 465]
+	rlist = srgb
+# UVS bird
+elif (args.preset == "uvbird"):
+	dimension = 4
+	receptors = [602, 539, 455, 371]
+	rlist = uvbird
+# VS bird
+elif (args.preset == "vbird"):
+	dimension = 4
+	receptors = [602, 539, 468, 419]
+	rlist = vbird
 else:
 	rod = args.rod
 	for i in range(401):
@@ -2540,7 +2586,7 @@ def colorcode(wl):
 	elif (wl < 480 and wl >= 450): color = 'b'
 	elif (wl < 450 and wl >= 380): color = 'indigo'
 	else: color = 'violet'
-	
+
 	return color
 
 def cmf():
@@ -2717,41 +2763,21 @@ if (args.cmf):
 		plt.show()
 
 # set source receptors (for image processing)
-if (args.image != "none" or args.stplot):
-	srlist = []
-	sr1 = np.zeros(401)
-	sr2 = np.zeros(401)
-	sr3 = np.zeros(401)
-	sluminosity = np.ones(401) # to be implemented
+if (args.image != "none" or args.s2tplot):
 
-	if (args.spreset == "cie2"):
-		sr1 = cie2_l
-		sr2 = cie2_m
-		sr3 = cie2_s
-		sluminosity = cie10_luminosity
-			
-		srlist.append(sr1)
-		srlist.append(sr2)
-		srlist.append(sr3)
+	if (args.spreset == "cie2"): srlist = cie2
 	# CIE 10-deg fundamentals
-	elif (args.spreset == "cie10"):
-		sr1 = cie10_l
-		sr2 = cie10_m
-		sr3 = cie10_s
-
-		srlist.append(sr1)
-		srlist.append(sr2)
-		srlist.append(sr3)
+	elif (args.spreset == "cie10"): srlist = cie10
 	# digital camera
-	elif (args.spreset == "camera"):
-		sr1 = red
-		sr2 = green
-		sr3 = blue
-			
-		srlist.append(sr1)
-		srlist.append(sr2)
-		srlist.append(sr3)
+	elif (args.spreset == "camera"): srlist = camera
+	# sRGB display
+	elif (args.spreset == "srgb"): srlist = srgb
+	# UVS bird
+	elif (args.spreset == "uvbird"): srlist = uvbird
+	# VS bird
+	elif (args.spreset == "vbird"): srlist = vbird
 	else:
+		srlist = []
 		for i in range(3):
 			# whole list
 			yvalues = np.empty(401)
@@ -2760,63 +2786,89 @@ if (args.image != "none" or args.stplot):
 				yvalues[j] = vpt(j+300, peak)
 			srlist.append(yvalues)
 
-		sr1 = srlist[0]
-		sr2 = srlist[1]
-		sr3 = srlist[2]
+	sr1 = srlist[0]
+	sr2 = srlist[1]
+	sr3 = srlist[2]
+	sr4 = np.zeros(401)
+	if ((len(srlist)) == 4): sr4 = srlist[3]
+
+	# luminosity to use in images
+	# http://www.brucelindbloom.com/index.html?Eqn_RGB_XYZ_Matrix.html
+	lum_r = 0.2126729
+	lum_g = 0.7151522
+	lum_b = 0.0721750
 	
-	# multiply by illuminant
+	lum_r1 = sum(srgb_red * luminosity)
+	lum_g1 = sum(srgb_green * luminosity)
+	lum_b1 = sum(srgb_blue * luminosity)
+	lum_uv = sum(sr4 * luminosity)
+	lum_max = lum_r1 + lum_g1 + lum_b1 + lum_uv
+	
+	# adapt to illuminant
 	sr1 *= wp_1nm
 	sr2 *= wp_1nm
 	sr3 *= wp_1nm
-
-	# use CMFs instead of raw receptors -- not yet implemented
-	#if (args.fcmode == 'cmf'):
-	#	matrix_cmf = cmf()
-	#	r1 = matrix_cmf[0]
-	#	if (dimension > 1): r2 = matrix_cmf[1]
-	#	if (dimension > 2): r3 = matrix_cmf[2]
-	#else:
-	tr1 = r1_1nm * media_1nm * wp_1nm
-	tr2 = r2_1nm * media_1nm * wp_1nm
-	tr3 = r3_1nm * media_1nm * wp_1nm
-
-	# von Kries transform
+	sr4 *= wp_1nm
 	wpsr1 = sum(sr1)
 	wpsr2 = sum(sr2)
 	wpsr3 = sum(sr3)
-	wptr1 = sum(tr1)
-	wptr2 = sum(tr2)
-	wptr3 = sum(tr3)
+	wpsr4 = sum(sr4)
 	sr1 /= wpsr1
 	sr2 /= wpsr2
 	sr3 /= wpsr3
-	tr1 /= wptr1
-	if (wptr2 > 0): tr2 /= wptr2
-	if (wptr3 > 0): tr3 /= wptr3
+	if (wpsr4 > 0): sr4 /= wpsr4
 	
-	# 0-1
-	#sr1_c = sr1 / max(*sr1)
-	#sr2_c = sr2 / max(*sr2)
-	#sr3_c = sr3 / max(*sr3)
-	#tr1_c = tr1 / max(*tr1)
-	#tr2_c = tr2 / max(*tr2)
-	#tr3_c = tr3 / max(*tr3)
+	# declare variables
+	tr1 = np.zeros(401)
+	tr2 = np.zeros(401)
+	tr3 = np.zeros(401)
+	wptr1 = 1
+	wptr2 = 1
+	wptr3 = 1
+
+	# use CMFs instead of raw receptors
+	# No von Kries transform because they're already adapted.
+	if (args.fcmode == 'cmf'):
+		matrix_cmf = cmf()
+		tr1 = matrix_cmf[0]
+		if (dimension > 1): tr2 = matrix_cmf[1]
+		if (dimension > 2): tr3 = matrix_cmf[2]
+		
+		# cut off negative numbers -- they mess with chromaticity and represent something
+		# that can't be displayed anyway
+		for i in range(401):
+			if (tr1[i] < 0): tr1[i] = 0
+			if (tr2[i] < 0): tr2[i] = 0
+			if (tr3[i] < 0): tr3[i] = 0
+	else:
+		tr1 = r1_1nm * media_1nm * wp_1nm
+		tr2 = r2_1nm * media_1nm * wp_1nm
+		tr3 = r3_1nm * media_1nm * wp_1nm
+
+		# von Kries transform
+		wptr1 = sum(tr1)
+		wptr2 = sum(tr2)
+		wptr3 = sum(tr3)
+		tr1 /= wptr1
+		if (wptr2 > 0): tr2 /= wptr2
+		if (wptr3 > 0): tr3 /= wptr3
 	
-	# chromaticity
-	
+	# convert to chromaticity
 	sr1_c = np.zeros(401)
 	sr2_c = np.zeros(401)
 	sr3_c = np.zeros(401)
+	sr4_c = np.zeros(401)
 	tr1_c = np.zeros(401)
 	tr2_c = np.zeros(401)
 	tr3_c = np.zeros(401)
 	for i in range(401):
-		stotal = sr1[i] + sr2[i] + sr3[i]
+		stotal = sr1[i] + sr2[i] + sr3[i] + sr4[i]
 		ttotal = tr1[i] + tr2[i] + tr3[i]
 		if (stotal > 0):
 			sr1_c[i] = sr1[i] / stotal
 			sr2_c[i] = sr2[i] / stotal
 			sr3_c[i] = sr3[i] / stotal
+			sr4_c[i] = sr4[i] / stotal
 		if (ttotal > 0):
 			tr1_c[i] = tr1[i] / ttotal
 			tr2_c[i] = tr2[i] / ttotal
@@ -2824,56 +2876,57 @@ if (args.image != "none" or args.stplot):
 	
 
 	# find best fit to target
-	def source2target(xdata, r, g, b, rg, rb, gb):
-		first_order = r*sr1_c + g*sr2_c + b*sr3_c
-		second_order = rg*(sr1_c*sr2_c) + rb*(sr1_c*sr3_c) + gb*(sr2_c*sr3_c)
+	def source2target(xdata, r, g, b, uv, rg, rb, ruv, gb, guv, buv):
+		first_order = r*sr1_c + g*sr2_c + b*sr3_c + uv*sr4_c
+		second_order = rg*(sr1_c*sr2_c) + rb*(sr1_c*sr3_c) + ruv*(sr1_c*sr4_c) + gb*(sr2_c*sr3_c) + guv*(sr2_c*sr4_c) + buv*(sr3_c*sr4_c)
 		if (args.interactions == 2): ydata = first_order + second_order
 		else: ydata = first_order
 		return(ydata)
 
-	popt, pcov = scipy.optimize.curve_fit(source2target, x_1nm, tr1_c, p0=[1, 0, 0, 0, 0, 0], bounds=[args.bound, np.inf])
+	popt, pcov = scipy.optimize.curve_fit(source2target, x_1nm, tr1_c, p0=[1, 0, 0, 0, 0, 0, 0, 0, 0, 0], bounds=[args.bound, np.inf])
 	print(popt)
 	s2t_r1 = popt
-	popt, pcov = scipy.optimize.curve_fit(source2target, x_1nm, tr2_c, p0=[0, 1, 0, 0, 0, 0], bounds=[args.bound, np.inf])
+	popt, pcov = scipy.optimize.curve_fit(source2target, x_1nm, tr2_c, p0=[0, 1, 0, 0, 0, 0, 0, 0, 0, 0], bounds=[args.bound, np.inf])
 	print(popt)
 	s2t_r2 = popt
-	popt, pcov = scipy.optimize.curve_fit(source2target, x_1nm, tr3_c, p0=[0, 0, 1, 0, 0, 0], bounds=[args.bound, np.inf])
+	popt, pcov = scipy.optimize.curve_fit(source2target, x_1nm, tr3_c, p0=[0, 0, 1, 0, 0, 0, 0, 0, 0, 0], bounds=[args.bound, np.inf])
 	print(popt)
 	s2t_r3 = popt
+	
 	if (args.s2tplot):
 		plt.plot(x_1nm, tr1_c, color=colorcode(receptors[0]))
 		plt.plot(x_1nm, source2target(x_1nm, *s2t_r1), '--', color=colorcode(receptors[0]))
 		if (dimension > 1):
 			plt.plot(x_1nm, tr2_c, color=colorcode(receptors[1]))
 			plt.plot(x_1nm, source2target(x_1nm, *s2t_r2), '--', color=colorcode(receptors[1]))
-			plt.plot(x_1nm, sr1_c, ':r')
-			plt.plot(x_1nm, sr2_c, ':g')
-			plt.plot(x_1nm, sr1_c*sr2_c, ':y')
+			#plt.plot(x_1nm, sr1_c, ':r')
+			#plt.plot(x_1nm, sr2_c, ':g')
+			#plt.plot(x_1nm, sr1_c*sr2_c, ':y')
 		if (dimension > 2):
 			plt.plot(x_1nm, tr3_c, color=colorcode(receptors[2]))
 			plt.plot(x_1nm, source2target(x_1nm, *s2t_r3), '--', color=colorcode(receptors[2]))
-			plt.plot(x_1nm, sr3_c, ':b')
-			plt.plot(x_1nm, sr1_c*sr3_c, ':m')
-			plt.plot(x_1nm, sr2_c*sr3_c, ':c')
+			#plt.plot(x_1nm, sr3_c, ':b')
+			#plt.plot(x_1nm, sr1_c*sr3_c, ':m')
+			#plt.plot(x_1nm, sr2_c*sr3_c, ':c')
 		plt.show()
 
 # gamma functions -- see https://en.wikipedia.org/wiki/Gamma_correction
 # The default value is -1 and produces a standard sRGB gamma. Set to 1 to disable.
-def linearize(v): # decoding
-	if (args.gamma == -1):
+def gamma_decode(v): # decoding/linearization
+	if (args.ingamma == -1):
 		if v <= 0.04045: return np.float64(v / 12.92)
 		else: return np.float64(math.pow((v + 0.055) / 1.055, 2.4))
 	else:
 		if (v <= 0): return 0
-		return np.float64(math.pow(v, args.gamma))
+		return np.float64(math.pow(v, args.ingamma))
 
-def gamma(v): # encoding
-	if (args.gamma == -1):
+def gamma_encode(v): # encoding
+	if (args.outgamma == -1):
 		if v <= 0.0031308: return v * 12.92
 		else: return np.float64(1.055 * math.pow(v, 1 / 2.4) - 0.055)
 	else:
 		if (v <= 0): return 0
-		return np.float64(math.pow(v, 1 / args.gamma))
+		return np.float64(math.pow(v, 1 / args.outgamma))
 
 """
 generate an RGB color from a spectral power distribution
@@ -2918,9 +2971,9 @@ def spec2rgb(table, reflect=True, mode=args.fcmode):
 			rgb_b = rgb_b / wpr3
 
 		# gamma correction
-		rgb_r = gamma(rgb_r)
-		rgb_g = gamma(rgb_g)
-		rgb_b = gamma(rgb_b)
+		rgb_r = gamma_encode(rgb_r)
+		rgb_g = gamma_encode(rgb_g)
+		rgb_b = gamma_encode(rgb_b)
 
 		# render
 		if (dimension == 2): rgb_g = rgb_r
@@ -2940,9 +2993,9 @@ def spec2rgb(table, reflect=True, mode=args.fcmode):
 				rgb_g = rgb_r
 		
 		# gamma correction
-		rgb_r = gamma(rgb_r)
-		rgb_g = gamma(rgb_g)
-		rgb_b = gamma(rgb_b)
+		rgb_r = gamma_encode(rgb_r)
+		rgb_g = gamma_encode(rgb_g)
+		rgb_b = gamma_encode(rgb_b)
 
 		# render
 		rgb_tuple = (rgb_r, rgb_g, rgb_b)
@@ -3608,8 +3661,7 @@ if (type(args.csplot) == list):
 		spectra = []
 		colors = []
 		for i in range(len(args.csplot)):
-			values = csv2spec(args.csplot[i])
-			spectrum = np.interp(x_1nm, *values)
+			spectrum = csv2spec(args.csplot[i])
 			spectra.append(spectrum)
 			colors.append(spec2rgb(spectrum))
 		triangle(spectra, colors=colors)
