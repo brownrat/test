@@ -25,6 +25,7 @@ I have no formal background in biology or neuroscience, so this project is meant
 * Pridmore, R.W. A new transformation of cone responses to opponent color responses. Atten Percept Psychophys 83, 1797–1803 (2021). https://doi.org/10.3758/s13414-020-02216-7
 * https://chittkalab.sbcs.qmul.ac.uk/1992/Chittka%201992%20J%20Comp%20Physiol_R.pdf
 * https://doi.org/10.1016/j.jqsrt.2020.107162
+* https://besjournals.onlinelibrary.wiley.com/doi/10.1111/2041-210X.12439
 
 # Further reading
 * https://xkcd.com/1926/
