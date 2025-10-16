@@ -32,16 +32,13 @@ didn't get along with matplotlib.
 """
 
 # this list doesn't recursively import
-import sys
-import colorsys
 import math
 import numpy as np
 import time
 import argparse
 import colormath
-from colormath.color_objects import LabColor, LCHabColor, LCHuvColor, sRGBColor, XYZColor, HSLColor, SpectralColor, IPTColor
+from colormath.color_objects import sRGBColor, SpectralColor
 from colormath.color_conversions import convert_color
-from colormath import spectral_constants
 import matplotlib.pyplot as plt
 import scipy
 from scipy.stats import binomtest
@@ -54,33 +51,24 @@ import csv
 start_time = time.time()
 
 # arguments
-# 07/03/2025 -- replaced some default values:
-# * weberb: 0.14 -> 0.11. 0.11 is the value determined for humans in a study of manatees (https://pubmed.ncbi.nlm.nih.gov/9202447/).
-# 0.14 was found in a previous study (Cornsweet & Pinsker), but the number seems to only appear in citations
-# and not in the actual paper. All I can find in the paper is graphs.
-# * lp/mp: 9/4.5 -> 10/5. The ratio of L to S cones in Didelphis aurita and other marsupials is closer to 10:1 than
-# 9:1. The L:M ratio is kept at 2:1.
-# * ls/ms: 0.68990272/0.34832189 -> 1/0. The former values are for humans. Since we're now modeling human luminance vision with the CIE
-# luminosity function, we don't need this.
-# Earlier I also changed the chromatic Weber fraction from the human value of 0.018 to the semi-standard estimate of 0.05
-# because we're not trying to model human color vision with RNL and we're not set up properly for that anyway.
-# 05/10/2025: changed default for lp/mp again based on figures for maximum total cone density of 8000/mm^2
-# (D. virginiana) and S-cone density of 250/mm^2 (D. aurita).
+# The absolute quantum catch arguments mostly have default values specific to my analysis of
+# opossums. I may change this.
 parser = argparse.ArgumentParser()
 parser.add_argument("-r", "--receptors", "--target", nargs="+", type=int, default=[562], help="receptor peak sensitivities")
+parser.add_argument("--rcsv", nargs="+", default="none", help="custom receptors from CSV file(s)")
 parser.add_argument("--rod", type=int, default=0, help="rod peak sensitivity")
-parser.add_argument("--weber", type=float, default=0.05, help="base Weber fraction") # formerly 0.018
+parser.add_argument("--weber", type=float, default=0.05, help="base Weber fraction")
 parser.add_argument("--weberr2", type=float, default=0, help="override Weber fraction for receptor 2")
 parser.add_argument("--weberr3", type=float, default=0, help="override Weber fraction for receptor 3")
 parser.add_argument("--weberr4", type=float, default=0, help="override Weber fraction for receptor 4")
 parser.add_argument("--weberb", type=float, default=0.11, help="achromatic Weber fraction")
-parser.add_argument("--r1p", type=float, default=31, help="number of receptor 1 per receptive field")
+parser.add_argument("--r1p", type=float, default=1, help="number of receptor 1 per receptive field")
 parser.add_argument("--r2p", type=float, default=1, help="number of receptor 2 per receptive field")
 parser.add_argument("--r3p", type=float, default=1, help="number of receptor 3 per receptive field")
 parser.add_argument("--r4p", type=float, default=1, help="number of receptor 4 per receptive field")
 parser.add_argument("--media", "--filter", type=str, default="none", help="ocular media transmittance")
 parser.add_argument("--qn", help="use quantum noise in color differences", action="store_true")
-parser.add_argument("--r1s", type=float, default=1, help="contribution of receptor 1 to spectral sensitivity") # formerly 0.68990272
+parser.add_argument("--r1s", type=float, default=1, help="contribution of receptor 1 to spectral sensitivity")
 parser.add_argument("--rs", type=float, default=0, help="contribution of rods to spectral sensitivity")
 parser.add_argument("--vonkries", help="enable von Kries transform", action="store_true")
 parser.add_argument("--luminosity", help="show spectral sensitivity function", action="store_true")
@@ -94,10 +82,11 @@ parser.add_argument("--wopt3", help="test varying spectral sensitivity (contrast
 parser.add_argument("--qcheck", help="show absolute quantum catches", action="store_true")
 parser.add_argument("--vpt", help="plot visual pigment templates", action="store_true")
 parser.add_argument("--csplot", "--triangle", nargs="*", help="create a Maxwell-style color space plot")
-parser.add_argument("--r1name", default='L', help="name of receptor 1 (used in triangle/line plots)")
-parser.add_argument("--r2name", default='M', help="name of receptor 2 (used in triangle/line plots)")
-parser.add_argument("--r3name", default='S', help="name of receptor 3 (used in triangle/line plots)")
+parser.add_argument("--r1name", default='', help="name of receptor 1 (used in triangle/line plots)")
+parser.add_argument("--r2name", default='', help="name of receptor 2 (used in triangle/line plots)")
+parser.add_argument("--r3name", default='', help="name of receptor 3 (used in triangle/line plots)")
 parser.add_argument("--fcmode", help="switch default false color mode", default="none")
+parser.add_argument("--s2tmode", help="switch default color transform mode", default="c")
 parser.add_argument("--blackbody", type=int, default=0, help="test Wratten filters with a specified blackbody temperature")
 parser.add_argument("--munsell", help="Munsell color cards", action="store_true")
 parser.add_argument("--mv2", help="use alternative Munsell spectra", action="store_true")
@@ -129,14 +118,13 @@ parser.add_argument("-p", "--preset", help="use specified preset vision system",
 parser.add_argument("-v", "--verbose", help="", action="store_true")
 parser.add_argument("-i", "--image", default="none", help="path to input image")
 parser.add_argument("-u", "--uvimage", default="none", help="path to input UV image")
-parser.add_argument("--spreset", default="none", help="preset source phenotype")
-parser.add_argument("--source", nargs="+", type=int, help="custom source phenotype")
+parser.add_argument("--source", nargs="+", help="source phenotype")
 parser.add_argument("--s2tplot", help="source->target transform plot", action="store_true")
 parser.add_argument("--bound", default=-np.inf, type=float, help="lower bound for source->target coefficients")
 parser.add_argument("--ingamma", default=-1, type=float, help="input gamma")
 parser.add_argument("--outgamma", default=-1, type=float, help="output gamma")
 parser.add_argument("--interactions", default=1, type=int, help="interactions between terms for curve fitting")
-parser.add_argument("--changelum", help="change to target luminosity", action="store_true")
+parser.add_argument("--luminance", help="type of luminance adjustment", default="default")
 args = parser.parse_args()
 
 # X values representing wavelengths 300-700 nm, used by multiple functions
@@ -160,6 +148,9 @@ if (args.weberr3 > 0): ws = args.weberr3
 if (args.weberr4 > 0): ws = args.weberr4
 
 # read CSV files
+# This function allows for using arbitrary CSV files as visual pigments, ocular media, illuminants,
+# or reflectance spectra. At the moment it can only handle files that contain a single spectrum.
+# More would be nice but not sure how yet.
 def csv2spec(filename):
 	if (args.verbose): print("Reading CSV file: " + filename)
 	with open(filename, newline='') as csvfile:
@@ -2440,44 +2431,6 @@ for i in range(390, 701):
 	cie10_luminosity[i-300] = cie_luminosity[i-300] # just so it's the right length
 cie10 = [cie10_l, cie10_m, cie10_s]
 
-# data for typical camera channels (Kolláth et al. 2020 https://doi.org/10.1016/j.jqsrt.2020.107162)
-# digitized with WebPlotDigitizer
-# I tried to pick a single curve that runs close to the middle, but they overlap a lot. Oh well.
-# Also includes a UV channel using data for the commonly used Baader-U filter:
-# http://www.company7.com/baader/options/u-filter.html
-camera_red = csv2spec('red.csv')
-camera_green = csv2spec('green2.csv')
-camera_blue = csv2spec('blue.csv')
-camera_uv = csv2spec('baader-u.csv')
-camera = [camera_red,camera_green,camera_blue,camera_uv]
-
-# typical sRGB display primaries
-# source: http://scottburns.us/fast-rgb-to-spectrum-conversion-for-reflectances/
-srgb_x = np.empty(36)
-for i in range(36): srgb_x[i] = 380 + i*10 # 380-730
-
-srgb_red_380730 = np.array([
-	0.021592459, 0.020293111, 0.021807906, 0.023803297, 0.025208132, 0.025414957, 0.024621282, 0.020973705, 0.015752802, 0.01116804, 0.008578277, 0.006581877, 0.005171723, 0.004545205, 0.00414512, 0.004343112, 0.005238155, 0.007251939, 0.012543656, 0.028067132, 0.091342277, 0.484081092, 0.870378324, 0.939513128, 0.960926994, 0.968623763, 0.971263883, 0.972285819, 0.971898742, 0.972691859, 0.971734812, 0.97234454, 0.97150339, 0.970857997, 0.970553866, 0.969671404
-])
-srgb_green_380730 = np.array([
-	0.010542406, 0.010878976, 0.011063512, 0.010736566, 0.011681813, 0.012434719, 0.014986907, 0.020100392, 0.030356263, 0.063388962, 0.173423837, 0.568321142, 0.827791998, 0.916560468, 0.952002841, 0.964096452, 0.970590861, 0.972502542, 0.969148203, 0.955344651, 0.892637233, 0.5003641, 0.116236717, 0.047951391, 0.027873526, 0.020057963, 0.017382174, 0.015429109, 0.01543808, 0.014546826, 0.015197773, 0.014285896, 0.015069123, 0.015506263, 0.015545797, 0.016302839
-])
-srgb_blue_380730 = np.array([
-	0.967865135, 0.968827912, 0.967128582, 0.965460137, 0.963110055, 0.962150324, 0.960391811, 0.958925903, 0.953890935, 0.925442998, 0.817997886, 0.42509696, 0.167036273, 0.078894327, 0.043852038, 0.031560435, 0.024170984, 0.020245519, 0.01830814, 0.016588218, 0.01602049, 0.015554808, 0.013384959, 0.012535491, 0.011199484, 0.011318274, 0.011353953, 0.012285073, 0.012663188, 0.012761325, 0.013067426, 0.013369566, 0.013427487, 0.01363574, 0.013893597, 0.014025757
-])
-
-srgb_red = np.interp(x_1nm, srgb_x, srgb_red_380730)
-srgb_green = np.interp(x_1nm, srgb_x, srgb_green_380730)
-srgb_blue = np.interp(x_1nm, srgb_x, srgb_blue_380730)
-
-# remove extrapolation below 380 nm
-for i in range(79):
-	srgb_red[i] = 0
-	srgb_green[i] = 0
-	srgb_blue[i] = 0
-
-srgb = [srgb_red,srgb_green,srgb_blue]
-
 # typical UVS and VS birds, digitized with WebPlotDigitizer
 # source: https://www.nature.com/articles/s41467-018-08142-5
 # licensed under Creative Commons 4.0 http://creativecommons.org/licenses/by/4.0/
@@ -2501,36 +2454,20 @@ r5_1nm = np.zeros(401)
 luminosity = np.empty(401)
 
 if (args.preset == "cie2"):
-	dimension = 3
-	receptors = [566, 541, 441]
 	rlist = cie2
 	luminosity = cie10_luminosity
 # CIE 10-deg fundamentals
 elif (args.preset == "cie10"):
-	dimension = 3
-	receptors = [565, 540, 447]
 	rlist = cie10
 	luminosity = cie10_luminosity
-# digital camera
-elif (args.preset == "camera"):
-	dimension = 4
-	receptors = [595, 532, 450, 359]
-	rlist = camera
-# sRGB display
-elif (args.preset == "srgb"):
-	dimension = 3
-	receptors = [610, 550, 465]
-	rlist = srgb
 # UVS bird
-elif (args.preset == "uvbird"):
-	dimension = 4
-	receptors = [602, 539, 455, 371]
-	rlist = uvbird
+elif (args.preset == "uvbird"): rlist = uvbird
 # VS bird
-elif (args.preset == "vbird"):
-	dimension = 4
-	receptors = [602, 539, 468, 419]
-	rlist = vbird
+elif (args.preset == "vbird"): rlist = vbird
+elif (args.rcsv != "none"):
+	dimension = len(args.rcsv)
+	for i in range(len(args.rcsv)):
+		rlist.append(csv2spec(args.rcsv[i]))
 else:
 	rod = args.rod
 	for i in range(401):
@@ -2547,12 +2484,13 @@ else:
 		for j in range(401):
 			yvalues[j] = vpt(j+300, peak)
 		rlist.append(yvalues)
-	
-	if (dimension > 4): r5_1nm = rlist[4]
-	if (dimension > 3): r4_1nm = rlist[3]
-	if (dimension > 2): r3_1nm = rlist[2]
-	if (dimension > 1): r2_1nm = rlist[1]
-	r1_1nm = rlist[0]
+
+dimension = len(rlist)
+if (dimension > 4): r5_1nm = rlist[4]
+if (dimension > 3): r4_1nm = rlist[3]
+if (dimension > 2): r3_1nm = rlist[2]
+if (dimension > 1): r2_1nm = rlist[1]
+r1_1nm = rlist[0]
 
 """
 CMFs (color-matching functions)
@@ -2579,15 +2517,6 @@ if (len(args.primaries) > 3): p4 = round(args.primaries[3])
 if (len(args.primaries) > 4): p5 = round(args.primaries[4])
 
 # color coding
-def colorcode(wl):
-	if (wl >= 560): color = 'r'
-	elif (wl < 560 and wl >= 520): color = 'g'
-	elif (wl < 520 and wl >= 480): color = 'c'
-	elif (wl < 480 and wl >= 450): color = 'b'
-	elif (wl < 450 and wl >= 380): color = 'indigo'
-	else: color = 'violet'
-
-	return color
 
 def cmf():
 	if (dimension > 4):
@@ -2755,36 +2684,26 @@ if (args.cmf):
 	else:
 		matrix_cmf = cmf()[0]
 		# plot curves
-		plt.plot(x_1nm, matrix_cmf[0], color=colorcode(p1))
-		if (dimension > 1): plt.plot(x_1nm, matrix_cmf[1], color=colorcode(p2))
-		if (dimension > 2): plt.plot(x_1nm, matrix_cmf[2], color=colorcode(p3))
-		if (dimension > 3): plt.plot(x_1nm, matrix_cmf[3], color=colorcode(p4))
-		if (dimension > 4): plt.plot(x_1nm, matrix_cmf[4], color=colorcode(p5))
+		plt.plot(x_1nm, matrix_cmf[0])
+		if (dimension > 1): plt.plot(x_1nm, matrix_cmf[1], color='k')
+		if (dimension > 2): plt.plot(x_1nm, matrix_cmf[2], color='k')
+		if (dimension > 3): plt.plot(x_1nm, matrix_cmf[3], color='k')
+		if (dimension > 4): plt.plot(x_1nm, matrix_cmf[4], color='k')
 		plt.show()
 
 # set source receptors (for image processing)
 if (args.image != "none" or args.s2tplot):
-
-	if (args.spreset == "cie2"): srlist = cie2
+	srlist = []
+	if (args.source == "cie2"): srlist = cie2
 	# CIE 10-deg fundamentals
-	elif (args.spreset == "cie10"): srlist = cie10
-	# digital camera
-	elif (args.spreset == "camera"): srlist = camera
-	# sRGB display
-	elif (args.spreset == "srgb"): srlist = srgb
+	elif (args.source == "cie10"): srlist = cie10
 	# UVS bird
-	elif (args.spreset == "uvbird"): srlist = uvbird
+	elif (args.source == "uvbird"): srlist = uvbird
 	# VS bird
-	elif (args.spreset == "vbird"): srlist = vbird
+	elif (args.source == "vbird"): srlist = vbird
 	else:
-		srlist = []
-		for i in range(3):
-			# whole list
-			yvalues = np.empty(401)
-			peak = args.source[i] # peak sensitivity
-			for j in range(401):
-				yvalues[j] = vpt(j+300, peak)
-			srlist.append(yvalues)
+		for i in range(len(args.source)):
+			srlist.append(csv2spec(args.source[i]))
 
 	sr1 = srlist[0]
 	sr2 = srlist[1]
@@ -2792,15 +2711,16 @@ if (args.image != "none" or args.s2tplot):
 	sr4 = np.zeros(401)
 	if ((len(srlist)) == 4): sr4 = srlist[3]
 
-	# luminosity to use in images
-	# http://www.brucelindbloom.com/index.html?Eqn_RGB_XYZ_Matrix.html
+	# constants for luminance adjustment
+	# sRGB -> XYZ Y: http://www.brucelindbloom.com/index.html?Eqn_RGB_XYZ_Matrix.html
 	lum_r = 0.2126729
 	lum_g = 0.7151522
 	lum_b = 0.0721750
 	
-	lum_r1 = sum(srgb_red * luminosity)
-	lum_g1 = sum(srgb_green * luminosity)
-	lum_b1 = sum(srgb_blue * luminosity)
+	# contribution of each channel to the target's luminance vision
+	lum_r1 = sum(sr1 * luminosity)
+	lum_g1 = sum(sr2 * luminosity)
+	lum_b1 = sum(sr3 * luminosity)
 	lum_uv = sum(sr4 * luminosity)
 	lum_max = lum_r1 + lum_g1 + lum_b1 + lum_uv
 	
@@ -2852,59 +2772,75 @@ if (args.image != "none" or args.s2tplot):
 		tr1 /= wptr1
 		if (wptr2 > 0): tr2 /= wptr2
 		if (wptr3 > 0): tr3 /= wptr3
-	
-	# convert to chromaticity
-	sr1_c = np.zeros(401)
-	sr2_c = np.zeros(401)
-	sr3_c = np.zeros(401)
-	sr4_c = np.zeros(401)
-	tr1_c = np.zeros(401)
-	tr2_c = np.zeros(401)
-	tr3_c = np.zeros(401)
-	for i in range(401):
-		stotal = sr1[i] + sr2[i] + sr3[i] + sr4[i]
-		ttotal = tr1[i] + tr2[i] + tr3[i]
-		if (stotal > 0):
-			sr1_c[i] = sr1[i] / stotal
-			sr2_c[i] = sr2[i] / stotal
-			sr3_c[i] = sr3[i] / stotal
-			sr4_c[i] = sr4[i] / stotal
-		if (ttotal > 0):
-			tr1_c[i] = tr1[i] / ttotal
-			tr2_c[i] = tr2[i] / ttotal
-			tr3_c[i] = tr3[i] / ttotal
-	
+	if (args.s2tmode == "c"):
+		# convert to chromaticity
+		sr1_c = np.zeros(401)
+		sr2_c = np.zeros(401)
+		sr3_c = np.zeros(401)
+		sr4_c = np.zeros(401)
+		tr1_c = np.zeros(401)
+		tr2_c = np.zeros(401)
+		tr3_c = np.zeros(401)
+		for i in range(401):
+			stotal = sr1[i] + sr2[i] + sr3[i] + sr4[i]
+			ttotal = tr1[i] + tr2[i] + tr3[i]
+			if (stotal > 0):
+				sr1_c[i] = sr1[i] / stotal
+				sr2_c[i] = sr2[i] / stotal
+				sr3_c[i] = sr3[i] / stotal
+				sr4_c[i] = sr4[i] / stotal
+			if (ttotal > 0):
+				tr1_c[i] = tr1[i] / ttotal
+				tr2_c[i] = tr2[i] / ttotal
+				tr3_c[i] = tr3[i] / ttotal
+	elif (args.s2tmode == "s"):
+		# 0 - 65535
+		smax = max(*sr1,*sr2,*sr3,*sr4)
+		tmax = max(*tr1,*tr2,*tr3)
+		sr1_c = sr1 * 65535 / smax
+		sr2_c = sr2 * 65535 / smax
+		sr3_c = sr3 * 65535 / smax
+		sr4_c = sr4 * 65535 / smax
+		tr1_c = tr1 * 65535 / smax
+		tr2_c = tr2 * 65535 / smax
+		tr3_c = tr3 * 65535 / smax
 
 	# find best fit to target
-	def source2target(xdata, r, g, b, uv, rg, rb, ruv, gb, guv, buv):
-		first_order = r*sr1_c + g*sr2_c + b*sr3_c + uv*sr4_c
-		second_order = rg*(sr1_c*sr2_c) + rb*(sr1_c*sr3_c) + ruv*(sr1_c*sr4_c) + gb*(sr2_c*sr3_c) + guv*(sr2_c*sr4_c) + buv*(sr3_c*sr4_c)
-		if (args.interactions == 2): ydata = first_order + second_order
+	def source2target(xdata, r, g, b, u, rg=0, rb=0, ru=0, gb=0, gu=0, bu=0, rgb=0, rgu=0, rbu=0, gbu=0, r2=0, g2=0, b2=0, u2=0):
+		first_order = r*sr1_c + g*sr2_c + b*sr3_c + u*sr4_c
+		second_order = rg*(sr1_c*sr2_c) + rb*(sr1_c*sr3_c) + ru*(sr1_c*sr4_c) + gb*(sr2_c*sr3_c) + gu*(sr2_c*sr4_c) + bu*(sr3_c*sr4_c)
+		third_order = rgb*(sr1_c*sr2_c*sr3_c) + rgu*(sr1_c*sr2_c*sr4_c) + rbu*(sr1_c*sr3_c*sr4_c) + gbu*(sr2_c*sr3_c*sr4_c) + r2*(sr1_c**2) + g2*(sr2_c**2) + b2*(sr3_c**2) + u2*(sr4_c**2)
+		if (args.interactions == 3): ydata = first_order + second_order + third_order
+		elif (args.interactions == 2): ydata = first_order + second_order
 		else: ydata = first_order
 		return(ydata)
 
-	popt, pcov = scipy.optimize.curve_fit(source2target, x_1nm, tr1_c, p0=[1, 0, 0, 0, 0, 0, 0, 0, 0, 0], bounds=[args.bound, np.inf])
-	print(popt)
+	if (args.interactions == 1): p0 = [1,1,1,1]
+	elif (args.interactions == 2): p0 = [1,1,1,1,0,0,0,0,0,0]
+	elif (args.interactions == 3): p0 = [1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+
+	popt, pcov = scipy.optimize.curve_fit(source2target, x_1nm, tr1_c, p0=p0, bounds=[args.bound, np.inf])
+	if (args.verbose): print(popt)
 	s2t_r1 = popt
-	popt, pcov = scipy.optimize.curve_fit(source2target, x_1nm, tr2_c, p0=[0, 1, 0, 0, 0, 0, 0, 0, 0, 0], bounds=[args.bound, np.inf])
-	print(popt)
+	popt, pcov = scipy.optimize.curve_fit(source2target, x_1nm, tr2_c, p0=p0, bounds=[args.bound, np.inf])
+	if (args.verbose): print(popt)
 	s2t_r2 = popt
-	popt, pcov = scipy.optimize.curve_fit(source2target, x_1nm, tr3_c, p0=[0, 0, 1, 0, 0, 0, 0, 0, 0, 0], bounds=[args.bound, np.inf])
-	print(popt)
+	popt, pcov = scipy.optimize.curve_fit(source2target, x_1nm, tr3_c, p0=p0, bounds=[args.bound, np.inf])
+	if (args.verbose): print(popt)
 	s2t_r3 = popt
 	
 	if (args.s2tplot):
-		plt.plot(x_1nm, tr1_c, color=colorcode(receptors[0]))
-		plt.plot(x_1nm, source2target(x_1nm, *s2t_r1), '--', color=colorcode(receptors[0]))
+		plt.plot(x_1nm, tr1_c, color='k')
+		plt.plot(x_1nm, source2target(x_1nm, *s2t_r1), '--', color='k')
 		if (dimension > 1):
-			plt.plot(x_1nm, tr2_c, color=colorcode(receptors[1]))
-			plt.plot(x_1nm, source2target(x_1nm, *s2t_r2), '--', color=colorcode(receptors[1]))
+			plt.plot(x_1nm, tr2_c, color='k')
+			plt.plot(x_1nm, source2target(x_1nm, *s2t_r2), '--', color='k')
 			#plt.plot(x_1nm, sr1_c, ':r')
 			#plt.plot(x_1nm, sr2_c, ':g')
 			#plt.plot(x_1nm, sr1_c*sr2_c, ':y')
 		if (dimension > 2):
-			plt.plot(x_1nm, tr3_c, color=colorcode(receptors[2]))
-			plt.plot(x_1nm, source2target(x_1nm, *s2t_r3), '--', color=colorcode(receptors[2]))
+			plt.plot(x_1nm, tr3_c, color='k')
+			plt.plot(x_1nm, source2target(x_1nm, *s2t_r3), '--', color='k')
 			#plt.plot(x_1nm, sr3_c, ':b')
 			#plt.plot(x_1nm, sr1_c*sr3_c, ':m')
 			#plt.plot(x_1nm, sr2_c*sr3_c, ':c')
@@ -3367,11 +3303,10 @@ if (args.vpt):
 	
 	# non-rod receptors
 	for i in range(dimension):
-		peak = receptors[i] # peak sensitivity
 		yvalues = rlist[i] * media_1nm
 		ymax = max(*yvalues)
 		
-		plt.plot(x_1nm, yvalues/ymax, color=colorcode(peak))
+		plt.plot(x_1nm, yvalues/ymax, color='k')
 
 	plt.xlabel("Wavelength (nm)")
 	plt.ylabel("Relative sensitivity")
@@ -3645,10 +3580,10 @@ def triangle(spectra=[], reflect=True, markers=[], colors=[], text=[], legend=Fa
 	
 	if (dimension > 3):
 		# positioning text is awkward, I have a better idea...
-		ax.plot(*r1v, 'o', color=colorcode(receptors[0]))
-		ax.plot(*r2v, 'o', color=colorcode(receptors[1]))
-		ax.plot(*r3v, 'o', color=colorcode(receptors[2]))
-		ax.plot(*r4v, 'o', color=colorcode(receptors[3]))
+		ax.plot(*r1v, 'o', color='r')
+		ax.plot(*r2v, 'o', color='g')
+		ax.plot(*r3v, 'o', color='b')
+		ax.plot(*r4v, 'o', color='purple')
 	
 	if (axes == False): plt.axis('off')
 	if (legend and dimension < 5): plt.legend()
