@@ -1,17 +1,21 @@
 """
 This file contains the following:
 * list of arguments
-* visual pigments: standard visual pigment template (vpt()) and human cone fundamentals
+* visual pigments: standard visual pigment template (vpt()) and human cone
+fundamentals
 * ocular media transmittance for various species
 * blackbody: blackbody()
-* color/brightness analysis: color_contrast(), brightness_contrast() and spec2rgb()
-* illuminants: D65, E, incandescent (identical to CIE A by default but can be customized)
+* color/brightness analysis: color_contrast(), brightness_contrast() and
+spec2rgb()
+* illuminants: D65, E, incandescent (identical to CIE A by default but can be
+customized)
 * color matching functions
 * Maxwell triangle color space plots: triangle()
 * color and brightness discrimination: color_disc() and brightness_disc()
 
-Other stuff has been spun off to the following files, which import this one. I'd like to add additional arguments to those but
-don't see how to do that.
+Other stuff has been spun off to the following files, which import this one.
+I'd like to add additional arguments to those but don't see how to do that.
+
 * erg.py: analysis of ERG data from Jacobs & Williams (2010)
 * illuminants.py: test illuminants
 * optimal.py: optimal colors
@@ -21,14 +25,17 @@ don't see how to do that.
 * wratten.py: Kodak Wratten filters
 * munsell.py: Munsell color cards
 * image_processing.py: tool for creating false-color images
-** This one can't be part of the main file because OpenCV and matplotlib don't like each other. That's
-why the main file has the part for generating and plotting the source->target curves.
+** This one can't be part of the main file because OpenCV and matplotlib don't
+like each other. That's why the main file has the part for generating and
+plotting the source->target curves.
 
-wratten.py and munsell.py just produce plots by default. To see the color rendering and trial modeling, you have to use
---wratten/--munsell. This is because they also contain other features that are accessed with other arguments (see the list).
+wratten.py and munsell.py just produce plots by default. To see the color
+rendering and trial modeling, you have to use --wratten/--munsell. This is
+because they also contain other features that are accessed with other
+arguments (see the list).
 
-The image processing functions that used to be here have also been moved into another file because they
-didn't get along with matplotlib.
+The image processing functions that used to be here have also been moved into
+another file because they didn't get along with matplotlib.
 """
 
 # this list doesn't recursively import
@@ -71,7 +78,7 @@ parser.add_argument("--qn", help="use quantum noise in color differences", actio
 parser.add_argument("--r1s", type=float, default=1, help="contribution of receptor 1 to spectral sensitivity")
 parser.add_argument("--rs", type=float, default=0, help="contribution of rods to spectral sensitivity")
 parser.add_argument("--vonkries", help="enable von Kries transform", action="store_true")
-parser.add_argument("--luminosity", help="show spectral sensitivity function", action="store_true")
+parser.add_argument("--sensitivity", help="show spectral sensitivity function", action="store_true")
 parser.add_argument("--white", default="d65", help="set illuminant")
 parser.add_argument("--wratten", help="Kodak Wratten camera filters", action="store_true")
 parser.add_argument("--wv2", help="use tabulated Kodak Wratten data from Kodak Photographic Filters Handbook (1990)", action="store_true")
@@ -79,12 +86,12 @@ parser.add_argument("--wcheck", help="check camera filter brightness matches", a
 parser.add_argument("--wopt1", help="test varying spectral sensitivity (probability)", action="store_true")
 parser.add_argument("--wopt2", help="test varying spectral sensitivity (order)", action="store_true")
 parser.add_argument("--wopt3", help="test varying spectral sensitivity (contrast)", action="store_true")
-parser.add_argument("--qcheck", help="show absolute quantum catches", action="store_true")
 parser.add_argument("--vpt", help="plot visual pigment templates", action="store_true")
+parser.add_argument("--plot", nargs="+", help="plot spectra from CSV files")
+parser.add_argument("--ylabel", default="Reflectance", help="Y-axis label")
+parser.add_argument("--colorplot", help="use generated colors for plots", action="store_true")
 parser.add_argument("--csplot", "--triangle", nargs="*", help="create a Maxwell-style color space plot")
-parser.add_argument("--r1name", default='', help="name of receptor 1 (used in triangle/line plots)")
-parser.add_argument("--r2name", default='', help="name of receptor 2 (used in triangle/line plots)")
-parser.add_argument("--r3name", default='', help="name of receptor 3 (used in triangle/line plots)")
+parser.add_argument("--labels", nargs="+", default=['','',''], help="labels to use in triangle and line plots")
 parser.add_argument("--fcmode", help="switch default false color mode", default="none")
 parser.add_argument("--s2tmode", help="switch default color transform mode", default="c")
 parser.add_argument("--blackbody", type=int, default=0, help="test Wratten filters with a specified blackbody temperature")
@@ -271,7 +278,7 @@ elif (args.media == "human"):
 			media_10nm[i] = 0
 elif (args.media != "none"):
 	media_1nm = csv2spec(args.media)
-	media_10nm = np.interp(x_10nm, x_1nm, values)
+	for i in range(41): media_10nm[i] = media_1nm[i*10]
 	
 	# set to 1 at 700 nm
 	media_10nm = media_10nm / media_10nm[40]
@@ -1423,10 +1430,12 @@ cie_luminosity = np.array([
 	0.00000045181 # 830
 ])
 
-# integral of D65 x human photopic luminosity function (we hardcode this instead of using
-# sensitivity() because that varies with settings for the specified species)
-# The units we want at the end are W/m^2, so we multiply this by the lux-to-watts scaling
-# factor for 555 nm (683.002 lm/W). This will end up on the bottom.
+"""
+integral of D65 x human photopic luminosity function
+
+The units we want at the end are W/m^2, so we multiply this by the lux-to-watts scaling
+factor for 555 nm (683.002 lm/W). This will end up on the bottom.
+"""""
 integral = sum(d65_1nm * cie_luminosity) * 683.002
 
 # lux scaling factor (units = lx / lx/nm = nm)
@@ -1434,8 +1443,8 @@ lxscale = args.lux / integral
 #print(lxscale)
 
 # scaled version (W/m^2 * m / joule*sec * m/s * nm = joule/sec/m^2 * m / joule/sec * m/s * nm * sr)
-# Per nm is implied. The values we just found do not include steradians (probably), so we divide
-# by the sr value we found earlier. (No we don't)
+# Per nm is implied. The values we just found do not include steradians
+# (probably), so we divide by the sr value we found earlier. (No we don't)
 # Also changing this to 1 nm.
 d65_photons = np.empty(531)
 for i in range(d65_photons.shape[0]):
@@ -1448,8 +1457,10 @@ for i in range(e_photons.shape[0]):
 	e_photons[i] = lxscale*1e-9*w*100 / (h*c*math.pi)
 
 # white point
-# Selecting the absolute number of photons is now done here to avoid going through an if statement
-# every time color_contrast() is run.
+# Selecting the absolute number of photons is now done here to avoid going
+# through an if statement every time color_contrast() is run.
+wp_10nm = np.ones(41) * 100
+wp_1nm = np.ones(401) * 100
 if (args.white == "d65"):
 	wp_10nm = d65_10nm
 	wp_1nm = np.empty(401)
@@ -1466,7 +1477,7 @@ elif (args.white == "a" or args.white == "i"):
 # custom illuminant
 else:
 	wp_1nm = csv2spec(args.white)
-	wp_10nm = np.interp(x_10nm, x_1nm, wp_1nm)
+	for i in range(41): wp_10nm[i] = wp_1nm[i*10]
 
 # 2-deg quantal human cone fundamentals -- http://www.cvrl.org/cones.htm
 # Negative infinities (log(0)) were inserted for consistent array length.
@@ -2359,10 +2370,14 @@ hcf10deg = np.array([
 	[830,  -6.22470,  -7.25737,  -float('inf')]
 ])
 
-# find sensitivity of a given photoreceptor type to a wavelength using visual pigment templates
-# from Govardovskii et al. (2000). l is short for lambda. See also https://pmc.ncbi.nlm.nih.gov/articles/PMC2962788/
-# Palacios et al. 2010 use a different equation for the beta-band peak (123 + 0.429 * alpha
-# peak).
+"""
+find sensitivity of a given photoreceptor type to a wavelength using visual
+pigment templates from Govardovskii et al. (2000). l is short for lambda.
+See also https://pmc.ncbi.nlm.nih.gov/articles/PMC2962788/
+
+Palacios et al. 2010 use a different equation for the beta-band peak
+(123 + 0.429 * alpha peak).
+"""
 def vpt(w, lmax):
 	# coefficients
 	A = 69.7
@@ -2431,17 +2446,25 @@ for i in range(390, 701):
 	cie10_luminosity[i-300] = cie_luminosity[i-300] # just so it's the right length
 cie10 = [cie10_l, cie10_m, cie10_s]
 
-# typical UVS and VS birds, digitized with WebPlotDigitizer
+# typical UVS and VS birds, digitized with PlotDigitizer
 # source: https://www.nature.com/articles/s41467-018-08142-5
 # licensed under Creative Commons 4.0 http://creativecommons.org/licenses/by/4.0/
 bird_l = csv2spec('bird-l.csv')
 bird_m = csv2spec('bird-m.csv')
 bird_su = csv2spec('bird-su.csv')
 bird_sv = csv2spec('bird-sv.csv')
-bird_uv = csv2spec('bird-uv.csv')
+bird_u = csv2spec('bird-u.csv')
 bird_v = csv2spec('bird-v.csv')
 
-uvbird = [bird_l,bird_m,bird_su,bird_uv]
+# set max values to 1
+bird_l /= max(*bird_l)
+bird_m /= max(*bird_m)
+bird_su /= max(*bird_su)
+bird_sv /= max(*bird_sv)
+bird_u /= max(*bird_u)
+bird_v /= max(*bird_v)
+
+uvbird = [bird_l,bird_m,bird_su,bird_u]
 vbird = [bird_l,bird_m,bird_sv,bird_v]
 
 # set receptors and luminosity
@@ -2485,6 +2508,8 @@ else:
 			yvalues[j] = vpt(j+300, peak)
 		rlist.append(yvalues)
 
+luminosity /= max(*luminosity)
+
 dimension = len(rlist)
 if (dimension > 4): r5_1nm = rlist[4]
 if (dimension > 3): r4_1nm = rlist[3]
@@ -2495,10 +2520,11 @@ r1_1nm = rlist[0]
 """
 CMFs (color-matching functions)
 
-The names "red", "green" and "blue" for the first 3 primaries have been removed, but the default
-values are still the CIE RGB primaries (700, 546.1 and 435.8). Since the second two are not
-integers, they have to be rounded to 546 and 436 so we can look up array indexes. (It's faster
-that way and probably doesn't matter for precision.)
+The names "red", "green" and "blue" for the first 3 primaries have been
+removed, but the default values are still the CIE RGB primaries (700, 546.1
+and 435.8). Since the second two are not integers, they have to be rounded to
+546 and 436 so we can look up array indexes. (It's faster that way and probably
+doesn't matter for precision.)
 
 Other recommended values for trichromatic primaries:
 * marsupials: 620, 450, 360 (Arrese et al. 2006 doi.org/10.1016/j.cub.2006.02.036)
@@ -2515,8 +2541,6 @@ p2 = round(args.primaries[1])
 if (len(args.primaries) > 2): p3 = round(args.primaries[2])
 if (len(args.primaries) > 3): p4 = round(args.primaries[3])
 if (len(args.primaries) > 4): p5 = round(args.primaries[4])
-
-# color coding
 
 def cmf():
 	if (dimension > 4):
@@ -2694,13 +2718,13 @@ if (args.cmf):
 # set source receptors (for image processing)
 if (args.image != "none" or args.s2tplot):
 	srlist = []
-	if (args.source == "cie2"): srlist = cie2
+	if (args.source[0] == "cie2"): srlist = cie2
 	# CIE 10-deg fundamentals
-	elif (args.source == "cie10"): srlist = cie10
+	elif (args.source[0] == "cie10"): srlist = cie10
 	# UVS bird
-	elif (args.source == "uvbird"): srlist = uvbird
+	elif (args.source[0] == "uvbird"): srlist = uvbird
 	# VS bird
-	elif (args.source == "vbird"): srlist = vbird
+	elif (args.source[0] == "vbird"): srlist = vbird
 	else:
 		for i in range(len(args.source)):
 			srlist.append(csv2spec(args.source[i]))
@@ -2990,12 +3014,14 @@ def spec2rgb(table, reflect=True, mode=args.fcmode):
 		spec_830nm=0,
 		illuminant='d65')
 		
-		# If an illuminant is set, we'll also set it here. Note that colormath
-		# only adapts the CMFs and not the SPD itself, so we've already adjusted
-		# it.
-		if (args.white == 'd65'): spectral.set_illuminant('d65')
-		elif (args.white == 'a' or args.white == 'i'): spectral.set_illuminant('a')
-		elif (args.white == 'e'): spectral.set_illuminant('e')
+		# If an illuminant is set, we'll also set it here. Note that
+		# colormath only adapts the CMFs, so we've already adjusted it.
+		if (args.white == 'd65'):
+			spectral.set_illuminant('d65')
+		elif (args.white == 'a' or args.white == 'i'):
+			spectral.set_illuminant('a')
+		elif (args.white == 'e'):
+			spectral.set_illuminant('e')
 		
 		srgb = convert_color(spectral, sRGBColor)
 		rgb_tuple = srgb.get_value_tuple()
@@ -3022,8 +3048,8 @@ for one or more cone signals is very small.
 """
 def color_contrast(table1, table2, quantum_noise=args.qn, r1 = r1_1nm, r2 = r2_1nm, r3 = r3_1nm, r4 = r4_1nm):
 	if (dimension > 4):
-		print("Warning: color_contrast() does not support dimensions higher than 4. Any "
-		+ "receptors after r4 will be ignored.")
+		print("Warning: color_contrast() does not support dimensions "
+		      + "higher than 4. Any receptors after r4 will be ignored.")
 	# interpolate 1-nm intervals if we're provided with 10-nm
 	if (len(table1) < 401): table1 = np.interp(x_1nm, x_10nm, table1)
 	if (len(table2) < 401): table2 = np.interp(x_1nm, x_10nm, table2)
@@ -3231,7 +3257,7 @@ def color_contrast(table1, table2, quantum_noise=args.qn, r1 = r1_1nm, r2 = r2_1
 		er3 = math.sqrt((1 / aqr31 + 1 / aqr32) + 2*wr3**2)
 		er4 = math.sqrt((1 / aqr41 + 1 / aqr42) + 2*wr4**2)
 		
-		if (args.qcheck):
+		if (args.verbose):
 			print("r11: " + str(aqr11) + ", r21: " + str(aqr21)
 			+ ", r31: " + str(aqr31) + ", r41: " + str(aqr41))
 			print("r12: " + str(aqr12) + ", r22: " + str(aqr22)
@@ -3267,9 +3293,7 @@ def brightness_contrast(table1, table2, r1=luminosity):
 	# interpolate 1-nm intervals if we're provided with 10-nm
 	if (len(table1) < 401): table1 = np.interp(x_1nm, x_10nm, table1)
 	if (len(table2) < 401): table2 = np.interp(x_1nm, x_10nm, table2)
-	
-	# We're redoing this to use sensitivity() so we can use the photopic luminosity
-	# function for humans.
+
 	q1 = 0
 	q2 = 0
 	for i in range(401):
@@ -3281,14 +3305,30 @@ def brightness_contrast(table1, table2, r1=luminosity):
 	return delta_s
 
 """
-plot visual pigment templates
-I changed the line colors back to red, green and blue. I've been trying to avoid this kind
-of color coding, but in this case it's generally understood which visual pigment template
-is which based on its position on the graph, and the shades-of-gray "color" scheme was too
-pale for my liking.
+plot any spectra
 
-09/10/2025 -- you can now plot an arbitrary number of templates and the color for each is
-chosen based on their peak sensitivity
+Like --vpt, --plot can plot anything you want, except the original Y values are
+left as is.
+"""
+if (args.plot):
+	for i in range(len(args.plot)):
+		yvalues = csv2spec(args.plot[i])
+		if (args.colorplot): color=spec2rgb(yvalues)
+		else: color='k'
+		plt.plot(x_1nm, yvalues, color=color)
+
+	plt.xlabel("Wavelength (nm)")
+	plt.ylabel(args.ylabel)
+	plt.show()
+
+"""
+plot visual pigment sensitivity curves
+
+You can plot an arbitrary number of either standard visual pigment templates
+(with -r/--receptors), preset curves (--preset) or CSV files (--rcsv). All of
+them will be scaled to 1 at their maximum value. They're all plotted as solid
+black lines because the default set of Python colors can be counterintuitive
+and it's too awkward to assign colors to them that "make sense".
 """
 if (args.vpt):
 	# rod
@@ -3313,7 +3353,9 @@ if (args.vpt):
 	plt.show()
 
 # show luminous efficiency function and lens filtering
-if (args.luminosity):
+# 16/10/2025 changed the argument name from luminosity to sensitivity
+# because we have another argument named luminance.
+if (args.sensitivity):
 	ms = 300
 	msy = 0
 	for i in range(401):
@@ -3332,24 +3374,27 @@ if (args.luminosity):
 
 """
 plot color triangle
-See this paper for information on Maxwell triangles: https://www.researchgate.net/publication/8064482_Animal_colour_vision_-_Behavioural_tests_and_physiological_concepts
-In the literature, Maxwell triangles may have either M on the left and S on top, as in the above
-paper, or the reverse (S left, M top). triangle() defaults to the former because it simplifies
-having multiple dimensions of plots. If you want a different orientation, you can specify another
-order for --receptors and change the labels with --r1name, --r2name and --r3name. Note the default
-label for the left side is "M" for both lines and triangles.
+See this paper for information on Maxwell triangles:
+https://www.researchgate.net/publication/8064482_Animal_colour_vision_-_Behavioural_tests_and_physiological_concepts
+Maxwell triangles usually are labeled with L on the right and either M on
+the left and S on top or the reverse. triangle() puts r1 on the right, r2 on
+the left and r3 on top and does not have labels by default. You can add any
+labels you want with the argument --labels.
 
-The name "triangle" is now slightly misleading because it produces a line or tetrahedron when
-provided with 2 or 4+ receptors.
+The name "triangle" is now slightly misleading because it produces a line or
+tetrahedron when provided with 2 or 4+ receptors.
 
-Numbers are off by default because they overlap with everything and are almost unreadable.
+Numbers are off by default because they overlap with everything and are almost
+unreadable.
 
-Axes are off by default because these plots don't usually include them and the Y-axis isn't
-meaningful for dichromacy. This doesn't hide the color bar for the 4th dimension.
+Axes are off by default because these plots don't usually include them and the
+Y-axis isn't meaningful for dichromacy. This doesn't hide the color bar for
+the 4th dimension.
 """
 def triangle(spectra=[], reflect=True, markers=[], colors=[], text=[], legend=False, numbers=False, mec='k', gamut=False, gamutcolor='k', gamutedge='-', achro=True, axes=False):
 	# default list elements
-	# Checking if they're blank doesn't always work if you call the function twice in a row.
+	# Checking if they're blank doesn't always work if you call the
+	# function twice in a row.
 	if (len(markers) < len(spectra)):
 		for i in range(len(spectra)): markers.append('o')
 	if (len(colors) < len(spectra)):
@@ -3397,13 +3442,13 @@ def triangle(spectra=[], reflect=True, markers=[], colors=[], text=[], legend=Fa
 		xborder = np.array([-math.sqrt(1/2), 0, math.sqrt(1/2), -math.sqrt(1/2)])
 		yborder = np.array([-math.sqrt(2/3)/2, math.sqrt(2/3), -math.sqrt(2/3)/2, -math.sqrt(2/3)/2])
 		plt.plot(xborder, yborder, '-k')
-		plt.text(-math.sqrt(1/2) - 0.05, -math.sqrt(2/3)/2 - 0.025, args.r2name)
-		plt.text(0 - 0.025, math.sqrt(2/3) + 0.0125, args.r3name)
-		plt.text(math.sqrt(1/2) + 0.0125, -math.sqrt(2/3)/2 - 0.025, args.r1name)
+		plt.text(-math.sqrt(1/2) - 0.05, -math.sqrt(2/3)/2 - 0.025, args.labels[1])
+		plt.text(0 - 0.025, math.sqrt(2/3) + 0.0125, args.labels[2])
+		plt.text(math.sqrt(1/2) + 0.0125, -math.sqrt(2/3)/2 - 0.025, args.labels[0])
 	else:
 		plt.plot([-1, 1], [0, 0], '-k')
-		plt.text(-1.1, -.025, args.r2name)
-		plt.text(1.1, -.025, args.r1name)
+		plt.text(-1.1, -.025, args.labels[1])
+		plt.text(1.1, -.025, args.labels[0])
 		plt.ylim(-1, 1)
 
 	# gamut
@@ -3598,33 +3643,39 @@ if (type(args.csplot) == list):
 		for i in range(len(args.csplot)):
 			spectrum = csv2spec(args.csplot[i])
 			spectra.append(spectrum)
-			colors.append(spec2rgb(spectrum))
+			if (args.colorplot): colors.append(spec2rgb(spectrum))
+			else: colors.append('k')
 		triangle(spectra, colors=colors)
 
 """
 function for modeling color discrimination trials
 
 This outputs a probability for both success (defined as at least the criterion) and failure (less
-than the criterion) because the behavioral results include both. We use different thresholds
-for "success" for the different sets of discriminations. In Friedman (1967) the criterion was
-35 out of 40 for the color pairs and 68 of 80 for the color/gray pairs. In Gutierrez et al. (2011)
-significant performance is defined as more than 62.5% and the total number of trials for each
-pair was 64, so the criterion would be 41 of 64. This produces considerably different
-significance thresholds when comparing "success" or "failure" against expected values:
+than the criterion) because the behavioral results include both. We use
+different thresholds for "success" for the different sets of discriminations.
+In Friedman (1967) the criterion was 35 out of 40 for the color pairs and 68
+of 80 for the color/gray pairs. In Gutierrez et al. (2011) significant
+performance is defined as more than 62.5% and the total number of trials
+for each pair was 64, so the criterion would be 41 of 64. This produces
+considerably different significance thresholds when comparing "success" or
+"failure" against expected values:
 
 * 35/40 and 68/80: success 0-12 (out of 16), failure 15-16
 * 41/64: success 0-8, failure 12-16
 
-For contrast where we don't consider overlap and expect chance (50%) performance for deltaS < 1,
-this means that under the first criterion "success" is defined as at least 10 of 16 distinguishable
-pairs and "failure" is defined as at most 13 of 16, whereas under the second criterion "success"
-is at least 1 and "failure" is at most 7. There are also several intermediate values where
-the probability of both success and failure exceeds 0.05. With the first two criteria, success
-becomes more likely than failure at 14 (12 distinguishable), and with the second this occurs at 10.5
-(5 distinguishable).
+For contrast where we don't consider overlap and expect chance (50%)
+performance for deltaS < 1, this means that under the first criterion
+"success" is defined as at least 10 of 16 distinguishable pairs and "failure"
+is defined as at most 13 of 16, whereas under the second criterion "success"
+is at least 1 and "failure" is at most 7. There are also several intermediate
+values where the probability of both success and failure exceeds 0.05. With
+the first two criteria, success becomes more likely than failure at 14
+(12 distinguishable), and with the second this occurs at 10.5 (5
+distinguishable).
 
-This is now also used directly for optimization graphs, so all the parts relevant only to
-testing one set of pigments have been made conditional to reduce noise and computation.
+This is now also used directly for optimization graphs, so all the parts
+relevant only to testing one set of pigments have been made conditional to
+reduce noise and computation.
 """
 def color_disc(first, second, correct=35, trials=40, r1 = 0, r2 = 0, r3 = 0, output=True):
 	# custom receptors
@@ -3668,7 +3719,6 @@ def color_disc(first, second, correct=35, trials=40, r1 = 0, r2 = 0, r3 = 0, out
 		print("Median contrast: " + str(mc))
 		print("")
 	return [mc, minc, maxc, box]
-
 
 """
 like color_disc except for brightness
