@@ -1,8 +1,3 @@
-"sensitivity(wavelength), created by Plot Digitizer, 2.6.12"
-"Date: 16/10/25, 17:29:49"
-
-
-65
 wavelength,sensitivity
 553.411,0.00752688,
 555.841,0.0204301,
@@ -69,3 +64,4 @@ wavelength,sensitivity
 697.017,0.00967742,
 699.227,0.00967742,
 700.110,0.00752688,
+
