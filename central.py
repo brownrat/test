@@ -25,17 +25,11 @@ I'd like to add additional arguments to those but don't see how to do that.
 * wratten.py: Kodak Wratten filters
 * munsell.py: Munsell color cards
 * image_processing.py: tool for creating false-color images
-** This one can't be part of the main file because OpenCV and matplotlib don't
-like each other. That's why the main file has the part for generating and
-plotting the source->target curves.
 
 wratten.py and munsell.py just produce plots by default. To see the color
 rendering and trial modeling, you have to use --wratten/--munsell. This is
 because they also contain other features that are accessed with other
 arguments (see the list).
-
-The image processing functions that used to be here have also been moved into
-another file because they didn't get along with matplotlib.
 """
 
 # this list doesn't recursively import
@@ -44,7 +38,7 @@ import numpy as np
 import time
 import argparse
 import colormath
-from colormath.color_objects import sRGBColor, SpectralColor
+from colormath.color_objects import sRGBColor, SpectralColor, LabColor
 from colormath.color_conversions import convert_color
 import matplotlib.pyplot as plt
 import scipy
@@ -58,21 +52,16 @@ import csv
 start_time = time.time()
 
 # arguments
-# The absolute quantum catch arguments mostly have default values specific to my analysis of
-# opossums. I may change this.
 parser = argparse.ArgumentParser()
 parser.add_argument("-r", "--receptors", "--target", nargs="+", type=int, default=[562], help="receptor peak sensitivities")
 parser.add_argument("--rcsv", nargs="+", default="none", help="custom receptors from CSV file(s)")
-parser.add_argument("--rod", type=int, default=0, help="rod peak sensitivity")
 parser.add_argument("--weber", type=float, default=0.05, help="base Weber fraction")
 parser.add_argument("--weberr2", type=float, default=0, help="override Weber fraction for receptor 2")
 parser.add_argument("--weberr3", type=float, default=0, help="override Weber fraction for receptor 3")
 parser.add_argument("--weberr4", type=float, default=0, help="override Weber fraction for receptor 4")
+parser.add_argument("--weberr5", type=float, default=0, help="override Weber fraction for receptor 5")
 parser.add_argument("--weberb", type=float, default=0.11, help="achromatic Weber fraction")
-parser.add_argument("--r1p", type=float, default=1, help="number of receptor 1 per receptive field")
-parser.add_argument("--r2p", type=float, default=1, help="number of receptor 2 per receptive field")
-parser.add_argument("--r3p", type=float, default=1, help="number of receptor 3 per receptive field")
-parser.add_argument("--r4p", type=float, default=1, help="number of receptor 4 per receptive field")
+parser.add_argument("--rf", nargs="+", type=float, default=[1,1,1,1,1], help="number of receptors of each type per receptive field")
 parser.add_argument("--media", "--filter", type=str, default="none", help="ocular media transmittance")
 parser.add_argument("--qn", help="use quantum noise in color differences", action="store_true")
 parser.add_argument("--r1s", type=float, default=1, help="contribution of receptor 1 to spectral sensitivity")
@@ -82,10 +71,13 @@ parser.add_argument("--sensitivity", help="show spectral sensitivity function", 
 parser.add_argument("--white", default="d65", help="set illuminant")
 parser.add_argument("--wratten", help="Kodak Wratten camera filters", action="store_true")
 parser.add_argument("--wv2", help="use tabulated Kodak Wratten data from Kodak Photographic Filters Handbook (1990)", action="store_true")
+parser.add_argument("--ndswap", help="use flat transmittance instead of neutral density curves", action="store_true")
+parser.add_argument("--grayswap", help="set gray to yellow/green average", action="store_true")
 parser.add_argument("--wcheck", help="check camera filter brightness matches", action="store_true")
 parser.add_argument("--wopt1", help="test varying spectral sensitivity (probability)", action="store_true")
 parser.add_argument("--wopt2", help="test varying spectral sensitivity (order)", action="store_true")
 parser.add_argument("--wopt3", help="test varying spectral sensitivity (contrast)", action="store_true")
+parser.add_argument("--wopt4", help="test varying spectral sensitivity (contrast)", action="store_true")
 parser.add_argument("--vpt", help="plot visual pigment templates", action="store_true")
 parser.add_argument("--plot", nargs="+", help="plot spectra from CSV files")
 parser.add_argument("--ylabel", default="Reflectance", help="Y-axis label")
@@ -102,25 +94,26 @@ parser.add_argument("--mv4", help="remove wavelengths <400nm from Munsell spectr
 parser.add_argument("--mopt1", help="find optimal visual pigments for Munsell cards (dichromacy)", action="store_true")
 parser.add_argument("--mopt2", help="find optimal visual pigments for Munsell cards (trichromacy)", action="store_true")
 parser.add_argument("--mopt3", help="find L-M chromatic spread/overlap of Munsell cards", action="store_true")
-parser.add_argument("--convergence", type=float, default=1, help="cone-to-ganglion cell convergence ratio")
-parser.add_argument("--ff", type=float, default=22.4, help="flicker fusion frequency (Hz)")
-parser.add_argument("--osd", type=float, default=1.2, help="outer segment diameter (um)")
-parser.add_argument("--fl", type=float, default=6.81, help="focal length (mm)")
+parser.add_argument("--summation", type=float, default=1, help="spatial summation")
+parser.add_argument("--dt", type=float, default=1/22.4, help="integration time (s)")
+parser.add_argument("-d", "--osd", type=float, default=1, help="outer segment diameter (um)")
+parser.add_argument("-f", "--fl", type=float, default=6.81, help="focal length (mm)")
 parser.add_argument("--pupil", type=float, default=6, help="pupil diameter (mm)")
-parser.add_argument("--od", type=float, default=0.015, help="optical density of pigment (um^-1)")
-parser.add_argument("--osl", type=float, default=30, help="outer segment length (um)")
+parser.add_argument("-k", "--od", type=float, default=0.009, help="optical density of pigment (um^-1)")
+parser.add_argument("-l", "--osl", type=float, default=30, help="outer segment length (um)")
 parser.add_argument("--dist", type=float, default=5, help="distance from light source (cm)")
-parser.add_argument("--width", type=float, default=3.8, help="width of light/object (cm)")
-parser.add_argument("--height", type=float, default=0, help="height of light/object (cm)")
-parser.add_argument("--radius", type=float, default=1, help="radius of light source (cm)")
+parser.add_argument("--sdist", type=float, default=0, help="distance from stimulus (cm)")
+parser.add_argument("--width", type=float, default=0, help="width of stimulus (cm)")
+parser.add_argument("--height", type=float, default=0, help="height of stimulus (cm)")
+parser.add_argument("--square", help="make stimulus a square/rectangle instead of circle/ellipse", action="store_true")
 parser.add_argument("--watts", type=int, default=12, help="number of watts produced by light source")
+parser.add_argument("--subjects", type=int, default=1, help="number of subjects")
 parser.add_argument("--lux", type=int, default=115, help="illuminance in lux")
 parser.add_argument("--ct", type=int, default=2856, help="color temperature of incandescent/blackbody illuminant")
-parser.add_argument("--selfscreen", help="enable pigment self-screening (varying optical density)", action="store_true")
-parser.add_argument("--selfscreen1", help="enable pigment self-screening (simple version)", action="store_true")
+parser.add_argument("--selfscreen", help="add pigment self-screening", action="store_true")
 parser.add_argument("--warnings", help="show warnings", action="store_true")
 parser.add_argument("--cmf", help="color-matching functions", action="store_true")
-parser.add_argument("--primaries", nargs="+", type=int, default=[700, 546.1, 435.8, 0, 0], help="primary wavelengths for color-matching functions")
+parser.add_argument("--primaries", nargs="+", type=int, default=[-1], help="primary wavelengths for color-matching functions")
 parser.add_argument("-p", "--preset", help="use specified preset vision system", default="none")
 parser.add_argument("-v", "--verbose", help="", action="store_true")
 parser.add_argument("-i", "--image", default="none", help="path to input image")
@@ -143,17 +136,21 @@ for i in range(401): x_1nm[i] = i + 300
 
 # receptor peak sensitivities
 receptors = args.receptors
-rod = args.rod
 dimension = len(args.receptors)
 
 # Weber fractions
 wr1 = args.weber
-wr2 = wr1 * math.sqrt(args.r1p) / math.sqrt(args.r2p)
-wr3 = wr1 * math.sqrt(args.r1p) / math.sqrt(args.r3p)
-wr4 = wr1 * math.sqrt(args.r1p) / math.sqrt(args.r4p)
+# set number per receptive field to 1 when not specified
+rf = [1,1,1,1,1]
+for i in range(len(args.rf)): rf[i] = args.rf[i]
+wr2 = wr1 * math.sqrt(rf[0]) / math.sqrt(rf[1])
+wr3 = wr1 * math.sqrt(rf[0]) / math.sqrt(rf[2])
+wr4 = wr1 * math.sqrt(rf[0]) / math.sqrt(rf[3])
+wr5 = wr1 * math.sqrt(rf[0]) / math.sqrt(rf[4])
 if (args.weberr2 > 0): wr2 = args.weberr2
-if (args.weberr3 > 0): ws = args.weberr3
-if (args.weberr4 > 0): ws = args.weberr4
+if (args.weberr3 > 0): wr3 = args.weberr3
+if (args.weberr4 > 0): wr4 = args.weberr4
+if (args.weberr5 > 0): wr5 = args.weberr5
 
 # read CSV files
 # This function allows for using arbitrary CSV files as visual pigments, ocular media, illuminants,
@@ -263,6 +260,8 @@ if (args.media == "mouse"):
 	media_1nm = mouse_1nm
 	media_10nm = mouse_10nm
 elif (args.media == "human"):
+	# This uses an equation from Lamb (1995). Tabulated data are available
+	# from CVRL: http://www.cvrl.org/maclens.htm
 	for i in range(401):
 		w = i + 300
 		try:
@@ -305,7 +304,7 @@ def blackbody(w, t):
 # illuminants
 
 # D65 300-830 (CIE)
-d65_1nm = np.array([
+d65_all = np.array([
 	0.0341,
 	0.36014,
 	0.68618,
@@ -839,6 +838,9 @@ d65_1nm = np.array([
 	60.3125
 ])
 
+d65_1nm = np.empty(401)
+for i in range(401): d65_1nm[i] = d65_all[i]
+
 d65_10nm = np.empty(41)
 for i in range(41): d65_10nm[i] = d65_1nm[i*10]
 
@@ -877,10 +879,10 @@ energy = sigma * args.ct**4 #/ math.pi
 # then find the radiance we "should" have in terms of the sphere corresponding to
 # the distance we chose
 sphere_area = 4*math.pi*args.dist**2 # sphere surface area
-if (args.height > 0): area = args.width * args.height
-else: area = math.pi*(args.width/2)**2
-# steradians -- not divided by the whole sphere surface area, just the square of the radius
-sr = area / args.dist**2
+##if (args.height > 0): area = args.width * args.height
+##else: area = math.pi*(args.width/2)**2
+### steradians -- not divided by the whole sphere surface area, just the square of the radius
+##sr = area / args.dist**2
 watts_cm2 = args.watts / (sphere_area)
 watts_m2 = watts_cm2 * 100**2
 scale = watts_m2 / energy # scaling factor -- units should cancel (W/m^2)
@@ -1437,7 +1439,7 @@ integral of D65 x human photopic luminosity function
 The units we want at the end are W/m^2, so we multiply this by the lux-to-watts scaling
 factor for 555 nm (683.002 lm/W). This will end up on the bottom.
 """""
-integral = sum(d65_1nm * cie_luminosity) * 683.002
+integral = sum(d65_all * cie_luminosity) * 683.002
 
 # lux scaling factor (units = lx / lx/nm = nm)
 lxscale = args.lux / integral
@@ -1450,7 +1452,7 @@ lxscale = args.lux / integral
 d65_photons = np.empty(531)
 for i in range(d65_photons.shape[0]):
 	w = i + 300
-	d65_photons[i] = lxscale*1e-9*w*d65_1nm[i] / (h*c*math.pi)
+	d65_photons[i] = lxscale*1e-9*w*d65_all[i] / (h*c*math.pi)
 
 e_photons = np.empty(531)
 for i in range(e_photons.shape[0]):
@@ -1464,8 +1466,7 @@ wp_10nm = np.ones(41) * 100
 wp_1nm = np.ones(401) * 100
 if (args.white == "d65"):
 	wp_10nm = d65_10nm
-	wp_1nm = np.empty(401)
-	for i in range(401): wp_1nm[i] = d65_1nm[i]
+	wp_1nm = d65_1nm
 	wp_photons = d65_photons
 elif (args.white == "e"):
 	wp_10nm = e_10nm
@@ -2397,30 +2398,22 @@ def vpt(w, lmax):
 	except OverflowError:
 		if (args.warnings): print("Warning (vpt): OverflowError, clipping to 2.2250738585072014e-308")
 		return 2.2250738585072014e-308
-	
-	# self-screening (see The Optics of Life equation 4.12 and https://pmc.ncbi.nlm.nih.gov/articles/PMC3269789/)
-	# We have a problem: self-screening is described as broadening spectral sensitivity by
-	# reducing sensitivity at the peak, but this formula actually does the opposite. This
-	# happens because A(lambda) is defined as the result of the above equation and the larger
-	# values near the peak produce a smaller value for the exponential function (due to the
-	# negative sign), which is then subtracted from 1. It's correct that the highest optical
-	# density is found at the peak of visual pigment absorption, but higher density leads to
-	# less light being transmitted whereas this equation has less light transmitted at
-	# lower densities.
-	# This comes back to the issue of exactly what "optical density" represents and what unit
-	# it's measured in. For the Wratten filters, converting optical density to transmission
-	# is done with 10^-density. The self-screening equation is similar with e^-density but then
-	# subtracts that from 1, giving us an inverse relationship. On the other hand, increasing
-	# the peak density causes a broader curve, which is correct.
-	# Lamb (1995) uses a more complex formula: log10[1 - S(1 - 10^-d)]/(-D), where S is the
-	# pigment sensitivity/absorption. The key here seems to be dividing by the optical density
-	# as well as subtracting it. When we add this feature, we see the expected relationship.
+	"""
+	self-screening
+
+	For what self-screening is, see: https://pmc.ncbi.nlm.nih.gov/articles/PMC3269789/
+
+	This is the same as equation 4.12 from The Optics of Life (p. 110).
+	A similar equation is given in Lamb (1995): log10[1 - S(1 - 10^-D)]/(-D),
+	where S is the pigment absorption and D is the optical density. Here he's
+	dividing the log of sensitivity by the density, so the division isn't
+	really part of the sensitivity. I previously had a mistake where the
+	whole thing was multiplied by the non-screened value, which meant the
+	resulting curve was narrower rather than broader. Look again at the
+	official equations and you'll see we don't need to do this.
+	"""
 	value = alpha + beta
-	if (args.selfscreen):
-		return ((value * (1 - math.exp(-args.od*value*args.osl))) / (args.od*value*args.osl))
-	elif (args.selfscreen1):
-		return value * (1 - math.exp(-args.od*args.osl))
-	
+	if (args.selfscreen): return (1 - math.exp(-args.od*value*args.osl))
 	return value
 
 # presets
@@ -2475,7 +2468,7 @@ r2_1nm = np.zeros(401)
 r3_1nm = np.zeros(401)
 r4_1nm = np.zeros(401)
 r5_1nm = np.zeros(401)
-luminosity = np.empty(401)
+luminosity = np.ones(401)
 
 if (args.preset == "cie2"):
 	rlist = cie2
@@ -2493,13 +2486,9 @@ elif (args.rcsv != "none"):
 	for i in range(len(args.rcsv)):
 		rlist.append(csv2spec(args.rcsv[i]))
 else:
-	rod = args.rod
 	for i in range(401):
 		w = i+300
-		if (args.rod > 0):
-			luminosity[i] = (args.r1s*vpt(w, receptors[0]) + args.rs*vpt(w, rod)) * media_1nm[w-300]
-		else:
-			luminosity[i] = (args.r1s*vpt(w, receptors[0])) * media_1nm[w-300]
+		luminosity[i] = (args.r1s*vpt(w, receptors[0])) * media_1nm[w-300]
 
 	for i in range(dimension):
 		# whole list
@@ -2521,27 +2510,75 @@ r1_1nm = rlist[0]
 """
 CMFs (color-matching functions)
 
-The names "red", "green" and "blue" for the first 3 primaries have been
-removed, but the default values are still the CIE RGB primaries (700, 546.1
-and 435.8). Since the second two are not integers, they have to be rounded to
-546 and 436 so we can look up array indexes. (It's faster that way and probably
-doesn't matter for precision.)
+For how this works, see: https://horizon-lab.org/colorvis/cone2cmf.html
 
-Other recommended values for trichromatic primaries:
+In humans, CMFs are related to perception of "red", "green" and "blue"
+unique hues that derive from opponent processing, as mentioned here:
+https://pmc.ncbi.nlm.nih.gov/articles/PMC8084791/ The original human
+CMFs can be found at http://www.cvrl.org/.
+
+By default, the primary wavelengths will be automatically chosen as
+whichever are the closest to stimulating only one receptor type. This
+means they won't match what's best for a digital display because the
+longest and shortest ones tend to be placed way at the ends of the
+spectrum (limited to the range 300-700). All I care about here is the
+shape of the curves. They also don't directly relate to unique hues
+because the "corners" of human color space are closer to teal and violet
+than blue and green.
+
+Some recommended values for trichromatic primaries:
 * marsupials: 620, 450, 360 (Arrese et al. 2006 doi.org/10.1016/j.cub.2006.02.036)
 * humans/primates:
+** 700, 546.1, 435.8 (CIE 1931 https://en.wikipedia.org/wiki/CIE_1931_color_space#CIE_RGB_color_space)
 ** 630, 532, 467 (Rec. 2020 https://en.wikipedia.org/wiki/Rec._2020)
-** 610, 550, 465 (approximate dominant wavelengths of sRGB primaries: see https://en.wikipedia.org/wiki/File:SRGB_chromaticity_CIE1931.svg)
+** 612, 549, 465 (dominant wavelengths of sRGB primaries: see:
+*** https://en.wikipedia.org/wiki/File:SRGB_chromaticity_CIE1931.svg
+*** https://clarkvision.com/articles/color-spaces/
 ** other color spaces: see https://en.wikipedia.org/wiki/RGB_color_spaces
 
 Dichromatic, trichromatic, tetrachromatic and pentachromatic CMFs are supported.
 """
-# primaries
-p1 = round(args.primaries[0])
-p2 = round(args.primaries[1])
-if (len(args.primaries) > 2): p3 = round(args.primaries[2])
-if (len(args.primaries) > 3): p4 = round(args.primaries[3])
-if (len(args.primaries) > 4): p5 = round(args.primaries[4])
+if (args.cmf or (args.fcmode == 'cmf')):
+	# primaries
+	p1 = 0
+	p2 = 0
+	p3 = 0
+	p4 = 0
+	p5 = 0
+
+	# find "optimal" primaries
+	if (args.primaries[0] == -1):
+		r1_cur = 0
+		r2_cur = 0
+		r3_cur = 0
+		r1_max = 0
+		r2_max = 0
+		r3_max = 0
+		for i in range(401):
+			total = r1_1nm[i] + r2_1nm[i] + r3_1nm[i]
+			if (total > 0):
+				r1_cur = r1_1nm[i]/total
+				r2_cur = r2_1nm[i]/total
+				r3_cur = r3_1nm[i]/total
+			if (r1_cur > r1_max):
+				r1_max = r1_cur
+				p1 = i+300
+			if (r2_cur > r2_max):
+				r2_max = r2_cur
+				p2 = i+300
+			if (r3_cur > r3_max):
+				r3_max = r3_cur
+				p3 = i+300
+		if (args.verbose):
+			print("Optimized primary wavelengths: "
+				+ str(p1) + ", " + str(p2)
+				+ ", " + str(p3))
+	else:
+		p1 = round(args.primaries[0])
+		p2 = round(args.primaries[1])
+		if (len(args.primaries) > 2): p3 = round(args.primaries[2])
+		if (len(args.primaries) > 3): p4 = round(args.primaries[3])
+		if (len(args.primaries) > 4): p5 = round(args.primaries[4])
 
 def cmf():
 	if (dimension > 4):
@@ -2703,18 +2740,97 @@ def cmf():
 		
 	return matrix_cmf
 
+"""
+color opponency (sort of)
+
+Based on how it works in primates and zebrafish.
+* https://pmc.ncbi.nlm.nih.gov/articles/PMC11063829/
+* https://www.science.org/doi/full/10.1126/sciadv.abj6815
+
+I use CMFs as a starting point to create "red-green" (r-g) and
+"yellow-blue" ((r+g)-b) curves, then find matching sums of
+all receptor signals for each. If there are only two, it's
+really simple because we only have one curve (r1-r2). If there's a
+fourth one, I let it stand alone because zebrafish UV cones
+work like that. The r-g and y-b curves are actually the other
+way around (the "red" and "yellow" parts are negative) because
+they're supposed to represent the output of r2 and r3, as with
+zebrafish green and blue cones.
+
+This is also available as a false-color mode (--fcmode o). As you'd
+expect, it's fairly similar to --fcmode cmf.
+"""
+def cmf_o(matrix_cmf):
+	# adjust receptor signals
+	r1 = r1_1nm*media_1nm*wp_1nm
+	r2 = r2_1nm*media_1nm*wp_1nm
+	r3 = r3_1nm*media_1nm*wp_1nm
+	r4 = r4_1nm*media_1nm*wp_1nm
+	r1 /= sum(r1)
+	if (dimension > 1): r2 /= sum(r2)
+	if (dimension > 2): r3 /= sum(r3)
+	if (dimension > 3): r4 /= sum(r4)
+
+	# subtractive channels
+	row2minus1 = matrix_cmf[1] - matrix_cmf[0]
+	if (dimension > 2):
+		row3minus12 = matrix_cmf[2] - (matrix_cmf[0]+matrix_cmf[1])
+
+	def o_fit(xdata, a, b, c, d):
+		ydata = np.zeros(401)
+		for i in range(401):
+			ydata[i] = media_1nm[i]*(a*r1[i]+b*r2[i]+c*r3[i]+d*r4[i])
+		return ydata
+
+	matrix_o = []
+	popt1, pcov1 = scipy.optimize.curve_fit(o_fit, x_1nm, row2minus1, p0=[-1,1,0,0])
+	if (args.verbose): print("Coefficients for row (2-1): " + str(popt1))
+	if (dimension > 2):
+		popt2, pcov2 = scipy.optimize.curve_fit(o_fit, x_1nm, row3minus12, p0=[0,0,1,0])
+		if (args.verbose): print("Coefficients for row (3-(2+1)): " + str(popt2))
+	if (dimension > 3):
+		popt3, pcov3 = scipy.optimize.curve_fit(o_fit, x_1nm, matrix_cmf[3], p0=[0,0,0,1])
+		if (args.verbose): print("Coefficients for row 4: " + str(popt3))
+
+	if (dimension == 2):
+		o1 = media_1nm*(r1*popt1[0]+r2*popt1[1])
+		matrix_o.append(o1)
+	elif (dimension == 3):
+		o1 = media_1nm*(r1*popt1[0]+r2*popt1[1]+r3*popt1[2])
+		o2 = media_1nm*(r1*popt2[0]+r2*popt2[1]+r3*popt2[2])
+		matrix_o.append(o1)
+		matrix_o.append(o2)
+	elif (dimension > 3):
+		o1 = media_1nm*(r1*popt1[0]+r2*popt1[1]+r3*popt1[2]+r4*popt1[3])
+		o2 = media_1nm*(r1*popt2[0]+r2*popt2[1]+r3*popt2[2]+r4*popt2[3])
+		o3 = media_1nm*(r1*popt3[0]+r2*popt3[1]+r3*popt3[2]+r4*popt3[3])
+		matrix_o.append(o1)
+		matrix_o.append(o2)
+		matrix_o.append(o3)
+
+	return matrix_o
+
 if (args.cmf):
 	if (dimension < 2):
 		print("CMFs are not meaningful for monochromacy.")
 	else:
-		matrix_cmf = cmf()[0]
+		matrix_cmf = cmf()
 		# plot curves
-		plt.plot(x_1nm, matrix_cmf[0])
+		plt.plot(x_1nm, matrix_cmf[0], color='k')
 		if (dimension > 1): plt.plot(x_1nm, matrix_cmf[1], color='k')
 		if (dimension > 2): plt.plot(x_1nm, matrix_cmf[2], color='k')
 		if (dimension > 3): plt.plot(x_1nm, matrix_cmf[3], color='k')
 		if (dimension > 4): plt.plot(x_1nm, matrix_cmf[4], color='k')
 		plt.show()
+
+		matrix_o = cmf_o(matrix_cmf)
+		
+		plt.plot(x_1nm, matrix_o[0], 'k')
+		if (dimension > 2): plt.plot(x_1nm, matrix_o[1], 'k')
+		if (dimension > 3): plt.plot(x_1nm, matrix_o[2], 'k')
+		plt.plot([300,700], [0,0], ':r')
+		plt.show()
+		
 
 # gamma functions -- see https://en.wikipedia.org/wiki/Gamma_correction
 # The default value is -1 and produces a standard sRGB gamma. Set to 1 to disable.
@@ -2736,11 +2852,12 @@ def gamma_encode(v): # encoding
 
 """
 generate an RGB color from a spectral power distribution
+
 This can produce either a "true color" using colormath or a "false color"
 using the specified visual system. Out-of-gamut colors are scaled down if a
 value is more than 1 and clipped if a value is less than 0.
 """
-def spec2rgb(table, reflect=True, mode=args.fcmode):
+def spec2rgb(table, reflect=True, mode=args.fcmode, scale=1):
 	rgb_r = 0
 	rgb_g = 0
 	rgb_b = 0
@@ -2749,7 +2866,10 @@ def spec2rgb(table, reflect=True, mode=args.fcmode):
 	if(len(table) < 401): table = np.interp(x_1nm, x_10nm, table)
 	
 	# combine SPD with illuminant
-	if (reflect == True): table = table * wp_1nm
+	if (reflect):
+		# x *= y and x = x * y are different!
+		if (mode != 'none'): table = table * wp_1nm
+		#else: table = table * d65_1nm/100
 	
 	# remove nans
 	for i in range(table.shape[0]):
@@ -2772,39 +2892,66 @@ def spec2rgb(table, reflect=True, mode=args.fcmode):
 				wpr2 += r2_1nm[i] * wp_1nm[i] * media_1nm[i]
 				wpr3 += r3_1nm[i] * wp_1nm[i] * media_1nm[i]
 		
-			rgb_r = rgb_r / wpr1
-			rgb_g = rgb_g / wpr2
-			rgb_b = rgb_b / wpr3
+			rgb_r /= wpr1
+			if (wpr2 > 0): rgb_g /= wpr2
+			if (wpr3 > 0): rgb_b /= wpr3
+
+		# LMS->RGB
+		if (dimension < 3):
+			rgb_b = rgb_g
+			rgb_g = rgb_r
+		if (dimension < 2):
+			rgb_b = rgb_r
 
 		# gamma correction
 		rgb_r = gamma_encode(rgb_r)
 		rgb_g = gamma_encode(rgb_g)
 		rgb_b = gamma_encode(rgb_b)
 
-		# render
-		if (dimension == 2): rgb_g = rgb_r
-		rgb_tuple = (rgb_r, rgb_g, rgb_b)
-
-	elif (mode == "cmf"):
+	elif (mode == "cmf" or mode == 'o'):
 		# CMF
 		matrix_cmf = cmf()
-		for i in range(401):
+
+		if (mode == 'cmf'):
+			rgb_r = sum(matrix_cmf[0] * table)
 			if (dimension > 2):
-				rgb_r += matrix_cmf[0][i] * table[i]
-				rgb_g += matrix_cmf[1][i] * table[i]
-				rgb_b += matrix_cmf[2][i] * table[i]
+				rgb_g = sum(matrix_cmf[1] * table)
+				rgb_b = sum(matrix_cmf[2] * table)
 			elif (dimension == 2):
-				rgb_r += matrix_cmf[0][i] * table[i]
-				rgb_b += matrix_cmf[1][i] * table[i]
 				rgb_g = rgb_r
-		
+				rgb_b = sum(matrix_cmf[1] * table)
+		else:
+			matrix_o = cmf_o(matrix_cmf)
+			rg = np.zeros(401)
+			yb = np.zeros(401)
+			if (dimension > 2):
+				rg = matrix_o[0] * table
+				yb = matrix_o[1] * table
+			elif (dimension == 2):
+				yb = matrix_o[0] * table
+			for i in range(401):
+				rgb_r -= (rg[i] + min(yb[i], 0))
+				rgb_g += (rg[i] - min(yb[i], 0))
+				rgb_b += max(yb[i], 0)
+
+			# luminance
+			lum_out = 0.2126729*rgb_r+0.7151522+rgb_g+0.0721750*rgb_b
+			lum_in = sum(luminosity*table) / (sum(luminosity*wp_1nm))
+			rgb_r *= lum_in/lum_out
+			rgb_g *= lum_in/lum_out
+			rgb_b *= lum_in/lum_out
+
+			# shift toward white
+			overflow = max(rgb_r,rgb_g,rgb_b,1) - 1
+			if (overflow > 0):
+				rgb_r = min(1,rgb_r+overflow/3)
+				rgb_g = min(1,rgb_g+overflow/3)
+				rgb_b = min(1,rgb_b+overflow/3)
+				
 		# gamma correction
 		rgb_r = gamma_encode(rgb_r)
 		rgb_g = gamma_encode(rgb_g)
 		rgb_b = gamma_encode(rgb_b)
-
-		# render
-		rgb_tuple = (rgb_r, rgb_g, rgb_b)
 	
 	else:
 		# colormath true color
@@ -2860,25 +3007,23 @@ def spec2rgb(table, reflect=True, mode=args.fcmode):
 		spec_830nm=0,
 		illuminant='d65')
 		
-		# If an illuminant is set, we'll also set it here. Note that
-		# colormath only adapts the CMFs, so we've already adjusted it.
-		if (args.white == 'd65'):
-			spectral.set_illuminant('d65')
-		elif (args.white == 'a' or args.white == 'i'):
-			spectral.set_illuminant('a')
-		elif (args.white == 'e'):
-			spectral.set_illuminant('e')
-		
 		srgb = convert_color(spectral, sRGBColor)
 		rgb_tuple = srgb.get_value_tuple()
 		rgb_r = rgb_tuple[0]
 		rgb_g = rgb_tuple[1]
 		rgb_b = rgb_tuple[2]
+
+	# scale
+	rgb_r *= scale
+	rgb_g *= scale
+	rgb_b *= scale
+	rgb_tuple = (rgb_r, rgb_g, rgb_b)
 	
 	if (args.verbose):
 		print("Mode: " + mode)
 		print("RGB: " + str(rgb_tuple))
 
+	# prevent out-of-gamut colors -- matplotlib doesn't accept them
 	rgb_max = max(*rgb_tuple,1)
 	rgb_min = min(*rgb_tuple)
 	if ((rgb_max > 1 or rgb_min < 0) and args.warnings):
@@ -2888,14 +3033,161 @@ def spec2rgb(table, reflect=True, mode=args.fcmode):
 	return(rgb_tuple)
 
 """
+quantum noise
+
+Based on these equations:
+* https://journals.biologists.com/jeb/article/218/2/184/14274/Bird-colour-vision-behavioural-thresholds-reveal
+* https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5043323/
+* https://www.ncbi.nlm.nih.gov/pmc/articles/PMC1691374/pdf/12816638.pdf
+* The Optics of Life, p. 107-112
+
+Meaning of variables:
+* v: number of cones per receptive field (spatial summation)
+* d: receptor diameter (um)
+* f: focal length (um, cancels d)
+* D: pupil diameter (um)
+* O/Ai/T: transmittance of ocular media ("Ai" is for oil droplets).
+This is built in by multiplying by the ocular media array we
+created earlier.
+* T/dt: integration time (ms), inverse of flicker fusion frequency
+(Hz)
+* ui/k: optical density of pigment (um^-1)
+* l: length of outer segment (um, cancels ui)
+
+This set of variables is (more or less) standard. Terms used in
+some papers that I don't include are oil droplets, refractive
+indices, dark noise, retinal area covered by cones, and degrees
+of the visual field covered by the stimulus. We don't know
+enough about the first three here, and the term for visual
+angle is usually set as the angle of a single receptive field
+determined by the focal length and receptor width. (The (pi/4)^2
+comes from this and the pupil size.) For flexibility, I've also
+added the option to do it the other way by setting --width and
+--dist (and optionally --height). In this case --summation
+should be set to the retinal area covered by cones. (The
+absolute retinal area isn't relevant.)
+
+The units are confusing: the radiance looks like it has units of
+photons/m^3/s/sr, but the "cubic meters" are really per square
+meter per wavelength (nm). See The Optics of Life p. 14 and 112
+and this StackExchange question:
+https://physics.stackexchange.com/questions/690117/what-does-spectral-flux-density-mean-per-wavelength
+The Optics of Life advises to multiply the integral by the
+wavelength interval, i.e. the bin size, if you find it as a sum
+like I do here. This step isn't necessary because we interpolate
+to 1 nm so the bin size is 1.
+
+These are the estimates I'm currently using. Where necessary,
+I've converted centimeters, millimeters and micrometers to meters.
+
+* dt = 1/22.4: 22.4 Hz = 45 ms, brushtail possum (Signal, Temple & Foster 2011)
+* d = 1 / 1000000: 1 um, Didelphis virginiana (Walls 1939)
+** This is the width given for rod outer segments (p. 79). Walls doesn't
+give the exact width of cones but says "The outer segment is
+filamentous, even more slender than that of a rod" (p. 82). He only
+describes the width of oil-droplet single cones, so I'm inferring
+other cones are similar. In Marmosa mexicana, though, droplet-free
+single cones are supposed to be wider.
+** Rod width is also confirmed by Kolb & Wang (1985). We don't have the
+width of cone outer segments because they cut through at the inner
+segment.
+* f = 6.81 / 1000: Didelphis aurita (Oswaldo-Cruz, Hokoc & Sousa 1979)
+* D = 6 / 1000: Didelphis aurita (")
+* k = 0.009: honey possum (Arrese et al. 2002)
+* l = 30: Didelphis aurita (Ahnelt et al. 1995)
+* K = 0.5 (see The Optics of Life)
+
+Values provided for size:
+* 3.8 cm circle (Friedman 1967)
+** No distance, they could get as close as they wanted. The choice chamber
+was 60 cm long, but there's no mention of a divider.
+* 12.5 x 7.5 cm rectangle (Gutierrez et al. 2011)
+** As above. We're also told the windows were 19.4 cm apart, which would have
+been the limit on comparing them.
+
+Some values for other species for comparison:
+
+* area of retina: 1094 mm^2 (human), 80 (rat; Mayhew & Astle 1997), 450 (cat;
+Vaney 1985)
+* total number of cones: ~6 million (human)
+* outer segment length: 30 um (chicken), 6.2 um (cat; Fisher, Pfeffer & Anderson
+1983), 7 um (gray squirrel; "), 25.1-40 um (human), 15.2 um (goldfish red single
+cones, Harosi & Flamarique 2012), 5 um (tammar wallaby and fat-tailed dunnart;
+Ebeling, Natoli & Hemmi 2010)
+* outer segment width: 1.73 um (chicken), 6.1 um (goldfish red single
+cones), 1.2 um (mouse; Nikonov et al. 2006, Fu & Yau 2007)
+* optical density: 0.015 (coral reef triggerfish, birds)
+* focal length: 8300 um = 8.3 mm (chickens), 2.6 mm (mouse; Geng et al. 2011),
+22.3 mm (human; "), 2.5 mm (triggerfish)
+* pupil size: 4900-3500 um = 4.9-3.5 mm (chicken), 2 mm (mouse), 6 mm (human)
+* transmittance of ocular media: 80% (general estimate from The Optics of Light)
+* integration time/flicker fusion: 50-12 ms = 20-83 Hz (chicken),
+70-80 Hz = 14-12 ms (cat and dog), 18 Hz = 56 ms (rat; Gil, Valente & Shemesh 2024),
+14 Hz = 71 ms (mouse; "), 60 Hz = 17 ms (human), 25 Hz = 40 ms (some fish)
+
+There was a mistake in here. The formula already includes the absorption
+curve (p. 110, 4.12), but then I added it a second time. Look at the final
+equation again (p. 111, 4.13). This means we only need the sensitivity array
+and k and l can be folded in to it.
+"""
+abs_r1 = np.zeros(401)
+abs_r2 = np.zeros(401)
+abs_r3 = np.zeros(401)
+abs_r4 = np.zeros(401)
+abs_r5 = np.zeros(401)
+
+def abs_catch(w, r, rf):
+	v = args.summation
+	d = args.osd / 1000000
+	f = args.fl / 1000
+	D = args.pupil / 1000
+	K = 0.5
+	dt = args.dt
+##	k = args.od
+##	l = args.osl
+
+	# solid angle
+	if (args.width == 0): # receptor
+		R = ((d/f)**2)*(math.pi/4)
+	else: # stimulus
+		if (args.height == 0):
+			R = (args.width**2)/(args.sdist**2)
+		else:
+			R = args.width*args.height/(args.sdist**2)
+		if (not args.square): R *= math.pi
+
+	i = w-300
+	aq = (math.pi/4)*(R**2)*(D**2)*K*dt*r[i] * wp_photons[i] * media_1nm[i]
+
+	"""
+	Set the number of receptors per receptive field and degree of
+	convergence/spatial summation. By default, the number is
+	taken from the list given to the rf (receptive field)
+	argument. Setting --summation to a nonzero number
+	multiplies the catches by that, and setting it to 0
+	sets the receptor numbers to 1 (for the catches but not the
+	Weber fractions).
+	"""
+	if (v != 0): aq *= v*rf
+	
+	return aq
+
+# fill arrays
+for i in range(401):
+	w = i+300
+	abs_r1[i] = abs_catch(w, r1_1nm, rf[0])
+	if (dimension > 1): abs_r2[i] = abs_catch(w, r2_1nm, rf[1])
+	if (dimension > 2): abs_r3[i] = abs_catch(w, r3_1nm, rf[2])
+	if (dimension > 3): abs_r4[i] = abs_catch(w, r4_1nm, rf[3])
+	if (dimension > 4): abs_r5[i] = abs_catch(w, r5_1nm, rf[4])
+
+"""
 contrast sensitivity (Vorobyev and Osorio (1998); Vorobyev and Osorio (2001))
+
 Without quantum noise, this tends to make unrealistic predictions when the value
 for one or more cone signals is very small.
 """
-def color_contrast(table1, table2, quantum_noise=args.qn, r1 = r1_1nm, r2 = r2_1nm, r3 = r3_1nm, r4 = r4_1nm):
-	if (dimension > 4):
-		print("Warning: color_contrast() does not support dimensions "
-		      + "higher than 4. Any receptors after r4 will be ignored.")
+def color_contrast(table1, table2, quantum_noise=args.qn, r1=r1_1nm, r2=r2_1nm, abs1_r1=abs_r1, abs1_r2=abs_r2):
 	# interpolate 1-nm intervals if we're provided with 10-nm
 	if (len(table1) < 401): table1 = np.interp(x_1nm, x_10nm, table1)
 	if (len(table2) < 401): table2 = np.interp(x_1nm, x_10nm, table2)
@@ -2905,226 +3197,133 @@ def color_contrast(table1, table2, quantum_noise=args.qn, r1 = r1_1nm, r2 = r2_1
 	wpr2 = 0
 	wpr3 = 0
 	wpr4 = 0
+	wpr5 = 0
 	
 	qr11 = 0
 	qr21 = 0
 	qr31 = 0
 	qr41 = 0
+	qr51 = 0
 	qr12 = 0
 	qr22 = 0
 	qr32 = 0
 	qr42 = 0
+	qr52 = 0
 	for i in range(table1.shape[0]):
 		if (table1[i] > 0): # zero/nan check
 			qr11 += r1[i] * table1[i] * wp_1nm[i] * media_1nm[i]
 			qr21 += r2[i] * table1[i] * wp_1nm[i] * media_1nm[i]
-			qr31 += r3[i] * table1[i] * wp_1nm[i] * media_1nm[i]
-			qr41 += r2[i] * table1[i] * wp_1nm[i] * media_1nm[i]
+			qr31 += r3_1nm[i] * table1[i] * wp_1nm[i] * media_1nm[i]
+			qr41 += r4_1nm[i] * table1[i] * wp_1nm[i] * media_1nm[i]
+			qr51 += r5_1nm[i] * table1[i] * wp_1nm[i] * media_1nm[i]
+		else: table1[i] = 0 # replace nans and negative numbers with 0
 		wpr1 += r1[i] * wp_1nm[i] * media_1nm[i]
 		wpr2 += r2[i] * wp_1nm[i] * media_1nm[i]
-		wpr3 += r3[i] * wp_1nm[i] * media_1nm[i]
-		wpr4 += r2[i] * wp_1nm[i] * media_1nm[i]
+		wpr3 += r3_1nm[i] * wp_1nm[i] * media_1nm[i]
+		wpr4 += r4_1nm[i] * wp_1nm[i] * media_1nm[i]
+		wpr5 += r5_1nm[i] * wp_1nm[i] * media_1nm[i]
 	for i in range(table2.shape[0]):
 		w = i + 300
 		if (table2[i] > 0):
 			qr12 += r1[i] * table2[i] * wp_1nm[i] * media_1nm[i]
 			qr22 += r2[i] * table2[i] * wp_1nm[i] * media_1nm[i]
-			qr32 += r3[i] * table2[i] * wp_1nm[i] * media_1nm[i]
-			qr42 += r2[i] * table2[i] * wp_1nm[i] * media_1nm[i]
+			qr32 += r3_1nm[i] * table2[i] * wp_1nm[i] * media_1nm[i]
+			qr42 += r4_1nm[i] * table2[i] * wp_1nm[i] * media_1nm[i]
+			qr52 += r5_1nm[i] * table2[i] * wp_1nm[i] * media_1nm[i]
+		else: table2[i] = 0
 	
 	# normalize
 	if (args.vonkries):
 		qr11 = qr11 / wpr1
-		qr21 = qr21 / wpr2
-		qr31 = qr31 / wpr3
-		qr41 = qr41 / wpr4
+		if (dimension > 1): qr21 = qr21 / wpr2
+		if (dimension > 2): qr31 = qr31 / wpr3
+		if (dimension > 3): qr41 = qr41 / wpr4
+		if (dimension > 4): qr51 = qr51 / wpr5
 		qr12 = qr12 / wpr1
-		qr22 = qr22 / wpr2
-		qr32 = qr32 / wpr3
-		qr42 = qr42 / wpr4
+		if (dimension > 1): qr22 = qr22 / wpr2
+		if (dimension > 2): qr32 = qr32 / wpr3
+		if (dimension > 3): qr42 = qr42 / wpr4
+		if (dimension > 4): qr52 = qr52 / wpr5
 	
 	# differences
 	dfr1 = math.log(qr11 / qr12)
 	dfr2 = math.log(qr21 / qr22)
-	dfr3 = math.log(qr31 / qr32)
-	dfr4 = math.log(qr41 / qr42)
+	if (dimension > 2): dfr3 = math.log(qr31 / qr32)
+	if (dimension > 3): dfr4 = math.log(qr41 / qr42)
+	if (dimension > 4): dfr5 = math.log(qr51 / qr52)
 	
-	# quantum noise (needs work)
-	# Based on these equations:
-	# https://journals.biologists.com/jeb/article/218/2/184/14274/Bird-colour-vision-behavioural-thresholds-reveal
-	# https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5043323/
-	# https://www.ncbi.nlm.nih.gov/pmc/articles/PMC1691374/pdf/12816638.pdf
+	# quantum noise
 	if (quantum_noise):
-		# v: number of cones per receptive field (spatial summation)
-		# d: receptor diameter (um)
-		# f: focal length (um, cancels d)
-		# D: pupil diameter (um)
-		# O/Ai: transmittance of ocular media. "Ai" is for oil droplets, so we don't need it
-		# because marsupial oil droplets are transparent.
-		# T: integration time (ms), inverse of flicker fusion frequency (Hz)
-		# ui/k: optical density of pigment (um^-1)
-		# l: length of outer segment (um, cancels ui)
-		# I tried to keep this as simple as possible to avoid making too many assumptions,
-		# since almost none of the relevant information is available for any opossum
-		# species, so the equation I use is equivalent to the "simple model" without
-		# any terms for refractive indices or oil droplets. This means it probably
-		# produces overestimates. Including oil droplets would be more complicated than
-		# in birds or fish because in opossums there are separate classes of cones with
-		# and without them.
-		# I'm not sure how the units work. The amount of light going in should have units
-		# of photons/m^3/s/sr, and the value we get should have just photons, so we need
-		# to have units of m^3*s*sr for the product of these terms. I understand where
-		# s and sr come from (integration time and size/distance), but what about meters?
-		# All the terms with meters cancel out except for D, which is squared and gives us
-		# m^2. Where's the other meter term? According to the Yale page and Vorobyev (2003),
-		# the photons are not really expressed in cubic meters but in square meters "per
-		# wavelength" with the wavelength part given as nanometers or micrometers, which
-		# reduces the number by a factor of 1e-9 or 1e-6 and implies we have some extra
-		# term that cancels this unit. Do we multiply it by the wavelength?
-		# The answers to this StackExchange question says the missing term is the range of
-		# wavelengths being integrated over: https://physics.stackexchange.com/questions/690117/what-does-spectral-flux-density-mean-per-wavelength We're doing this one wavelength at
-		# a time, so this term would be 1 nm (I think) and we can then ignore it
-		# aside from the units and order of magnitude.
-		# According to The Optics of Life, the "per nanometer" unit is there because
-		# the energy/photons are binned into 1-nm intervals. In this case we're using
-		# 10 nm intervals, which would suggest we should multiply (or divide?) by 10 nm,
-		# but this probably isn't needed because at the end I multiply the sum by 600 nm
-		# (value of dλ, the whole range). Without the 600 nm the numbers look way too
-		# small. (Never mind, I'm pretty sure this was wrong)
-		
-		# Estimates used:
-		# Where necessary, I've converted centimeters, millimeters and micrometers to meters.
-		# v = 3000 * 450: cone density for Didelphis aurita (Ahnelt et al. 2009), retinal
-		# area for cats (Vaney 1985). This number is probably an overestimate because
-		# 3000/mm^2 is the maximum density, not the average density. (Not needed, see
-		# above)
-		# * The retinal area in D. virginiana is 100-180 (Kolb & Wang 1985), so they
-		# have smaller eyes than cats. Not sure how you derive the axial/focal length
-		# from this. (never mind, we have it)
-		# v = 3: cone to ganglion cell convergence in D. virginiana, finally the right
-		# species for once (Kolb & Wang, 1985; cited in Vlahos et al. 2014) now how do
-		# I turn this into radians? (You don't, you already have the angle from the
-		# d/f term. It's basically the same as increasing d.) I don't know if this applies
-		# to all cone classes equally or if some are more convergent than others. The
-		# chicken study seems to assume the latter. With the greater sparsity of S cones,
-		# surely connecting three of them to one ganglion cell and excluding L cones
-		# from that connection would be more difficult.
-		# dt = 1/22.4: 22.4 Hz = 45 ms, brushtail possum (Signal, Temple & Foster 2011)
-		# d = 1.2 / 1000000: 1.2 um, mice (Nikonov et al. 2006, Fu & Yau 2007)
-		# f = 6.81 / 1000: Didelphis aurita (Oswaldo-Cruz, Hokoc & Sousa 1979)
-		# D = 6 / 1000: Didelphis aurita (")
-		# O: mouse (see the lens filter functions)
-		# k = 0.015: mice (Yin et al. 2013)
-		# l = 30: Didelphis aurita (Ahnelt et al. 1995)
-		# sphere = 4*math.pi*5**2: the filters were located 5 cm away from the light bulbs
-		# sr = math.pi*3.8**2 / sphere: 3.8 cm diameter circle (oops, this is wrong, it's
-		# diameter not radius -- divide by 2) (this was still wrong, a sphere has 4pi
-		# steradians not 1) (also we don't need this at all)
-		# K = 0.5 (see The Optics of Life)
-		
-		# Some values for other species for comparison:
-		# area of retina: 1094 mm^2 (human), 80 mm^2 (rat; Mayhew & Astle 1997)
-		# total number of cones: ~6 million (human)
-		# outer segment length: 30 um (chicken), 6.2 um (cat; Fisher, Pfeffer & Anderson
-		# 1983), 7 um (gray squirrel; "), 20 um (honey possum), 25.1-40 um (human),
-		# 15.2 um (goldfish red single cones, Harosi & Flamarique 2012), 5 um (tammar
-		# wallaby and fat-tailed dunnart; Ebeling, Natoli & Hemmi 2010)
-		# outer segment width: 1.73 um (chicken), 6.1 um (goldfish red single cones)
-		# optical density: 0.015 (coral reef triggerfish, birds)
-		# focal length: 8300 um = 8.3 mm (chickens), 2.6 mm (mice; Geng et al. 2011),
-		# 22.3 mm (human; "), 2.5 mm (triggerfish)
-		# pupil size: 4900-3500 um = 4.9-3.5 mm (chicken), 2 mm (mouse), 6 mm (human)
-		# transmittance of ocular media: 80% (general estimate from The Optics of Light)
-		# integration time/flicker fusion: 50-12 ms = 20-83 Hz (chicken),
-		# 70-80 Hz = 14-12 ms (cat and dog), 18 Hz = 56 ms (rat; Gil, Valente & Shemesh 2024),
-		# 14 Hz = 71 ms (mice; "), 60 Hz = 17 ms (human), 25 Hz = 40 ms (some fish)
-		
-		v = args.convergence
-		d = args.osd / 1000000
-		f = args.fl / 1000
-		D = args.pupil / 1000
-		K = 0.5
-		dt = 1 / args.ff
-		k = args.od
-		l = args.osl
-		# We've already calculated the steradians elsewhere, so we won't do it again.
-		# Actually forget the steradians. (pi/4)(d/f)^2 is an angle, so we already have
-		# it. The size of the visual stimulus isn't supposed to be in there.
-		
-		# lens filtering scaling factor
-		#T = 0.8 / ocular_media(700)
-		#T = 1 / ocular_media(700) # set to 1 at 700 nm
-		T = 1
-	
-		aqr11 = 0
-		aqr21 = 0
-		aqr31 = 0
-		aqr41 = 0
-		aqr12 = 0
-		aqr22 = 0
-		aqr32 = 0
-		aqr42 = 0
-		for i in range(table1.shape[0]):
-			w = i + 300
-			if (table1[i] > 0):
-				aqr11 += (math.pi/4)**2*(d / f)**2*D**2*K*T*dt*(1 - math.exp(-k*r1[i]*l)) * r1[i] * table1[i] * wp_photons[i] * media_1nm[i]
-				aqr21 += (math.pi/4)**2*(d / f)**2*D**2*K*T*dt*(1 - math.exp(-k*r2[i]*l)) * r2[i] * table1[i] * wp_photons[i] * media_1nm[i]
-				aqr31 += (math.pi/4)**2*(d / f)**2*D**2*K*T*dt*(1 - math.exp(-k*r3[i]*l)) * r3[i] * table1[i] * wp_photons[i] * media_1nm[i]
-				aqr41 += (math.pi/4)**2*(d / f)**2*D**2*K*T*dt*(1 - math.exp(-k*r4[i]*l)) * r4[i] * table1[i] * wp_photons[i] * media_1nm[i]
-		for i in range(table2.shape[0]):
-			w = i + 300
-			if (table2[i] > 0):
-				aqr12 += (math.pi/4)**2*(d / f)**2*D**2*K*T*dt*(1 - math.exp(-k*r1[i]*l)) * r1[i] * table2[i] * wp_photons[i] * media_1nm[i]
-				aqr22 += (math.pi/4)**2*(d / f)**2*D**2*K*T*dt*(1 - math.exp(-k*r2[i]*l)) * r2[i] * table2[i] * wp_photons[i] * media_1nm[i]
-				aqr32 += (math.pi/4)**2*(d / f)**2*D**2*K*T*dt*(1 - math.exp(-k*r3[i]*l)) * r3[i] * table2[i] * wp_photons[i] * media_1nm[i]
-				aqr42 += (math.pi/4)**2*(d / f)**2*D**2*K*T*dt*(1 - math.exp(-k*r4[i]*l)) * r4[i] * table2[i] * wp_photons[i] * media_1nm[i]
-		
-		# This defines "number of cones per receptive field" to mean the convergence
-		# ratio for each type of cone. This can in fact be less than 1 (see Vlahos
-		# et al. 2014). For example, if 90% of cones are L cones, 10% are S cones
-		# and the cone-to-ganglion cell ratio is 3:1, there are 2.7 L cones and
-		# 0.3 S cones for every ganglion cell. I don't know if this is really what
-		# that means, though. Does 1 receptive field = 1 ganglion cell?
-		# Redoing this again so the minimum is 1, which is how it was done for
-		# chickens and honey possums. The default for v is now "1". Setting it to 0
-		# disables this feature.
-		if (v != 0):
-			aqr11 = aqr11*v*args.r1p
-			aqr12 = aqr12*v*args.r1p
-			aqr21 = aqr21*v*args.r2p
-			aqr22 = aqr22*v*args.r2p
-			aqr31 = aqr31*v*args.r3p
-			aqr32 = aqr32*v*args.r3p
-			aqr41 = aqr41*v*args.r4p
-			aqr42 = aqr42*v*args.r4p
+		aqr11 = sum(abs1_r1 * table1)
+		aqr21 = sum(abs1_r2 * table1)
+		aqr31 = sum(abs_r3 * table1)
+		aqr41 = sum(abs_r4 * table1)
+		aqr51 = sum(abs_r5 * table1)
+		aqr12 = sum(abs1_r1 * table2)
+		aqr22 = sum(abs1_r2 * table2)
+		aqr32 = sum(abs_r3 * table2)
+		aqr42 = sum(abs_r4 * table2)
+		aqr52 = sum(abs_r5 * table2)
 		
 		er1 = math.sqrt((1 / aqr11 + 1 / aqr12) + 2*wr1**2)
 		er2 = math.sqrt((1 / aqr21 + 1 / aqr22) + 2*wr2**2)
-		er3 = math.sqrt((1 / aqr31 + 1 / aqr32) + 2*wr3**2)
-		er4 = math.sqrt((1 / aqr41 + 1 / aqr42) + 2*wr4**2)
+		if (dimension > 2): er3 = math.sqrt((1 / aqr31 + 1 / aqr32) + 2*wr3**2)
+		if (dimension > 3): er4 = math.sqrt((1 / aqr41 + 1 / aqr42) + 2*wr4**2)
+		if (dimension > 4): er5 = math.sqrt((1 / aqr51 + 1 / aqr52) + 2*wr5**2)
 		
 		if (args.verbose):
-			print("r11: " + str(aqr11) + ", r21: " + str(aqr21)
-			+ ", r31: " + str(aqr31) + ", r41: " + str(aqr41))
-			print("r12: " + str(aqr12) + ", r22: " + str(aqr22)
-			+ ", r32: " + str(aqr32) + ", r42: " + str(aqr42))
-			print("er1: " + str(er1) + ", er2: " + str(er2)
-			+ ", er3: " + str(er3) + ", er4: " + str(er4))
-			print("wr1: " + str(wr1) + ", wr2: " + str(wr2)
-			+ ", wr3: " + str(wr3) + ", wr4: " + str(wr4))
+			catch1 = "Absolute catch (1): r1=" + str(aqr11) + ", r2=" + str(aqr21)
+			catch2 = "Absolute catch (2): r1=" + str(aqr12) + ", r2=" + str(aqr22)
+			noise = "Noise terms: er1=" + str(er1) + ", er2=" + str(er2)
+			weber = "Weber fractions: wr1=" + str(wr1) + ", wr2=" + str(wr2)
+
+			if (dimension > 2):
+				catch1 += ", r3=" + str(aqr31)
+				catch2 += ", r3=" + str(aqr32)
+				noise += ", er3=" + str(er3)
+				weber += ", wr3=" + str(wr3)
+			if (dimension > 3):
+				catch1 += ", r4=" + str(aqr41)
+				catch2 += ", r4=" + str(aqr42)
+				noise += ", er4=" + str(er4)
+				weber += ", wr4=" + str(wr4)
+			if (dimension > 4):
+				catch1 += ", r5=" + str(aqr51)
+				catch2 += ", r5=" + str(aqr52)
+				noise += ", er5=" + str(er5)
+				weber += ", wr5=" + str(wr5)
+
+			print(catch1)
+			print(catch2)
+			print(noise)
+			print(weber)
 	else:
 		er1 = wr1
 		er2 = wr2
 		er3 = wr3
 		er4 = wr4
+		er5 = wr5
 	
-	if (dimension > 3):
+	if (dimension > 4): # This has not been published but would be the logical extension
+		delta_s = ((er3*er4*er5)**2*(dfr1 - dfr2)**2
+		+ (er2*er4*er5)**2*(dfr1 - dfr3)**2
+		+ (er2*er3*er5)**2*(dfr1 - dfr4)**2
+		+ (er2*er3*er4)**2*(dfr1 - dfr5)**2
+		+ (er1*er4*er5)**2*(dfr2 - dfr3)**2
+		+ (er1*er3*er5)**2*(dfr2 - dfr4)**2
+		+ (er1*er3*er4)**2*(dfr2 - dfr5)**2
+		+ (er1*er2*er5)**2*(dfr3 - dfr4)**2
+		+ (er1*er2*er4)**2*(dfr3 - dfr5)**2) / ((er1*er2*er3*er4)**2
+		+ (er1*er2*er3*er5)**2 + (er1*er2*er4*er5)**2
+		+ (er1*er3*er4*er5)**2 + (er2*er3*er4*er5)**2)
+	elif (dimension == 4):
 		delta_s = ((er3*er4)**2*(dfr1 - dfr2)**2
 		+ (er2*er4)**2*(dfr1 - dfr3)**2
 		+ (er2*er3)**2*(dfr1 - dfr4)**2
 		+ (er1*er4)**2*(dfr2 - dfr3)**2
 		+ (er1*er3)**2*(dfr2 - dfr4)**2
-		+ (er1*er2)**2*(dfr3 - dfr4)**2) / ((er1*er2*er3)**2 + (er1*er2*er4)**2 + (er1*er3*er4)**2 + (er2*er3*er4)**2)
+		+ (er1*er2)**2*(dfr3 - dfr4)**2) / ((er1*er2*er3)**2 + (er1*er2*er4)**2
+		+ (er1*er3*er4)**2 + (er2*er3*er4)**2)
 	elif (dimension == 3):
 		delta_s = (er3**2*(dfr1 - dfr2)**2
 		+ er2**2*(dfr1 - dfr3)**2
@@ -3135,16 +3334,14 @@ def color_contrast(table1, table2, quantum_noise=args.qn, r1 = r1_1nm, r2 = r2_1
 
 # brightness contrast based on https://journals.biologists.com/jeb/article/207/14/2471/14748/Interspecific-and-intraspecific-views-of-color
 # I've changed it to a signed value because we care about the direction.
-def brightness_contrast(table1, table2, r1=luminosity):
+def brightness_contrast(table1, table2, r1=luminosity, compare=-1):
 	# interpolate 1-nm intervals if we're provided with 10-nm
 	if (len(table1) < 401): table1 = np.interp(x_1nm, x_10nm, table1)
 	if (len(table2) < 401): table2 = np.interp(x_1nm, x_10nm, table2)
 
-	q1 = 0
-	q2 = 0
-	for i in range(401):
-		q1 += r1[i] * table1[i] * wp_1nm[i]
-		q2 += r1[i] * table2[i] * wp_1nm[i]
+	q1 = sum(r1 * table1 * wp_1nm)
+	if (compare != -1): q2 = compare
+	else: q2 = sum(r1 * table2 * wp_1nm)
 	
 	df = math.log(q1 / q2)
 	delta_s = df / args.weberb # not an absolute value
@@ -3177,17 +3374,6 @@ black lines because the default set of Python colors can be counterintuitive
 and it's too awkward to assign colors to them that "make sense".
 """
 if (args.vpt):
-	# rod
-	if (args.rod != 0):
-		yvalues = np.empty(401)
-		ymax = 0
-		for i in range(401):
-			x_1nm[i] = i + 300
-			yvalues[i] = vpt(i+300, rod) * media_1nm[i]
-			ymax = max(ymax, yvalues[i])
-		plt.plot(x_1nm, yvalues/ymax, ':k')
-	
-	# non-rod receptors
 	for i in range(dimension):
 		yvalues = rlist[i] * media_1nm
 		ymax = max(*yvalues)
@@ -3227,8 +3413,13 @@ the left and S on top or the reverse. triangle() puts r1 on the right, r2 on
 the left and r3 on top and does not have labels by default. You can add any
 labels you want with the argument --labels.
 
-The name "triangle" is now slightly misleading because it produces a line or
-tetrahedron when provided with 2 or 4+ receptors.
+The name "triangle" is slightly misleading because it produces a line or
+tetrahedron when provided with 2 or 4+ receptors. For 5 receptors, the 4th
+dimension is shown with color, based on this code example:
+https://stackoverflow.com/questions/14995610/how-to-make-a-4d-plot-with-matplotlib-using-arbitrary-data
+This means the points can't have custom colors. The coloring is not applied to
+the visible gamut because the points would look like other points and the
+scale is defined by the range of data.
 
 Numbers are off by default because they overlap with everything and are almost
 unreadable.
@@ -3373,7 +3564,8 @@ def triangle(spectra=[], reflect=True, markers=[], colors=[], text=[], legend=Fa
 			wpr5 += r5_1nm[i] * wp_1nm[i] * media_1nm[i]
 		
 		for i in range(len(spectra)):
-			table = spectra[i]
+			# dummy multiplier to make sure we don't modify the original array
+			table = spectra[i]*1
 			table_r1 = 0
 			table_r2 = 0
 			table_r3 = 0
@@ -3384,7 +3576,7 @@ def triangle(spectra=[], reflect=True, markers=[], colors=[], text=[], legend=Fa
 			if(len(table) < 401): table = np.interp(x_1nm, x_10nm, table)
 			
 			# combine SPD with illuminant
-			if (reflect == True):
+			if (reflect):
 				for j in range(401): table[j] *= wp_1nm[j]
 			
 			# remove nans
@@ -3476,7 +3668,7 @@ def triangle(spectra=[], reflect=True, markers=[], colors=[], text=[], legend=Fa
 		ax.plot(*r3v, 'o', color='b')
 		ax.plot(*r4v, 'o', color='purple')
 	
-	if (axes == False): plt.axis('off')
+	if (not axes): plt.axis('off')
 	if (legend and dimension < 5): plt.legend()
 	plt.show()
 
@@ -3522,27 +3714,28 @@ distinguishable).
 This is now also used directly for optimization graphs, so all the parts
 relevant only to testing one set of pigments have been made conditional to
 reduce noise and computation.
+
+The running time of color_disc() and brightness_disc() is O(n^2) because we
+look at every possible combination. If we want to compare two sets of 4 colors,
+as in the above cases, we run through the nested for loop 16 times. There's
+no way to change this, so running time can only be cut down by changing what it
+does on each pass.
+
+The number of subjects can be factored in with --subjects to get the total
+number of trials completed by all of them. (I might could use a
+distributive numeral.) This doesn't make much difference for the above
+studies because they only had 2.
 """
-def color_disc(first, second, correct=35, trials=40, r1 = 0, r2 = 0, r3 = 0, output=True):
-	# custom receptors
-	custom_r1 = r1_1nm
-	custom_r2 = r2_1nm
-	custom_r3 = r3_1nm
-	if (r1 > 0):
-		for i in range(401): custom_r1[i] = vpt(i+300, r1)
-	if (r2 > 0):
-		for i in range(401): custom_r2[i] = vpt(i+300, r1)
-	if (r3 > 0):
-		for i in range(401): custom_r3[i] = vpt(i+300, r3)
-	plt.show()
+def color_disc(first, second, correct=35, trials=40, r1=r1_1nm, r2=r2_1nm, abs1_r1=abs_r1, abs1_r2=abs_r2, output=True):
 	d = 0 # different
 	s = 0 # same
 	counter = 0
-	box = np.empty(16)
+	combine = len(first)*len(second)
+	box = np.empty(combine)
 	
-	for i in range(4):
-		for j in range(4):
-			contrast = color_contrast(first[i], second[j], r1 = custom_r1, r2 = custom_r2, r3 = custom_r3)
+	for i in range(len(first)):
+		for j in range(len(second)):
+			contrast = color_contrast(first[i], second[j], r1=r1, r2=r2, abs1_r1=abs1_r1, abs1_r2=abs1_r2)
 			box[counter] = contrast
 			if (output):
 				print(str(i) + " vs. " + str(j) + ": " + str(contrast))
@@ -3552,8 +3745,8 @@ def color_disc(first, second, correct=35, trials=40, r1 = 0, r2 = 0, r3 = 0, out
 	if (output):
 		print("Different: " + str(d))
 		print("Same: " + str(s))
-		binomial = binomtest(correct, trials, p=(d + s/2)/16, alternative='greater')
-		binomial2 = binomtest(correct-1, trials, p=(d + s/2)/16, alternative='less')
+		binomial = binomtest(correct*args.subjects, trials*args.subjects, p=(d + s/2)/combine, alternative='greater')
+		binomial2 = binomtest((correct-1)*args.subjects, trials*args.subjects, p=(d + s/2)/combine, alternative='less')
 		print("P-value (success): " + str(binomial.pvalue))
 		print("P-value (failure): " + str(binomial2.pvalue))
 	
@@ -3571,29 +3764,28 @@ like color_disc except for brightness
 We want to know both the direction and the strength of the difference
 to judge whether it could be reliably used as a cue.
 """
-def brightness_disc(first, second, correct=35, trials=40, r1=0, output=True, customize=False):
-	# custom L cone
-	custom_r1 = luminosity
-	if (r1 > 0):
-		for i in range(401): custom_r1[i] = vpt(i+300, r1) * media_1nm[i]
+def brightness_disc(first, second, correct=35*args.subjects, trials=40*args.subjects, r1=luminosity, output=True, compare=[-1,-1,-1,-1]):
 	fb = 0 # first brighter
 	sb = 0 # second brighter
+	combine = len(first)*len(second)
 	# first set
-	for i in range(4):
+	for i in range(len(first)):
 		# second set
-		for j in range(4):
-			contrast = brightness_contrast(first[i], second[j], r1=custom_r1)
+		for j in range(len(second)):
+			contrast = brightness_contrast(first[i], second[j], r1=r1, compare=compare[j])
 			if (contrast >= 1): fb += 1
 			elif (contrast <= -1): sb += 1
-	equal = 16 - fb - sb
+	equal = combine - fb - sb
 	
-	binomial = binomtest(correct, trials, (max(fb, sb) + equal/2) / 16, alternative='greater')
-	binomial2 = binomtest(correct-1, trials, (max(fb, sb) + equal/2) / 16, alternative='less')
+	binomial = binomtest(correct*args.subjects, trials*args.subjects, (max(fb, sb) + equal/2) / combine, alternative='greater')
+	binomial2 = binomtest((correct-1)*args.subjects, trials*args.subjects, (max(fb, sb) + equal/2) / combine, alternative='less')
 	if (output):
 		print("First brighter: " + str(fb))
 		print("Second brighter: " + str(sb))
 		print("Equal: " + str(equal))
-		print("Expected % correct: " + str(100*(max(fb, sb) + equal/2) / 16) + "% (" + str(100*max(fb, sb) / 16) + "-" + str(100*(max(fb, sb) + equal) / 16) + "%)")
+		print("Expected % correct: " + str(100*(max(fb, sb) + equal/2) / combine)
+		      + "% (" + str(100*max(fb, sb) / combine)
+		      + "-" + str(100*(max(fb, sb) + equal) / combine) + "%)")
 		print("P-value (success): " + str(binomial.pvalue))
 		print("P-value (failure): " + str(binomial2.pvalue))
 		print("")
