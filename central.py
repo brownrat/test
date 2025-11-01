@@ -2756,9 +2756,6 @@ work like that. The r-g and y-b curves are actually the other
 way around (the "red" and "yellow" parts are negative) because
 they're supposed to represent the output of r2 and r3, as with
 zebrafish green and blue cones.
-
-This is also available as a false-color mode (--fcmode o). As you'd
-expect, it's fairly similar to --fcmode cmf.
 """
 def cmf_o(matrix_cmf):
 	# adjust receptor signals
@@ -2908,45 +2905,17 @@ def spec2rgb(table, reflect=True, mode=args.fcmode, scale=1):
 		rgb_g = gamma_encode(rgb_g)
 		rgb_b = gamma_encode(rgb_b)
 
-	elif (mode == "cmf" or mode == 'o'):
+	elif (mode == "cmf"):
 		# CMF
 		matrix_cmf = cmf()
 
-		if (mode == 'cmf'):
-			rgb_r = sum(matrix_cmf[0] * table)
-			if (dimension > 2):
-				rgb_g = sum(matrix_cmf[1] * table)
-				rgb_b = sum(matrix_cmf[2] * table)
-			elif (dimension == 2):
-				rgb_g = rgb_r
-				rgb_b = sum(matrix_cmf[1] * table)
-		else:
-			matrix_o = cmf_o(matrix_cmf)
-			rg = np.zeros(401)
-			yb = np.zeros(401)
-			if (dimension > 2):
-				rg = matrix_o[0] * table
-				yb = matrix_o[1] * table
-			elif (dimension == 2):
-				yb = matrix_o[0] * table
-			for i in range(401):
-				rgb_r -= (rg[i] + min(yb[i], 0))
-				rgb_g += (rg[i] - min(yb[i], 0))
-				rgb_b += max(yb[i], 0)
-
-			# luminance
-			lum_out = 0.2126729*rgb_r+0.7151522+rgb_g+0.0721750*rgb_b
-			lum_in = sum(luminosity*table) / (sum(luminosity*wp_1nm))
-			rgb_r *= lum_in/lum_out
-			rgb_g *= lum_in/lum_out
-			rgb_b *= lum_in/lum_out
-
-			# shift toward white
-			overflow = max(rgb_r,rgb_g,rgb_b,1) - 1
-			if (overflow > 0):
-				rgb_r = min(1,rgb_r+overflow/3)
-				rgb_g = min(1,rgb_g+overflow/3)
-				rgb_b = min(1,rgb_b+overflow/3)
+		rgb_r = sum(matrix_cmf[0] * table)
+		if (dimension > 2):
+			rgb_g = sum(matrix_cmf[1] * table)
+			rgb_b = sum(matrix_cmf[2] * table)
+		elif (dimension == 2):
+			rgb_g = rgb_r
+			rgb_b = sum(matrix_cmf[1] * table)
 				
 		# gamma correction
 		rgb_r = gamma_encode(rgb_r)
@@ -3095,6 +3064,9 @@ segment.
 * D = 6 / 1000: Didelphis aurita (")
 * k = 0.009: honey possum (Arrese et al. 2002)
 * l = 30: Didelphis aurita (Ahnelt et al. 1995)
+** Rods and cones are said to have similar dimensions. Note that
+the lengths given for rods by Walls (1939) range from 19.7-25.4 (subtracting
+the inner segment from the total length).
 * K = 0.5 (see The Optics of Life)
 
 Values provided for size:
@@ -3114,6 +3086,9 @@ Vaney 1985)
 1983), 7 um (gray squirrel; "), 25.1-40 um (human), 15.2 um (goldfish red single
 cones, Harosi & Flamarique 2012), 5 um (tammar wallaby and fat-tailed dunnart;
 Ebeling, Natoli & Hemmi 2010)
+** I previously listed 20 for the honey possum (Sumner, Arrese & Partridge),
+but after checking their reference, it looks like they used the whole
+length instead of the outer segment. Oops.
 * outer segment width: 1.73 um (chicken), 6.1 um (goldfish red single
 cones), 1.2 um (mouse; Nikonov et al. 2006, Fu & Yau 2007)
 * optical density: 0.015 (coral reef triggerfish, birds)
@@ -3157,7 +3132,7 @@ def abs_catch(w, r, rf):
 		if (not args.square): R *= math.pi
 
 	i = w-300
-	aq = (math.pi/4)*(R**2)*(D**2)*K*dt*r[i] * wp_photons[i] * media_1nm[i]
+	aq = (math.pi/4)*(R)*(D**2)*K*dt*r[i] * wp_photons[i] * media_1nm[i]
 
 	"""
 	Set the number of receptors per receptive field and degree of
@@ -3791,6 +3766,104 @@ def brightness_disc(first, second, correct=35*args.subjects, trials=40*args.subj
 		print("")
 
 	return [binomial.pvalue, binomial2.pvalue]
+
+# Optimize visual pigments for a certain task. Now a function so I don't
+# have to keep rewriting it.
+def color_opt(first, second, r2=300):
+	if (len(args.receptors) > 1): r2 = args.receptors[1]
+	w_range = args.receptors[0] - r2 + 1 # inclusive
+	mediany = np.empty(w_range)
+	miny = np.empty(w_range)
+	maxy = np.empty(w_range)
+	best_median = 0
+	best_mediany = 0
+	best_min = 0
+	best_miny = 0
+	best_max = 0
+	best_maxy = 0
+	
+	for i in range(w_range):
+		w = r2 + i
+		r2_cur = np.empty(401)
+		for j in range(401): r2_cur[j] = vpt(j+300, w)
+		abs_r2 = np.empty(401)
+		for j in range(401):
+			abs_r2[j] = abs_catch(j+300, r2_cur, rf[1])
+		if (len(first) > 1 and len(second) > 1):
+			values = color_disc(first, second, r2=r2_cur*media_1nm, abs1_r2=abs_r2, output=False)
+			if (args.verbose): print(str(w) + " nm: " + str(median[i]))
+			mediany[i] = values[0]
+			miny[i] = values[1]
+			maxy[i] = values[2]
+			if (mediany[i] > best_mediany):
+				best_mediany = mediany[i]
+				best_median = w
+			if (miny[i] > best_miny):
+				best_miny = miny[i]
+				best_min = w
+			if (maxy[i] > best_maxy):
+				best_maxy = maxy[i]
+				best_max = w
+		else:
+			mediany[i] = color_contrast(first[0], second[0], r2=r2_cur*media_1nm, abs1_r2=abs_r2)
+			if (mediany[i] > best_mediany):
+				best_mediany = mediany[i]
+				best_median = w
+
+	print("Best median: " + str(best_median))
+	print("Best min: " + str(best_min))
+	print("Best max: " + str(best_max))
+	return(mediany, miny, maxy, best_median, best_min, best_max)
+
+# the other big ones
+def color_vary(spectrum, r2=300):
+	if (len(args.receptors) > 1): r2 = args.receptors[1]
+	w_range = args.receptors[0] - r2 + 1 # inclusive
+
+	color = np.empty(w_range)
+	for i in range(w_range):
+		w = r2 + i
+		r2_cur = np.empty(401)
+		for j in range(401): r2_cur[j] = vpt(j+300, w)
+		if (args.verbose): print(w)
+		wpr1 = 0
+		wpr2 = 0
+		r1_color = 0
+		r2_color = 0
+
+		for j in range(401):
+			wpr1 += r1_1nm[j] * media_1nm[j] * wp_1nm[j]
+			wpr2 += r2_cur[j] * media_1nm[j] * wp_1nm[j]
+			if (spectrum[j] > 0):
+				r1_color += r1_1nm[j] * media_1nm[j] * spectrum[j] * wp_1nm[j]
+				r2_color += r2_cur[j] * media_1nm[j] * spectrum[j] * wp_1nm[j]
+		r1_color /= wpr1
+		r2_color /= wpr2
+
+		if ((r1_color + r2_color) > 0):
+			color[i] = (r1_color - r2_color) / (r1_color + r2_color)
+		else: color[i] = 0
+
+	return color
+
+def brightness_vary(spectrum, r2=300):
+	if (len(args.receptors) > 1): r2 = args.receptors[1]
+	w_range = args.receptors[0] - r2 + 1 # inclusive
+	
+	brightness = np.empty(w_range)
+	for i in range(w_range):
+		w = r2 + i
+		if (args.verbose): print(w)
+		r2_cur = np.empty(401)
+		for j in range(401): r2_cur[j] = vpt(j+300, w)
+		
+		r2_brightness = 0
+		for j in range(spectrum.shape[0]):
+			r2_brightness += r2_cur[j] * media_1nm[j] * spectrum[j] * wp_1nm[j]
+		
+		brightness[i] = r2_brightness
+
+	return brightness
 
 # print execution time
 #print("%s seconds" % (time.time() - start_time))
