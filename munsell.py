@@ -1,25 +1,24 @@
-""" Munsell color cards: 5B, 7.5B, 10YR, 5GY
+"""
+Munsell color cards: 5B, 7.5B, 10YR, 5GY
+
 Reflectance spectra from here: https://www.munsellcolourscienceforpainters.com/MunsellResources/SpectralReflectancesOf2007MunsellBookOfColorGlossy.txt
-I can't find any Munsell reflectance spectra that go below 380 nm, so we'll just have to
-make do with this. Yet more limitations of a system designed for human vision when applied to
-anything else. I'm guessing none of these things reflect much UV, though.
-Note Python variables can't begin with a digit, so the arrays begin with "m" for Munsell.
-Lightness/chroma values used by Gutierrez et al. 2011: 10YR5-8/10, 5B4-7/6, 7.5B5-8/4, 5GY5-8/10
+I can't find any Munsell reflectance spectra that go below 380 nm, so we'l
+just have to make do with this.
+
+Note Python variables can't begin with a digit, so the arrays begin with "m"
+for Munsell.
+
+Lightness/chroma values used by Gutierrez et al. 2011: 10YR5-8/10, 5B4-7/6,
+7.5B5-8/4, 5GY5-8/10
+
 Lighting specifications for absolute quantum catches:
 * card dimensions: 12.5 x 7.5 cm
-* illuminant: D65 light bulb 1.5 m above the test box, filtered with baking paper to provide
-an illuminance of 115 lx (I hate trying to interpret these human-scaled units, why can't you
-guys just use watts?)
-** I can't find any measurements of transmission for baking paper, so we'll have to assume
-it transmits all wavelengths equally. It probably doesn't.
-** Converting lux to watts: 1 W/m^2 = 683.002 lx at 555 nm. First multiply the D65 spectrum by
-the photopic luminosity function we determined earlier, then find the scaling factor to
-lux by dividing 115 by the integral of D65 x luminosity. To find the scaling factor to watts,
-take the value at 555 nm and multiply it by the lux scaling factor we just found, then divide
-it by 683.002. Except we don't have a value for 555 nm, so we have to pick a different wavelength
-(say, 550) and multiply it by the luminosity value.
-* As before, we assume the animals are arbitrarily close to the stimuli.
-* wavelength interval: 730 - 380 = 350
+* illuminant: D65 light bulb 1.5 m above the test box, filtered with baking
+paper to provide an illuminance of 115 lx
+** I can't find any measurements of transmission for baking paper, so we'll
+have to assume it transmits all wavelengths equally. Bleached paper probabl
+doesn't absorb much UV because the lignin is removed.
+** How to scale the illuminant to a value in lux is described in central.py.
 """
 import central as c
 import numpy as np
@@ -30,7 +29,9 @@ args = c.args
 r1 = args.receptors[0]
 r2 = args.receptors[1]
 
-# 11/02/2025 -- note that a paper I found (https://www.researchgate.net/publication/6764034_Transforming_reflectance_spectra_into_Munsell_color_space_by_using_prime_colors#pf3) uses a different set of reflectance spectra from the same site, the ones for the matte colors. Unfortunately 10YR5/10 and 5GY5-7/10 aren't included.
+# 11/02/2025 -- note that a paper I found
+# (https://www.researchgate.net/publication/6764034_Transforming_reflectance_spectra_into_Munsell_color_space_by_using_prime_colors#pf3)
+# uses a different set of reflectance spectra from the same site, the ones for the matte colors. Unfortunately 10YR5/10 and 5GY5-7/10 aren't included.
 
 # lux to watts test
 #integral = 0
@@ -5161,7 +5162,7 @@ if (args.munsell):
 	colors = [c.spec2rgb(m5b7), c.spec2rgb(m75b8), c.spec2rgb(m5gy8), c.spec2rgb(m10yr8)]
 	for patch, color in zip(bplot['boxes'], colors):
 		patch.set_facecolor(color)
-	plt.ylabel("ΔS (JND)")
+	plt.ylabel("ΔS")
 	plt.show()
 
 # find optimal values for pigments
@@ -5172,116 +5173,49 @@ if (args.mopt1):
 	# optimize dichromacy for blue vs. orange with L held constant at specified value and
 	# S varied between specified value and L-1
 	print("optimizing 5B")
-	median_5b = np.empty(w_range)
-	best = 0
-	best_y = 0
-	
-	for i in range(w_range):
-		w = r2 + i
-		median_5b[i] = c.color_disc(m5b_all, m10yr_all, r2=w, output=False, customize_s=True)[0]
-		print(str(w) + " nm: " + str(median_5b[i]))
-		if (median_5b[i] > best_y):
-		    best_y = median_5b[i]
-		    best = w
-	print("Best value: " + str(best))
+
+	median_5b = c.color_opt(m5b_all, m10yr_all, r2=r2)[0]
 	
 	print("")
 	print("optimizing 7.5B")
-	median_75b = np.empty(w_range)
-	best = 0
-	best_y = 0
-	
-	for i in range(w_range):
-		w = r2 + i
-		median_75b[i] = c.color_disc(m75b_all, m10yr_all, r2=w, output=False, customize_s=True)[0]
-		print(str(w) + " nm: " + str(median_75b[i]))
-		if (median_75b[i] > best_y):
-		    best_y = median_75b[i]
-		    best = w
-	print("Best value: " + str(best))
-	
+
+	median_75b = c.color_opt(m75b_all, m10yr_all, r2=r2)[0]
 	xvalues = np.empty(w_range)
 	for i in range(w_range): xvalues[i] = i + r2
 	
 	plt.plot(xvalues, median_5b, 'k', label="5B")
 	plt.plot(xvalues, median_75b, '--k', label="7.5B")
-	plt.xlabel("λmax of S cone (nm)")
-	plt.ylabel("Median contrast (JND)")
+	plt.xlabel("λmax (nm)")
+	plt.ylabel("Median contrast")
 	plt.legend()
 	plt.show()
 	
 if (args.mopt2):
 	# optimize trichromacy for green and orange vs. orange
-	print("optimizing 5GY and 10YR")
-	median_5gy = np.empty(w_range)
-	min_5gy = np.empty(w_range)
-	max_5gy = np.empty(w_range)
-	best_median = 0
-	best_min = 0
-	best_max = 0
-	best_mediany = 0
-	best_miny = 0
-	best_maxy = 0
-	median_10yr = np.empty(w_range)
-	max_10yr = np.empty(w_range)
-	best_median1 = 0
-	best_max1 = 0
-	best_mediany1 = 0
-	best_maxy1 = 0
-	min_contrast = 0
-	for i in range(w_range):
-		w = r2 + i
-		# 5GY
-		values0 = c.color_disc(m5gy_all, m10yr_all, r2=w, output=False, customize_s=True)
-		median_5gy[i] = values0[0]
-		min_5gy[i] = values0[1]
-		max_5gy[i] = values0[2]
-		
-		print(str(w) + " nm")
-		if (args.verbose): print("5GY: " + str(values0))
-		if (median_5gy[i] > best_mediany):
-		    best_mediany = median_5gy[i]
-		    best_median = w
-		if (min_5gy[i] > best_miny):
-		    best_miny = min_5gy[i]
-		    best_min = w
-		if (max_5gy[i] > best_maxy):
-		    best_maxy = max_5gy[i]
-		    best_max = w
-
-		# 10YR
-		values1 = c.color_disc(m10yr_all, m10yr_all, r2=w, output=False, customize_s=True)
-		median_10yr[i] = values1[0]
-		max_10yr[i] = values1[2]
-		if (args.verbose): print("10YR: " + str(values1))
-		if (median_10yr[i] > best_mediany1):
-		    best_mediany1 = median_10yr[i]
-		    best_median1 = w
-		if (max_10yr[i] > best_maxy1):
-		    best_maxy1 = max_10yr[i]
-		    best_max1 = w
-
-		# compare
-		if (min_5gy[i] > max_10yr[i] and min_5gy[i-1] < max_10yr[i-1]): min_contrast = w
-	
-	print("Best median (5GY): " + str(best_median))
-	print("Best min (5GY): " + str(best_min))
-	print("Best max (5GY): " + str(best_max))
-	
-	print("Best median (10YR): " + str(best_median1))
-	print("Best max (10YR): " + str(best_max1))
-	print("5GY > 10YR: " + str(min_contrast))
+	print("optimizing 5GY")
+	values_5gy = c.color_opt(m5gy_all, m10yr_all, r2=r2)
+	print("optimizing 10YR")
+	values_10yr = c.color_opt(m10yr_all, m10yr_all, r2=r2)
 	
 	xvalues = np.empty(w_range)
 	for i in range(w_range): xvalues[i] = i + r2
+
+	# compare
+	min_contrast = 0
+	for i in range(w_range):
+		w = r2 + i
+		if (values_5gy[1][i] > values_10yr[2][i]
+			and values_5gy[1][i-1] < values_10yr[2][i-1]):
+			min_contrast = w
+	print("5GY > 10YR: " + str(min_contrast))
 	
-	plt.plot(xvalues, median_5gy, 'k', label="5GY")
-	plt.plot(xvalues, min_5gy, color='gray')
-	plt.plot(xvalues, max_5gy, color='gray')
-	plt.plot(xvalues, median_10yr, '--k', label="10YR")
-	plt.plot(xvalues, max_10yr, '--', color='gray')
-	plt.xlabel("λmax of M cone (nm)")
-	plt.ylabel("Median contrast (JND)")
+	plt.plot(xvalues, values_5gy[0], 'k', label="5GY")
+	plt.plot(xvalues, values_5gy[1], color='gray')
+	plt.plot(xvalues, values_5gy[2], color='gray')
+	plt.plot(xvalues, values_10yr[0], '--k', label="10YR")
+	plt.plot(xvalues, values_10yr[2], '--', color='gray')
+	plt.xlabel("λmax (nm)")
+	plt.ylabel("Median contrast")
 	plt.legend()
 	plt.show()
 	
@@ -5294,121 +5228,26 @@ if (args.mopt3):
 
 	# execution time
 	#start_time = time.time()
-	xvalues = np.empty(r1 - r2)
-	for i in range(r1 - r2): xvalues[i] = i+r2
-	gy5 = np.empty(w_range)
-	gy6 = np.empty(w_range)
-	gy7 = np.empty(w_range)
-	gy8 = np.empty(w_range)
-	yr5 = np.empty(w_range)
-	yr6 = np.empty(w_range)
-	yr7 = np.empty(w_range)
-	yr8 = np.empty(w_range)
-	minus_5gy = 0
-	minus_6gy = 0
-	minus_7gy = 0
-	minus_8gy = 0
-	for i in range(w_range):
-		w = r2 + i
-		print(w)
-		wpl = 0
-		wpm = 0
-		l_5gy5 = 0
-		l_5gy6 = 0
-		l_5gy7 = 0
-		l_5gy8 = 0
-		l_10yr5 = 0
-		l_10yr6 = 0
-		l_10yr7 = 0
-		l_10yr8 = 0
-		m_5gy5 = 0
-		m_5gy6 = 0
-		m_5gy7 = 0
-		m_5gy8 = 0
-		m_10yr5 = 0
-		m_10yr6 = 0
-		m_10yr7 = 0
-		m_10yr8 = 0
+	xvalues = np.empty(r1 - r2 + 1)
+	for i in range(r1 - r2 + 1): xvalues[i] = i+r2
 
-		for j in range(401):
-			w1 = j + 300
-			#print(w1)
-			l = c.vpt(w1, r1) * c.media_1nm[j]
-			m = c.vpt(w1, w) * c.media_1nm[j]
-			wpl += c.vpt(w1, r1) * c.media_1nm[j] * c.wp_1nm[j]
-			wpm += c.vpt(w1, w) * c.media_1nm[j] * c.wp_1nm[j]
-			if (m5gy5_1nm[j] > 0):
-				l_5gy5 += l * m5gy5_1nm[j] * c.wp_1nm[j]
-				m_5gy5 += m * m5gy5_1nm[j] * c.wp_1nm[j]
-			if (m5gy6_1nm[j] > 0):
-				l_5gy6 += l * m5gy6_1nm[j] * c.wp_1nm[j]
-				m_5gy6 += m * m5gy6_1nm[j] * c.wp_1nm[j]
-			if (m5gy7_1nm[j] > 0):
-				l_5gy7 += l * m5gy7_1nm[j] * c.wp_1nm[j]
-				m_5gy7 += m * m5gy7_1nm[j] * c.wp_1nm[j]
-			if (m5gy8_1nm[j] > 0):
-				l_5gy8 += l * m5gy8_1nm[j] * c.wp_1nm[j]
-				m_5gy8 += m * m5gy8_1nm[j] * c.wp_1nm[j]
-			if (m10yr5_1nm[j] > 0):
-				l_10yr5 += l * m10yr5_1nm[j] * c.wp_1nm[j]
-				m_10yr5 += m * m10yr5_1nm[j] * c.wp_1nm[j]
-			if (m10yr6_1nm[j] > 0):
-				l_10yr6 += l * m10yr6_1nm[j] * c.wp_1nm[j]
-				m_10yr6 += m * m10yr6_1nm[j] * c.wp_1nm[j]
-			if (m10yr7_1nm[j] > 0):
-				l_10yr7 += l * m10yr7_1nm[j] * c.wp_1nm[j]
-				m_10yr7 += m * m10yr7_1nm[j] * c.wp_1nm[j]
-			if (m10yr8_1nm[j] > 0):
-				l_10yr8 += l * m10yr8_1nm[j] * c.wp_1nm[j]
-				m_10yr8 += m * m10yr8_1nm[j] * c.wp_1nm[j]
-		l_5gy5 = l_5gy5 / wpl
-		l_5gy6 = l_5gy6 / wpl
-		l_5gy7 = l_5gy7 / wpl
-		l_5gy8 = l_5gy8 / wpl
-		l_10yr5 = l_10yr5 / wpl
-		l_10yr6 = l_10yr6 / wpl
-		l_10yr7 = l_10yr7 / wpl
-		l_10yr8 = l_10yr8 / wpl
-		m_5gy5 = m_5gy5 / wpm
-		m_5gy6 = m_5gy6 / wpm
-		m_5gy7 = m_5gy7 / wpm
-		m_5gy8 = m_5gy8 / wpm
-		m_10yr5 = m_10yr5 / wpm
-		m_10yr6 = m_10yr6 / wpm
-		m_10yr7 = m_10yr7 / wpm
-		m_10yr8 = m_10yr8 / wpm
-		
-		gy5[i] = (l_5gy5 - m_5gy5) / (l_5gy5 + m_5gy5)
-		gy6[i] = (l_5gy6 - m_5gy6) / (l_5gy6 + m_5gy6)
-		gy7[i] = (l_5gy7 - m_5gy7) / (l_5gy7 + m_5gy7)
-		gy8[i] = (l_5gy8 - m_5gy8) / (l_5gy8 + m_5gy8)
-		yr5[i] = (l_10yr5 - m_10yr5) / (l_10yr5 + m_10yr5)
-		yr6[i] = (l_10yr6 - m_10yr6) / (l_10yr6 + m_10yr6)
-		yr7[i] = (l_10yr7 - m_10yr7) / (l_10yr7 + m_10yr7)
-		yr8[i] = (l_10yr8 - m_10yr8) / (l_10yr8 + m_10yr8)
-		
-		# overlap changes
-		if (gy5[i] < yr8[i] and gy5[i-1] > yr8[i-1]): minus_5gy = w
-		if (gy6[i] < yr8[i] and gy6[i-1] > yr8[i-1]): minus_6gy = w
-		if (gy7[i] < yr8[i] and gy7[i-1] > yr8[i-1]): minus_7gy = w
-		if (gy8[i] < yr8[i] and gy8[i-1] > yr8[i-1]): minus_8gy = w
-		
-		print("5GY5: " + str(gy5[i]))
-		print("5GY6: " + str(gy6[i]))
-		print("5GY7: " + str(gy7[i]))
-		print("5GY8: " + str(gy8[i]))
-		print("10YR5: " + str(yr5[i]))
-		print("10YR6: " + str(yr6[i]))
-		print("10YR7: " + str(yr7[i]))
-		print("10YR8: " + str(yr8[i]))
-	
-	print("Overlap changes (+ => -):")
-	print("5GY5-10YR8: " + str(minus_5gy))
-	print("5GY6-10YR8: " + str(minus_6gy))
-	print("5GY7-10YR8: " + str(minus_7gy))
-	print("5GY8-10YR8: " + str(minus_8gy))
-	# print execution time
-	#print("%s seconds" % (time.time() - start_time))
+	gy5 = c.color_vary(m5gy5_1nm, r2=r2)
+	gy6 = c.color_vary(m5gy6_1nm, r2=r2)
+	gy7 = c.color_vary(m5gy7_1nm, r2=r2)
+	gy8 = c.color_vary(m5gy8_1nm, r2=r2)
+	yr5 = c.color_vary(m10yr5_1nm, r2=r2)
+	yr6 = c.color_vary(m10yr6_1nm, r2=r2)
+	yr7 = c.color_vary(m10yr7_1nm, r2=r2)
+	yr8 = c.color_vary(m10yr8_1nm, r2=r2)
+
+	# overlap
+	cross = 0
+	for i in range(w_range):
+		if (gy5[i] < yr8[i] and gy5[i-1] > yr8[i-1]):
+			cross = i + r2
+			break
+
+	print("Overlap begins/ends: " + str(cross) + " nm")
 	
 	plt.plot(xvalues, gy5, 'k', label="5GY5/10")
 	plt.plot(xvalues, gy6, '--k', label="5GY6/10")
