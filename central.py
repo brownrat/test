@@ -24,12 +24,10 @@ I'd like to add additional arguments to those but don't see how to do that.
 * sky.py: sky/daylight spectra
 * wratten.py: Kodak Wratten filters
 * munsell.py: Munsell color cards
-* image_processing.py: tool for creating false-color images
+* image_processing.py: false-color images
 
-wratten.py and munsell.py just produce plots by default. To see the color
-rendering and trial modeling, you have to use --wratten/--munsell. This is
-because they also contain other features that are accessed with other
-arguments (see the list).
+wratten.py and munsell.py have different parts accessed with different
+arguments (see list), so they do nothing by default.
 """
 
 # this list doesn't recursively import
@@ -59,7 +57,6 @@ parser.add_argument("--weber", type=float, default=0.05, help="base Weber fracti
 parser.add_argument("--weberr2", type=float, default=0, help="override Weber fraction for receptor 2")
 parser.add_argument("--weberr3", type=float, default=0, help="override Weber fraction for receptor 3")
 parser.add_argument("--weberr4", type=float, default=0, help="override Weber fraction for receptor 4")
-parser.add_argument("--weberr5", type=float, default=0, help="override Weber fraction for receptor 5")
 parser.add_argument("--weberb", type=float, default=0.11, help="achromatic Weber fraction")
 parser.add_argument("--rf", nargs="+", type=float, default=[1,1,1,1,1], help="number of receptors of each type per receptive field")
 parser.add_argument("--media", "--filter", type=str, default="none", help="ocular media transmittance")
@@ -73,7 +70,8 @@ parser.add_argument("--wratten", help="Kodak Wratten camera filters", action="st
 parser.add_argument("--wv2", help="use tabulated Kodak Wratten data from Kodak Photographic Filters Handbook (1990)", action="store_true")
 parser.add_argument("--ndswap", help="use flat transmittance instead of neutral density curves", action="store_true")
 parser.add_argument("--grayswap", help="set gray to yellow/green average", action="store_true")
-parser.add_argument("--wcheck", help="check camera filter brightness matches", action="store_true")
+parser.add_argument("--wcheck", help="find Wratten filter brightness matches", action="store_true")
+parser.add_argument("--wcheck2", help="plot brightness matches and show radiance/luminance", action="store_true")
 parser.add_argument("--wopt1", help="test varying spectral sensitivity (probability)", action="store_true")
 parser.add_argument("--wopt2", help="test varying spectral sensitivity (order)", action="store_true")
 parser.add_argument("--wopt3", help="test varying spectral sensitivity (contrast)", action="store_true")
@@ -86,8 +84,8 @@ parser.add_argument("--csplot", "--triangle", nargs="*", help="create a Maxwell-
 parser.add_argument("--labels", nargs="+", default=['','',''], help="labels to use in triangle and line plots")
 parser.add_argument("--fcmode", help="switch default false color mode", default="none")
 parser.add_argument("--s2tmode", help="switch default color transform mode", default="c")
-parser.add_argument("--blackbody", type=int, default=0, help="test Wratten filters with a specified blackbody temperature")
 parser.add_argument("--munsell", help="Munsell color cards", action="store_true")
+parser.add_argument("--mcheck", help="plots and brightness", action="store_true")
 parser.add_argument("--mv2", help="use alternative Munsell spectra", action="store_true")
 parser.add_argument("--mv3", help="use alternative Munsell spectra for <420nm only", action="store_true")
 parser.add_argument("--mv4", help="remove wavelengths <400nm from Munsell spectra", action="store_true")
@@ -106,11 +104,13 @@ parser.add_argument("--sdist", type=float, default=0, help="distance from stimul
 parser.add_argument("--width", type=float, default=0, help="width of stimulus (cm)")
 parser.add_argument("--height", type=float, default=0, help="height of stimulus (cm)")
 parser.add_argument("--square", help="make stimulus a square/rectangle instead of circle/ellipse", action="store_true")
-parser.add_argument("--watts", type=int, default=12, help="number of watts produced by light source")
-parser.add_argument("--subjects", type=int, default=1, help="number of subjects")
-parser.add_argument("--lux", type=int, default=115, help="illuminance in lux")
-parser.add_argument("--ct", type=int, default=2856, help="color temperature of blackbody/blackbody illuminant")
+parser.add_argument("--watts", type=float, default=12, help="illuminant power in watts")
+parser.add_argument("--w2p", help="compare watt and photon illuminant spectra", action="store_true")
+parser.add_argument("--lux", "--lx", type=float, default=-1, help="illuminance in lux")
+parser.add_argument("--edi", type=float, default=-1, help="illuminance in EDI (equivalent daylight illuminance)")
+parser.add_argument("--ct", type=int, default=2856, help="color temperature of blackbody illuminant")
 parser.add_argument("--selfscreen", help="add pigment self-screening", action="store_true")
+parser.add_argument("--subjects", type=int, default=1, help="number of subjects")
 parser.add_argument("--warnings", help="show warnings", action="store_true")
 parser.add_argument("--cmf", help="color-matching functions", action="store_true")
 parser.add_argument("--primaries", nargs="+", type=int, default=[-1], help="primary wavelengths for color-matching functions")
@@ -146,11 +146,9 @@ for i in range(len(args.rf)): rf[i] = args.rf[i]
 wr2 = wr1 * math.sqrt(rf[0]) / math.sqrt(rf[1])
 wr3 = wr1 * math.sqrt(rf[0]) / math.sqrt(rf[2])
 wr4 = wr1 * math.sqrt(rf[0]) / math.sqrt(rf[3])
-wr5 = wr1 * math.sqrt(rf[0]) / math.sqrt(rf[4])
 if (args.weberr2 > 0): wr2 = args.weberr2
 if (args.weberr3 > 0): wr3 = args.weberr3
 if (args.weberr4 > 0): wr4 = args.weberr4
-if (args.weberr5 > 0): wr5 = args.weberr5
 
 """
 read CSV files
@@ -260,148 +258,6 @@ elif (args.media != "none"):
 	media_1nm /= media_1nm[400]
 	media_10nm = media_1nm[::10]
 
-# black body -- SI units, returns energy in joules/m^2/nm/sec/steradian = watts/m^2/nm/steradian
-# The "1e-9" converts from meters to nanometers, as this is not cubic meters but "per
-# wavelength".
-# https://yceo.yale.edu/sites/default/files/files/ComputingThePlanckFunction.pdf
-h = 6.626068e-34 # Planck's constant (joule sec)
-k = 1.38066e-23 # Boltzmann's constant (joule/deg)
-c = 2.997925e+8 # speed of light (m/s)
-
-def blackbody(w, t):
-	l = w / 1000000000 # wavelength (m)
-	try:
-		value = 1e-9*2*h*c**2*l**-5 / (math.exp((h*c) / (k*l*t)) - 1)
-	except OverflowError:
-		if (args.warnings): print("Warning (blackbody): math overflow, returning 1")
-		return 1
-	return value
-
-# illuminants
-
-# E for easy
-e_10nm = np.full(41, 100)
-e_1nm = np.full(401, 100)
-
-# D65 300-830
-# http://cie.co.at/datatable/cie-standard-illuminant-d65
-d65_full = csv2spec("CIE_std_illum_D65.csv", interp=False)
-d65_1nm = d65_full[1][:401]
-d65_10nm = d65_1nm[::10]
-
-# CIE A
-a_1nm = csv2spec("CIE_std_illum_A_1nm.csv")
-a_10nm = a_1nm[::10]
-
-# black body with specified color temperature
-blackbody_1nm = np.empty(401)
-for i in range(401):
-	w = i + 300
-	blackbody_1nm[i] = blackbody(w, args.ct)
-blackbody_1nm = 100*blackbody_1nm / max(*blackbody_1nm) # 0-100
-blackbody_10nm = blackbody_1nm[::10]
-
-"""
-Here we calculate the absolute number of photons per wavelength produced
-by the blackbody illuminant. Note the difference between cubic meters
-and square meter-wavelength (see notes on quantum noise). The premise is
-that an incandescent bulb is a "gray body" with an arbitrary color
-temperature and an emissivity determined by the energy going into the
-filament. That's not really how they work, but color temperature doesn't
-exactly depend on wattage and this is the most convenient way to model
-that.
-"""
-blackbody_photons = np.empty(401)
-# scale it down to what amount of energy would be produced by the specified
-# number of watts
-
-# find total energy produced using Stefan-Boltzmann constant
-# We divide by pi steradians to get the radiance and make the units equivalent to blackbody()
-# (not 4pi, this gives the wrong value -- see p. 61 here: https://eodg.atm.ox.ac.uk/user/grainger/research/book/protected/Chapter3.pdf)
-sigma = 5.670374419e-8
-energy = sigma * args.ct**4 #/ math.pi
-#power = energy * 4*math.pi*args.dist**2 / 10000
-
-# then find the irradiance we "should" have in terms of the sphere corresponding to
-# the distance we chose
-sphere_area = 4*math.pi*args.dist**2 # sphere surface area
-##if (args.height > 0): area = args.width * args.height
-##else: area = math.pi*(args.width/2)**2
-### steradians -- not divided by the whole sphere surface area, just the square of the radius
-##sr = area / args.dist**2
-watts_cm2 = args.watts / (sphere_area)
-watts_m2 = watts_cm2 * 100**2
-scale = watts_m2 / energy # scaling factor -- units should cancel (W/m^2)
-#scale = args.watts / power
-if (args.verbose): print("W/m^2 scaling factor: " + str(scale))
-
-for i in range(401):
-	w = i + 300 # nanometers
-	blackbody_photons[i] = scale*1e-9*w*blackbody(w, args.ct) / (h*c) # meters * joules/m^2/nm/sec/sr / joule*sec * m/s
-
-# absolute number of photons, part 2: scaling D65 to a specified value in lux
-
-# human photopic luminosity function
-# https://cie.co.at/datatable/cie-spectral-luminous-efficiency-photopic-vision
-cie_photopic_full = csv2spec('CIE_sle_photopic.csv', interp=False)
-# add zeroes
-for i in range(60):
-	cie_photopic_full[0].insert(0, 359-i)
-	cie_photopic_full[1].insert(0, 0)
-cie_photopic = np.array(cie_photopic_full[1][:401])
-
-"""
-integral of D65 x human photopic luminosity function
-
-The units we want at the end are W/m^2, so we multiply this by the lux-to-watts scaling
-factor for 555 nm (683.002 lm/W). This will end up on the bottom.
-"""
-integral = sum(np.array(d65_full[1]) * np.array(cie_photopic_full[1])) * 683.002
-
-# lux scaling factor (units = lx / lx/nm = nm)
-lxscale = args.lux / integral
-print(lxscale)
-
-# scaled version (W/m^2 * m / joule*sec * m/s * nm = joule/sec/m^2 * m / joule/sec * m/s * nm * sr)
-# Per nm is implied. The values we just found do not include steradians
-# (probably), so we divide by the sr value we found earlier. (No we don't)
-# Also changing this to 1 nm.
-d65_photons = np.empty(401)
-for i in range(d65_photons.shape[0]):
-	w = i + 300
-	d65_photons[i] = lxscale*1e-9*w*d65_1nm[i] / (h*c*math.pi)
-
-e_photons = np.empty(401)
-for i in range(e_photons.shape[0]):
-	w = i + 300
-	e_photons[i] = lxscale*1e-9*w*100 / (h*c*math.pi)
-
-# white point
-# Selecting the absolute number of photons is now done here to avoid going
-# through an if statement every time color_contrast() is run.
-wp_10nm = np.ones(41) * 100
-wp_1nm = np.ones(401) * 100
-if (args.white == "d65"):
-	wp_10nm = d65_10nm
-	wp_1nm = d65_1nm
-	wp_photons = d65_photons
-elif (args.white == "e"):
-	wp_10nm = e_10nm
-	wp_1nm = e_1nm
-	wp_photons = e_photons
-elif (args.white == "a"):
-	wp_10nm = a_10nm
-	wp_1nm = a_1nm
-	wp_photons = blackbody_photons
-elif (args.white == "i" or args.white == "blackbody"):
-	wp_10nm = blackbody_10nm
-	wp_1nm = blackbody_1nm
-	wp_photons = blackbody_photons
-# custom illuminant
-else:
-	wp_1nm = csv2spec(args.white)
-	wp_10nm[i] = wp_1nm[::10]
-
 # quantal human cone fundamentals -- http://www.cvrl.org/cones.htm
 cie2 = csv2spec('ss2_10q_1.csv', numcols=4, log=True)
 cie2_l = np.zeros(401)
@@ -502,16 +358,14 @@ r1_1nm = np.zeros(401)
 r2_1nm = np.zeros(401)
 r3_1nm = np.zeros(401)
 r4_1nm = np.zeros(401)
-r5_1nm = np.zeros(401)
 luminosity = np.ones(401)
 
+# CIE 2-deg fundamentals
 if (args.preset == "cie2"):
 	rlist = cie2
-	luminosity = cie_photopic
 # CIE 10-deg fundamentals
 elif (args.preset == "cie10"):
 	rlist = cie10
-	luminosity = cie_photopic
 # UVS bird
 elif (args.preset == "uvbird"): rlist = uvbird
 # VS bird
@@ -533,14 +387,183 @@ else:
 			yvalues[j] = vpt(j+300, peak)
 		rlist.append(yvalues)
 
-luminosity /= max(*luminosity)
-
 dimension = len(rlist)
-if (dimension > 4): r5_1nm = rlist[4]
 if (dimension > 3): r4_1nm = rlist[3]
 if (dimension > 2): r3_1nm = rlist[2]
 if (dimension > 1): r2_1nm = rlist[1]
 r1_1nm = rlist[0]
+
+# black body -- SI units, returns energy in joules/m^2/nm/sec/steradian = watts/m^2/nm/steradian
+# The "1e-9" converts from meters to nanometers, as this is not cubic meters but
+# "per wavelength".
+# https://yceo.yale.edu/sites/default/files/files/ComputingThePlanckFunction.pdf
+h = 6.626068e-34 # Planck's constant (joule sec)
+k = 1.38066e-23 # Boltzmann's constant (joule/deg)
+c = 2.997925e+8 # speed of light (m/s)
+
+def blackbody(nm, t):
+	wl = nm / 1000000000 # wavelength (m)
+	try:
+		value = 1e-9*2*h*c**2*wl**-5 / (math.exp((h*c) / (k*wl*t)) - 1)
+	except OverflowError:
+		if (args.warnings): print("Warning (blackbody): math overflow, returning 1")
+		return 1
+	return value
+
+# watts to photons/second (The Optics of Life, p. 12)
+watts2photons = np.empty(401)
+for i in range(401): watts2photons[i] = 1e-9*(i+300) / (h*c)
+
+# human photopic luminosity function
+# https://cie.co.at/datatable/cie-spectral-luminous-efficiency-photopic-vision
+cie_photopic_full = csv2spec('CIE_sle_photopic.csv', interp=False)
+# add zeroes
+for i in range(60):
+	cie_photopic_full[0].insert(0, 359-i)
+	cie_photopic_full[1].insert(0, 0)
+cie_photopic = np.array(cie_photopic_full[1][:401])
+
+# The luminous efficiency function relates to watts rather than photons, so
+# we convert it for compatibility.
+if (args.preset == ('cie2' or 'cie10')):
+	luminosity = cie_photopic / watts2photons
+
+luminosity /= max(*luminosity)
+
+# illuminants
+
+# E for easy
+e_1nm = np.ones(401)
+
+# D65 300-830
+# http://cie.co.at/datatable/cie-standard-illuminant-d65
+d65_full = csv2spec("CIE_std_illum_D65.csv", interp=False)
+d65_1nm = np.array(d65_full[1][:401])
+
+# CIE A
+a_1nm = csv2spec("CIE_std_illum_A_1nm.csv")
+
+# black body with specified color temperature
+blackbody_1nm = np.empty(401)
+for i in range(401):
+	blackbody_1nm[i] = blackbody(i+300, args.ct)
+
+# white point
+if (args.white == "d65"):
+	wp_1nm = d65_1nm
+elif (args.white == "e"):
+	wp_1nm = e_1nm
+elif (args.white == "a"):
+	wp_1nm = a_1nm
+elif (args.white == "i" or args.white == "blackbody"):
+	wp_1nm = blackbody_1nm
+# custom illuminant
+else:
+	wp_1nm = csv2spec(args.white)
+
+# absolute numbers of photons
+
+"""
+Here we calculate the absolute number of photons per wavelength produced
+by the blackbody illuminant. Note the difference between cubic meters
+and square meter-wavelength (see notes on quantum noise). The premise is
+that an incandescent bulb is a "gray body" with an arbitrary color
+temperature and an emissivity determined by the energy going into the
+filament. That's not really how they work, but color temperature doesn't
+exactly depend on wattage and this is the most convenient way to model
+that.
+"""
+sphere_area = 4*math.pi*args.dist**2 # sphere surface area
+watts_cm2 = args.watts / (sphere_area)
+watts_m2 = watts_cm2 * 100**2
+
+if (args.white == ('i' or 'blackbody')):
+	# scale it down to what amount of energy would be produced by the specified
+	# number of watts
+
+	# find total energy produced using Stefan-Boltzmann constant
+	# We divide by pi steradians to get the radiance and make the units equivalent to
+	# blackbody() (not 4pi, this gives the wrong value -- see p. 61 here:
+	# https://eodg.atm.ox.ac.uk/user/grainger/research/book/protected/Chapter3.pdf)
+	# Except not, because we're actually looking at irradiance. Irradiance goes
+	# down with the square of the distance, but radiance doesn't. We then get the
+	# radiance of the thing lit by that irradiance. Confusing, right? See also:
+	# The Optics of Life, p. 20-24
+	sigma = 5.670374419e-8
+	energy = sigma * args.ct**4
+
+# We can also scale other illuminants to specified watts, but here we can't
+# use information outside the range we're given. This is why I don't use the
+# "real" CIE A.
+else:
+	energy = sum(wp_1nm)
+
+scale = watts_m2 / energy
+if (args.verbose): print("W/m^2 scaling factor: " + str(scale))
+wp_watts = scale * wp_1nm
+
+# integral of D65 x human photopic luminosity function
+# The units we want at the end are W/m^2, so we multiply this by the
+# lux-to-watts scaling factor for 555 nm (683.002 lm/W). This will end
+# up on the bottom.
+integral = sum(np.array(d65_full[1]) * np.array(cie_photopic_full[1])) * 683.002
+
+# By default, the illuminant is scaled in watts. (We need a default.)
+# This can be changed to lux by setting --lux or EDI (equivalent daylight
+# illuminance) by setting --edi. For an explanation of EDI, see:
+# https://bmcbiol.biomedcentral.com/articles/10.1186/s12915-024-02038-1
+if (args.lux != -1 or args.edi != -1):
+	# lux scaling factor
+	# I previously wrote that this has units of nanometers, but the integral we
+	# just found doesn't include them because it's implicitly multiplied by the
+	# wavelength bin. The scaling factor is unitless.
+	lxscale = args.lux / integral
+	if (args.verbose): print("Lux scaling factor: " + str(lxscale))
+
+	# scaled version
+	# units: (W/m^2 * m) / (joule*sec * m/s * sr) = (s * m^2 * sr)^-1
+	d65_watts = lxscale * d65_1nm / math.pi
+
+	# We can also scale other illuminants this way.
+	if (args.white == 'd65'): wp_watts = d65_watts
+	else:
+		if (args.lux != -1):
+			lxscale = args.lux / (sum(wp_1nm * cie_photopic) * 683.002)
+			wp_watts = lxscale * wp_1nm / math.pi
+		else:
+			d65_lx = args.edi / integral
+			d65_opic = d65_lx * sum(d65_1nm*watts2photons*luminosity)
+			wp_opic = sum(wp_1nm*watts2photons*luminosity)
+			ediscale = d65_opic / wp_opic
+			wp_watts = ediscale * wp_1nm / math.pi
+
+# We just found watts above because the original spectrum is assumed to be watts.
+# Watts->photons can be done separately.
+# Even though we don't need the absolute number for relative quantum catches, we
+# still need to have photons and not watts, so we replace the original illuminant
+# array with this.
+wp_1nm = wp_watts * watts2photons
+wp_10nm = wp_1nm[::10]
+
+# show comparison of illuminant spectrum in watts and photons (for testing)
+if (args.w2p):
+	# https://matplotlib.org/stable/gallery/subplots_axes_and_figures/two_scales.html
+	fig, ax1 = plt.subplots()
+	color='tab:red'
+	ax1.set_xlabel('wavelength (nm)')
+	ax1.set_ylabel('watts', color=color)
+	ax1.plot(x_1nm, wp_watts, color=color)
+	ax1.tick_params(axis='y', labelcolor=color)
+
+	ax2 = ax1.twinx()
+
+	color = 'tab:blue'
+	ax2.set_ylabel('photons', color=color)
+	ax2.plot(x_1nm, wp_1nm, ':', color=color)
+	ax2.tick_params(axis='y', labelcolor=color)
+
+	fig.tight_layout()
+	plt.show()
 
 """
 CMFs (color-matching functions)
@@ -571,7 +594,7 @@ Some recommended values for trichromatic primaries:
 *** https://clarkvision.com/articles/color-spaces/
 ** other color spaces: see https://en.wikipedia.org/wiki/RGB_color_spaces
 
-Dichromatic, trichromatic, tetrachromatic and pentachromatic CMFs are supported.
+Dichromatic, trichromatic and tetrachromatic CMFs are supported.
 """
 if (args.cmf or (args.fcmode == 'cmf')):
 	# primaries
@@ -579,7 +602,6 @@ if (args.cmf or (args.fcmode == 'cmf')):
 	p2 = 0
 	p3 = 0
 	p4 = 0
-	p5 = 0
 
 	# find "optimal" primaries
 	if (args.primaries[0] == -1):
@@ -613,56 +635,9 @@ if (args.cmf or (args.fcmode == 'cmf')):
 		p2 = round(args.primaries[1])
 		if (len(args.primaries) > 2): p3 = round(args.primaries[2])
 		if (len(args.primaries) > 3): p4 = round(args.primaries[3])
-		if (len(args.primaries) > 4): p5 = round(args.primaries[4])
 
 def cmf():
-	if (dimension > 4):
-		# sensitivity to primaries
-		matrix_a = np.array([
-			[r1_1nm[p1-300]*media_1nm[p1-300], r1_1nm[p2-300]*media_1nm[p2-300], r1_1nm[p3-300]*media_1nm[p3-300], r1_1nm[p4-300]*media_1nm[p4-300], r1_1nm[p5-300]*media_1nm[p5-300]],
-			[r2_1nm[p1-300]*media_1nm[p1-300], r2_1nm[p2-300]*media_1nm[p2-300], r2_1nm[p3-300]*media_1nm[p3-300], r2_1nm[p4-300]*media_1nm[p4-300], r2_1nm[p5-300]*media_1nm[p5-300]],
-			[r3_1nm[p1-300]*media_1nm[p1-300], r3_1nm[p2-300]*media_1nm[p2-300], r3_1nm[p3-300]*media_1nm[p3-300], r3_1nm[p4-300]*media_1nm[p4-300], r3_1nm[p5-300]*media_1nm[p5-300]],
-			[r4_1nm[p1-300]*media_1nm[p1-300], r4_1nm[p2-300]*media_1nm[p2-300], r4_1nm[p3-300]*media_1nm[p3-300], r4_1nm[p4-300]*media_1nm[p4-300], r4_1nm[p5-300]*media_1nm[p5-300]],
-			[r5_1nm[p1-300]*media_1nm[p1-300], r5_1nm[p2-300]*media_1nm[p2-300], r5_1nm[p3-300]*media_1nm[p3-300], r5_1nm[p4-300]*media_1nm[p4-300], r5_1nm[p5-300]*media_1nm[p5-300]],
-		])
-
-		# sensitivity to each wavelength from 300 to 700 nm in 1 nm increments
-		matrix_c = np.empty((5, 401)) # 400x5 matrix -- this is height x width, not width x height
-
-		for i in range(401):
-		# p1 row
-			matrix_c[0][i] = r1_1nm[i] * media_1nm[i]
-		# p2 row
-			matrix_c[1][i] = r2_1nm[i] * media_1nm[i]
-		# p3 row
-			matrix_c[2][i] = r3_1nm[i] * media_1nm[i]
-		# p4 row
-			matrix_c[3][i] = r4_1nm[i] * media_1nm[i]
-		# p5 row
-			matrix_c[4][i] = r5_1nm[i] * media_1nm[i]
-
-		# initial color match matrix
-		matrix_m = np.matmul(np.linalg.inv(matrix_a), matrix_c) # A x M = C, so M = A^-1 x C
-
-		# adjust to reference white
-		#watts = 0
-		#for i in range(401): watts += wp_1nm[i] # scale to 1 watt
-		p1w = sum(matrix_m[0] * wp_1nm)
-		p2w = sum(matrix_m[1] * wp_1nm)
-		p3w = sum(matrix_m[2] * wp_1nm)
-		p4w = sum(matrix_m[3] * wp_1nm)
-		p5w = sum(matrix_m[4] * wp_1nm)
-		matrix_w = [
-			[1/p1w, 0, 0, 0, 0],
-			[0, 1/p2w, 0, 0, 0],
-			[0, 0, 1/p3w, 0, 0],
-			[0, 0, 0, 1/p4w, 0],
-			[0, 0, 0, 0, 1/p5w],
-		]
-
-		# final color match matrix
-		matrix_cmf = np.matmul(matrix_w, matrix_m)
-	elif (dimension == 4):
+	if (dimension > 3):
 		# sensitivity to primaries
 		matrix_a = np.array([
 			[r1_1nm[p1-300]*media_1nm[p1-300], r1_1nm[p2-300]*media_1nm[p2-300], r1_1nm[p3-300]*media_1nm[p3-300], r1_1nm[p4-300]*media_1nm[p4-300]],
@@ -775,73 +750,6 @@ def cmf():
 		
 	return matrix_cmf
 
-"""
-color opponency (sort of)
-
-Based on how it works in primates and zebrafish.
-* https://pmc.ncbi.nlm.nih.gov/articles/PMC11063829/
-* https://www.science.org/doi/full/10.1126/sciadv.abj6815
-
-I use CMFs as a starting point to create "red-green" (r-g) and
-"yellow-blue" ((r+g)-b) curves, then find matching sums of
-all receptor signals for each. If there are only two, it's
-really simple because we only have one curve (r1-r2). If there's a
-fourth one, I let it stand alone because zebrafish UV cones
-work like that. The r-g and y-b curves are actually the other
-way around (the "red" and "yellow" parts are negative) because
-they're supposed to represent the output of r2 and r3, as with
-zebrafish green and blue cones.
-"""
-def cmf_o(matrix_cmf):
-	# adjust receptor signals
-	r1 = r1_1nm*media_1nm*wp_1nm
-	r2 = r2_1nm*media_1nm*wp_1nm
-	r3 = r3_1nm*media_1nm*wp_1nm
-	r4 = r4_1nm*media_1nm*wp_1nm
-	r1 /= sum(r1)
-	if (dimension > 1): r2 /= sum(r2)
-	if (dimension > 2): r3 /= sum(r3)
-	if (dimension > 3): r4 /= sum(r4)
-
-	# subtractive channels
-	row2minus1 = matrix_cmf[1] - matrix_cmf[0]
-	if (dimension > 2):
-		row3minus12 = matrix_cmf[2] - (matrix_cmf[0]+matrix_cmf[1])
-
-	def o_fit(xdata, a, b, c, d):
-		ydata = np.zeros(401)
-		for i in range(401):
-			ydata[i] = media_1nm[i]*(a*r1[i]+b*r2[i]+c*r3[i]+d*r4[i])
-		return ydata
-
-	matrix_o = []
-	popt1, pcov1 = scipy.optimize.curve_fit(o_fit, x_1nm, row2minus1, p0=[-1,1,0,0])
-	if (args.verbose): print("Coefficients for row (2-1): " + str(popt1))
-	if (dimension > 2):
-		popt2, pcov2 = scipy.optimize.curve_fit(o_fit, x_1nm, row3minus12, p0=[0,0,1,0])
-		if (args.verbose): print("Coefficients for row (3-(2+1)): " + str(popt2))
-	if (dimension > 3):
-		popt3, pcov3 = scipy.optimize.curve_fit(o_fit, x_1nm, matrix_cmf[3], p0=[0,0,0,1])
-		if (args.verbose): print("Coefficients for row 4: " + str(popt3))
-
-	if (dimension == 2):
-		o1 = media_1nm*(r1*popt1[0]+r2*popt1[1])
-		matrix_o.append(o1)
-	elif (dimension == 3):
-		o1 = media_1nm*(r1*popt1[0]+r2*popt1[1]+r3*popt1[2])
-		o2 = media_1nm*(r1*popt2[0]+r2*popt2[1]+r3*popt2[2])
-		matrix_o.append(o1)
-		matrix_o.append(o2)
-	elif (dimension > 3):
-		o1 = media_1nm*(r1*popt1[0]+r2*popt1[1]+r3*popt1[2]+r4*popt1[3])
-		o2 = media_1nm*(r1*popt2[0]+r2*popt2[1]+r3*popt2[2]+r4*popt2[3])
-		o3 = media_1nm*(r1*popt3[0]+r2*popt3[1]+r3*popt3[2]+r4*popt3[3])
-		matrix_o.append(o1)
-		matrix_o.append(o2)
-		matrix_o.append(o3)
-
-	return matrix_o
-
 if (args.cmf):
 	if (dimension < 2):
 		print("CMFs are not meaningful for monochromacy.")
@@ -853,14 +761,6 @@ if (args.cmf):
 		if (dimension > 2): plt.plot(x_1nm, matrix_cmf[2], color='k')
 		if (dimension > 3): plt.plot(x_1nm, matrix_cmf[3], color='k')
 		if (dimension > 4): plt.plot(x_1nm, matrix_cmf[4], color='k')
-		plt.show()
-
-		matrix_o = cmf_o(matrix_cmf)
-		
-		plt.plot(x_1nm, matrix_o[0], 'k')
-		if (dimension > 2): plt.plot(x_1nm, matrix_o[1], 'k')
-		if (dimension > 3): plt.plot(x_1nm, matrix_o[2], 'k')
-		plt.plot([300,700], [0,0], ':r')
 		plt.show()
 		
 
@@ -883,36 +783,33 @@ def gamma_encode(v): # encoding
 		return np.float64(math.pow(v, 1 / args.outgamma))
 
 """
-generate an RGB color from a spectral power distribution
+generate an RGB color from a spectrum
 
 This can produce either a "true color" using colormath or a "false color"
 using the specified visual system. Out-of-gamut colors are scaled down if a
 value is more than 1 and clipped if a value is less than 0.
 """
-def spec2rgb(table, reflect=True, mode=args.fcmode, scale=1, average=False):
+def spec2rgb(spec, reflect=True, mode=args.fcmode, scale=1, average=False):
 	rgb_r = 0
 	rgb_g = 0
 	rgb_b = 0
 	
 	# interpolate
-	if(len(table) < 401): table = np.interp(x_1nm, x_10nm, table)
+	if(len(spec) < 401): spec = np.interp(x_1nm, x_10nm, spec)
 	
 	# combine SPD with illuminant
-	if (reflect):
-		# x *= y and x = x * y are different!
-		if (mode != 'none'): table = table * wp_1nm
-		#else: table = table * d65_1nm/100
+	if (reflect and mode != 'none'): spec = spec * wp_1nm
 	
 	# remove nans
-	for i in range(table.shape[0]):
-		if (np.isnan(table[i])): table[i] = 0
+	for i in range(401):
+		if (np.isnan(spec[i])): spec[i] = 0
 	
 	if (mode == "lms"):
 		# LMS
-		for i in range(table.shape[0]):
-			rgb_r += r1_1nm[i] * table[i] * media_1nm[i]
-			rgb_g += r2_1nm[i] * table[i] * media_1nm[i]
-			rgb_b += r3_1nm[i] * table[i] * media_1nm[i]
+		for i in range(spec.shape[0]):
+			rgb_r += r1_1nm[i] * spec[i] * media_1nm[i]
+			rgb_g += r2_1nm[i] * spec[i] * media_1nm[i]
+			rgb_b += r3_1nm[i] * spec[i] * media_1nm[i]
 	
 		# von Kries transform
 		if (args.vonkries):
@@ -944,13 +841,13 @@ def spec2rgb(table, reflect=True, mode=args.fcmode, scale=1, average=False):
 		# CMF
 		matrix_cmf = cmf()
 
-		rgb_r = sum(matrix_cmf[0] * table)
+		rgb_r = sum(matrix_cmf[0] * spec)
 		if (dimension > 2):
-			rgb_g = sum(matrix_cmf[1] * table)
-			rgb_b = sum(matrix_cmf[2] * table)
+			rgb_g = sum(matrix_cmf[1] * spec)
+			rgb_b = sum(matrix_cmf[2] * spec)
 		elif (dimension == 2):
 			rgb_g = rgb_r
-			rgb_b = sum(matrix_cmf[1] * table)
+			rgb_b = sum(matrix_cmf[1] * spec)
 				
 		# gamma correction
 		rgb_r = gamma_encode(rgb_r)
@@ -966,9 +863,9 @@ def spec2rgb(table, reflect=True, mode=args.fcmode, scale=1, average=False):
 		if (average):
 			for i in range(37):
 				v = 40+i*10
-				mean = np.mean(table[v-5:v+5])
+				mean = np.mean(spec[v-5:v+5])
 				if (mean > 0): downsample[i] = mean
-		else: downsample = table[40::10]
+		else: downsample = spec[40::10]
 		spectral = SpectralColor(spec_340nm=downsample[0],
 		spec_350nm=downsample[1],
 		spec_360nm=downsample[2],
@@ -1045,6 +942,31 @@ def spec2rgb(table, reflect=True, mode=args.fcmode, scale=1, average=False):
 	rgb_tuple = (max(rgb_r/rgb_max, 0), max(rgb_g/rgb_max, 0), max(rgb_b/rgb_max, 0))
 
 	return(rgb_tuple)
+
+# find radiance/luminance of a spectrum
+def spec2radiance(spec, reflect=True):
+	# interpolate
+	if(len(spec) < 401): spec = np.interp(x_1nm, x_10nm, spec)
+	for i in range(401):
+		if (not spec[i] > 0): spec[i] = 0
+
+	radiance = spec
+	if (reflect): radiance *= wp_watts
+	print("Radiance (W/m^2/sr): " + str(sum(radiance)))
+
+	# cd/m^2
+	cdm2 = sum(cie_photopic*radiance)*683.002
+	print("Luminance (cd/m^2): " + str(cdm2))
+
+	# EDI cd/m^2 equivalent
+	d65_lx = 1 / integral
+	# 1 unit = 1 lx D65
+	d65_opic = d65_lx * sum(d65_1nm*watts2photons*luminosity)
+	spec_opic = sum(radiance*watts2photons*luminosity)
+	edi = spec_opic / d65_opic
+	print("Luminance (EDI/sr): " + str(edi))
+
+	return([sum(radiance), cdm2, edi])
 
 """
 quantum noise
@@ -1154,7 +1076,6 @@ abs_r1 = np.zeros(401)
 abs_r2 = np.zeros(401)
 abs_r3 = np.zeros(401)
 abs_r4 = np.zeros(401)
-abs_r5 = np.zeros(401)
 
 def abs_catch(w, r, rf):
 	v = args.summation
@@ -1177,7 +1098,7 @@ def abs_catch(w, r, rf):
 		if (not args.square): R *= math.pi
 
 	i = w-300
-	aq = (math.pi/4)*(R)*(D**2)*K*dt*r[i] * wp_photons[i] * media_1nm[i]
+	aq = (math.pi/4)*(R)*(D**2)*K*dt*r[i] * wp_1nm[i] * media_1nm[i]
 
 	"""
 	Set the number of receptors per receptive field and degree of
@@ -1199,7 +1120,6 @@ for i in range(401):
 	if (dimension > 1): abs_r2[i] = abs_catch(w, r2_1nm, rf[1])
 	if (dimension > 2): abs_r3[i] = abs_catch(w, r3_1nm, rf[2])
 	if (dimension > 3): abs_r4[i] = abs_catch(w, r4_1nm, rf[3])
-	if (dimension > 4): abs_r5[i] = abs_catch(w, r5_1nm, rf[4])
 
 """
 contrast sensitivity (Vorobyev and Osorio (1998); Vorobyev and Osorio (2001))
@@ -1207,50 +1127,44 @@ contrast sensitivity (Vorobyev and Osorio (1998); Vorobyev and Osorio (2001))
 Without quantum noise, this tends to make unrealistic predictions when the value
 for one or more cone signals is very small.
 """
-def color_contrast(table1, table2, quantum_noise=args.qn, r1=r1_1nm, r2=r2_1nm, abs1_r1=abs_r1, abs1_r2=abs_r2):
+def color_contrast(spec1, spec2, quantum_noise=args.qn, r1=r1_1nm, r2=r2_1nm, abs1_r1=abs_r1, abs1_r2=abs_r2):
 	# interpolate 1-nm intervals if we're provided with 10-nm
-	if (len(table1) < 401): table1 = np.interp(x_1nm, x_10nm, table1)
-	if (len(table2) < 401): table2 = np.interp(x_1nm, x_10nm, table2)
+	if (len(spec1) < 401): spec1 = np.interp(x_1nm, x_10nm, spec1)
+	if (len(spec2) < 401): spec2 = np.interp(x_1nm, x_10nm, spec2)
 	
 	# background light
 	wpr1 = 0
 	wpr2 = 0
 	wpr3 = 0
 	wpr4 = 0
-	wpr5 = 0
 	
 	qr11 = 0
 	qr21 = 0
 	qr31 = 0
 	qr41 = 0
-	qr51 = 0
 	qr12 = 0
 	qr22 = 0
 	qr32 = 0
 	qr42 = 0
-	qr52 = 0
-	for i in range(table1.shape[0]):
-		if (table1[i] > 0): # zero/nan check
-			qr11 += r1[i] * table1[i] * wp_1nm[i] * media_1nm[i]
-			qr21 += r2[i] * table1[i] * wp_1nm[i] * media_1nm[i]
-			qr31 += r3_1nm[i] * table1[i] * wp_1nm[i] * media_1nm[i]
-			qr41 += r4_1nm[i] * table1[i] * wp_1nm[i] * media_1nm[i]
-			qr51 += r5_1nm[i] * table1[i] * wp_1nm[i] * media_1nm[i]
-		else: table1[i] = 0 # replace nans and negative numbers with 0
+	for i in range(401):
+		if (spec1[i] > 0): # zero/nan check
+			qr11 += r1[i] * spec1[i] * wp_1nm[i] * media_1nm[i]
+			qr21 += r2[i] * spec1[i] * wp_1nm[i] * media_1nm[i]
+			qr31 += r3_1nm[i] * spec1[i] * wp_1nm[i] * media_1nm[i]
+			qr41 += r4_1nm[i] * spec1[i] * wp_1nm[i] * media_1nm[i]
+		else: spec1[i] = 0 # replace nans and negative numbers with 0
 		wpr1 += r1[i] * wp_1nm[i] * media_1nm[i]
 		wpr2 += r2[i] * wp_1nm[i] * media_1nm[i]
 		wpr3 += r3_1nm[i] * wp_1nm[i] * media_1nm[i]
 		wpr4 += r4_1nm[i] * wp_1nm[i] * media_1nm[i]
-		wpr5 += r5_1nm[i] * wp_1nm[i] * media_1nm[i]
-	for i in range(table2.shape[0]):
+	for i in range(401):
 		w = i + 300
-		if (table2[i] > 0):
-			qr12 += r1[i] * table2[i] * wp_1nm[i] * media_1nm[i]
-			qr22 += r2[i] * table2[i] * wp_1nm[i] * media_1nm[i]
-			qr32 += r3_1nm[i] * table2[i] * wp_1nm[i] * media_1nm[i]
-			qr42 += r4_1nm[i] * table2[i] * wp_1nm[i] * media_1nm[i]
-			qr52 += r5_1nm[i] * table2[i] * wp_1nm[i] * media_1nm[i]
-		else: table2[i] = 0
+		if (spec2[i] > 0):
+			qr12 += r1[i] * spec2[i] * wp_1nm[i] * media_1nm[i]
+			qr22 += r2[i] * spec2[i] * wp_1nm[i] * media_1nm[i]
+			qr32 += r3_1nm[i] * spec2[i] * wp_1nm[i] * media_1nm[i]
+			qr42 += r4_1nm[i] * spec2[i] * wp_1nm[i] * media_1nm[i]
+		else: spec2[i] = 0
 	
 	# normalize
 	if (args.vonkries):
@@ -1258,38 +1172,32 @@ def color_contrast(table1, table2, quantum_noise=args.qn, r1=r1_1nm, r2=r2_1nm, 
 		if (dimension > 1): qr21 = qr21 / wpr2
 		if (dimension > 2): qr31 = qr31 / wpr3
 		if (dimension > 3): qr41 = qr41 / wpr4
-		if (dimension > 4): qr51 = qr51 / wpr5
 		qr12 = qr12 / wpr1
 		if (dimension > 1): qr22 = qr22 / wpr2
 		if (dimension > 2): qr32 = qr32 / wpr3
 		if (dimension > 3): qr42 = qr42 / wpr4
-		if (dimension > 4): qr52 = qr52 / wpr5
 	
 	# differences
 	dfr1 = math.log(qr11 / qr12)
 	dfr2 = math.log(qr21 / qr22)
 	if (dimension > 2): dfr3 = math.log(qr31 / qr32)
 	if (dimension > 3): dfr4 = math.log(qr41 / qr42)
-	if (dimension > 4): dfr5 = math.log(qr51 / qr52)
 	
 	# quantum noise
 	if (quantum_noise):
-		aqr11 = sum(abs1_r1 * table1)
-		aqr21 = sum(abs1_r2 * table1)
-		aqr31 = sum(abs_r3 * table1)
-		aqr41 = sum(abs_r4 * table1)
-		aqr51 = sum(abs_r5 * table1)
-		aqr12 = sum(abs1_r1 * table2)
-		aqr22 = sum(abs1_r2 * table2)
-		aqr32 = sum(abs_r3 * table2)
-		aqr42 = sum(abs_r4 * table2)
-		aqr52 = sum(abs_r5 * table2)
+		aqr11 = sum(abs1_r1 * spec1)
+		aqr21 = sum(abs1_r2 * spec1)
+		aqr31 = sum(abs_r3 * spec1)
+		aqr41 = sum(abs_r4 * spec1)
+		aqr12 = sum(abs1_r1 * spec2)
+		aqr22 = sum(abs1_r2 * spec2)
+		aqr32 = sum(abs_r3 * spec2)
+		aqr42 = sum(abs_r4 * spec2)
 		
 		er1 = math.sqrt((1 / aqr11 + 1 / aqr12) + 2*wr1**2)
 		er2 = math.sqrt((1 / aqr21 + 1 / aqr22) + 2*wr2**2)
 		if (dimension > 2): er3 = math.sqrt((1 / aqr31 + 1 / aqr32) + 2*wr3**2)
 		if (dimension > 3): er4 = math.sqrt((1 / aqr41 + 1 / aqr42) + 2*wr4**2)
-		if (dimension > 4): er5 = math.sqrt((1 / aqr51 + 1 / aqr52) + 2*wr5**2)
 		
 		if (args.verbose):
 			catch1 = "Absolute catch (1): r1=" + str(aqr11) + ", r2=" + str(aqr21)
@@ -1307,11 +1215,6 @@ def color_contrast(table1, table2, quantum_noise=args.qn, r1=r1_1nm, r2=r2_1nm, 
 				catch2 += ", r4=" + str(aqr42)
 				noise += ", er4=" + str(er4)
 				weber += ", wr4=" + str(wr4)
-			if (dimension > 4):
-				catch1 += ", r5=" + str(aqr51)
-				catch2 += ", r5=" + str(aqr52)
-				noise += ", er5=" + str(er5)
-				weber += ", wr5=" + str(wr5)
 
 			print(catch1)
 			print(catch2)
@@ -1322,21 +1225,8 @@ def color_contrast(table1, table2, quantum_noise=args.qn, r1=r1_1nm, r2=r2_1nm, 
 		er2 = wr2
 		er3 = wr3
 		er4 = wr4
-		er5 = wr5
-	
-	if (dimension > 4): # This has not been published but would be the logical extension
-		delta_s = ((er3*er4*er5)**2*(dfr1 - dfr2)**2
-		+ (er2*er4*er5)**2*(dfr1 - dfr3)**2
-		+ (er2*er3*er5)**2*(dfr1 - dfr4)**2
-		+ (er2*er3*er4)**2*(dfr1 - dfr5)**2
-		+ (er1*er4*er5)**2*(dfr2 - dfr3)**2
-		+ (er1*er3*er5)**2*(dfr2 - dfr4)**2
-		+ (er1*er3*er4)**2*(dfr2 - dfr5)**2
-		+ (er1*er2*er5)**2*(dfr3 - dfr4)**2
-		+ (er1*er2*er4)**2*(dfr3 - dfr5)**2) / ((er1*er2*er3*er4)**2
-		+ (er1*er2*er3*er5)**2 + (er1*er2*er4*er5)**2
-		+ (er1*er3*er4*er5)**2 + (er2*er3*er4*er5)**2)
-	elif (dimension == 4):
+
+	if (dimension > 3):
 		delta_s = ((er3*er4)**2*(dfr1 - dfr2)**2
 		+ (er2*er4)**2*(dfr1 - dfr3)**2
 		+ (er2*er3)**2*(dfr1 - dfr4)**2
@@ -1354,14 +1244,14 @@ def color_contrast(table1, table2, quantum_noise=args.qn, r1=r1_1nm, r2=r2_1nm, 
 
 # brightness contrast based on https://journals.biologists.com/jeb/article/207/14/2471/14748/Interspecific-and-intraspecific-views-of-color
 # I've changed it to a signed value because we care about the direction.
-def brightness_contrast(table1, table2, r1=luminosity, compare=-1):
+def brightness_contrast(spec1, spec2, r1=luminosity, compare=-1):
 	# interpolate 1-nm intervals if we're provided with 10-nm
-	if (len(table1) < 401): table1 = np.interp(x_1nm, x_10nm, table1)
-	if (len(table2) < 401): table2 = np.interp(x_1nm, x_10nm, table2)
+	if (len(spec1) < 401): spec1 = np.interp(x_1nm, x_10nm, spec1)
+	if (len(spec2) < 401): spec2 = np.interp(x_1nm, x_10nm, spec2)
 
-	q1 = sum(r1 * table1 * wp_1nm)
+	q1 = sum(r1 * spec1 * wp_1nm)
 	if (compare != -1): q2 = compare
-	else: q2 = sum(r1 * table2 * wp_1nm)
+	else: q2 = sum(r1 * spec2 * wp_1nm)
 	
 	df = math.log(q1 / q2)
 	delta_s = df / args.weberb # not an absolute value
@@ -1441,19 +1331,14 @@ the left and r3 on top and does not have labels by default. You can add any
 labels you want with the argument --labels.
 
 The name "triangle" is slightly misleading because it produces a line or
-tetrahedron when provided with 2 or 4+ receptors. For 5 receptors, the 4th
-dimension is shown with color, based on this code example:
-https://stackoverflow.com/questions/14995610/how-to-make-a-4d-plot-with-matplotlib-using-arbitrary-data
-This means the points can't have custom colors. The coloring is not applied to
-the visible gamut because the points would look like other points and the
-scale is defined by the range of data.
+tetrahedron when provided with 2 or 4+ receptors. (Everything after 4 is
+ignored.)
 
 Numbers are off by default because they overlap with everything and are almost
 unreadable.
 
 Axes are off by default because these plots don't usually include them and the
-Y-axis isn't meaningful for dichromacy. This doesn't hide the color bar for
-the 4th dimension.
+Y-axis isn't meaningful for dichromacy.
 """
 def triangle(spectra=[], reflect=True, markers=[], colors=[], text=[], legend=False, numbers=False, mec='k', gamut=False, gamutcolor='k', gamutedge='-', achro=True, axes=False):
 	# default list elements
@@ -1471,7 +1356,6 @@ def triangle(spectra=[], reflect=True, markers=[], colors=[], text=[], legend=Fa
 	wr2 = 0
 	wr3 = 0
 	wr4 = 0
-	wr5 = 0
 	xvalues = np.empty(41)
 	yvalues = np.zeros(41)
 	zvalues = np.zeros(41)
@@ -1522,7 +1406,6 @@ def triangle(spectra=[], reflect=True, markers=[], colors=[], text=[], legend=Fa
 		wr2 += r2_1nm[i*10] * wp_10nm[i] * media_10nm[i]
 		wr3 += r3_1nm[i*10] * wp_10nm[i] * media_10nm[i]
 		wr4 += r4_1nm[i*10] * wp_10nm[i] * media_10nm[i]
-		wr5 += r5_1nm[i*10] * wp_10nm[i] * media_10nm[i]
 	for i in range(41):
 		w = i*10 + 300
 		labels[i] = w
@@ -1530,26 +1413,21 @@ def triangle(spectra=[], reflect=True, markers=[], colors=[], text=[], legend=Fa
 		r2 = r2_1nm[i*10] * wp_10nm[i] * media_10nm[i]
 		r3 = r3_1nm[i*10] * wp_10nm[i] * media_10nm[i]
 		r4 = r4_1nm[i*10] * wp_10nm[i] * media_10nm[i]
-		r5 = r5_1nm[i*10] * wp_10nm[i] * media_10nm[i]
 		if (args.vonkries):
 			r1 = r1 / wr1
 			if (wr2 > 0): r2 = r2 / wr2
 			if (wr3 > 0): r3 = r3 / wr3
 			if (wr4 > 0): r4 = r4 / wr4
-			if (wr5 > 0): r5 = r5 / wr5
-		total = r1 + r2 + r3 + r4 + r5
+		total = r1 + r2 + r3 + r4
 		if (total > 0): # avoid "invalid value encountered in scalar divide" warning
 			r1 = r1 / total
 			r2 = r2 / total
 			r3 = r3 / total
 			r4 = r4 / total
-			r5 = r5 / total
 		if (dimension > 2):
 			xvalues[i] = math.sqrt(1/2)*(r1 - r2)
 			yvalues[i] = math.sqrt(2/3)*(r3 - (r1 + r2)/2)
 			if (dimension > 3): zvalues[i] = math.sqrt(3)/2*(r4 - (r1 + r2 + r3)/3)
-			# we're not combining this with the others, so no coefficient
-			if (dimension > 4): wvalues[i] = (r5 - (r1 + r2 + r3 + r4)/4)
 		else:
 			if (total > 0): xvalues[i] = (r1 - r2)
 			else: xvalues[i] = 0
@@ -1578,101 +1456,92 @@ def triangle(spectra=[], reflect=True, markers=[], colors=[], text=[], legend=Fa
 		wpr2 = 0
 		wpr3 = 0
 		wpr4 = 0
-		wpr5 = 0
 		posxlist = []
 		posylist = []
 		poszlist = []
-		poswlist = []
 		for i in range(401):
 			wpr1 += r1_1nm[i] * wp_1nm[i] * media_1nm[i]
 			wpr2 += r2_1nm[i] * wp_1nm[i] * media_1nm[i]
 			wpr3 += r3_1nm[i] * wp_1nm[i] * media_1nm[i]
 			wpr4 += r4_1nm[i] * wp_1nm[i] * media_1nm[i]
-			wpr5 += r5_1nm[i] * wp_1nm[i] * media_1nm[i]
 		
 		for i in range(len(spectra)):
 			# dummy multiplier to make sure we don't modify the original array
-			table = spectra[i]*1
-			table_r1 = 0
-			table_r2 = 0
-			table_r3 = 0
-			table_r4 = 0
-			table_r5 = 0
+			spec = spectra[i]*1
+			spec_r1 = 0
+			spec_r2 = 0
+			spec_r3 = 0
+			spec_r4 = 0
 			
 			# interpolate
-			if(len(table) < 401): table = np.interp(x_1nm, x_10nm, table)
+			if(len(spec) < 401): spec = np.interp(x_1nm, x_10nm, spec)
 			
 			# combine SPD with illuminant
 			if (reflect):
-				for j in range(401): table[j] *= wp_1nm[j]
+				for j in range(401): spec[j] *= wp_1nm[j]
 			
 			# remove nans
 			for j in range(401):
-				if (np.isnan(table[j])): table[j] = 0
+				if (np.isnan(spec[j])): spec[j] = 0
 			
 			for j in range(401):
-				table_r1 += r1_1nm[j] * table[j] * media_1nm[j]
-				table_r2 += r2_1nm[j] * table[j] * media_1nm[j]
-				table_r3 += r3_1nm[j] * table[j] * media_1nm[j]
-				table_r4 += r4_1nm[j] * table[j] * media_1nm[j]
-				table_r5 += r5_1nm[j] * table[j] * media_1nm[j]
+				spec_r1 += r1_1nm[j] * spec[j] * media_1nm[j]
+				spec_r2 += r2_1nm[j] * spec[j] * media_1nm[j]
+				spec_r3 += r3_1nm[j] * spec[j] * media_1nm[j]
+				spec_r4 += r4_1nm[j] * spec[j] * media_1nm[j]
 			
 			# von Kries transform
 			if (args.vonkries):
-				table_r1 = table_r1 / wpr1
-				if (wpr2 > 0): table_r2 = table_r2 / wpr2
-				if (wpr3 > 0): table_r3 = table_r3 / wpr3
-				if (wpr4 > 0): table_r4 = table_r4 / wpr4
-				if (wpr5 > 0): table_r5 = table_r5 / wpr5
+				spec_r1 = spec_r1 / wpr1
+				if (wpr2 > 0): spec_r2 = spec_r2 / wpr2
+				if (wpr3 > 0): spec_r3 = spec_r3 / wpr3
+				if (wpr4 > 0): spec_r4 = spec_r4 / wpr4
 
 			# declare variables
 			posx = 0
 			posy = 0
 			posz = 0
-			posw = 0
 
 			if (dimension > 3):
-				total = table_r1 + table_r2 + table_r3 + table_r4 + table_r5
+				total = spec_r1 + spec_r2 + spec_r3 + spec_r4
 				if (total > 0):
-					posx = math.sqrt(1/2)*(table_r1 - table_r2) / total
-					posy = math.sqrt(2/3)*(table_r3 - (table_r1 + table_r2)/2) / total
-					posz = math.sqrt(3)/2*(table_r4 - (table_r1 + table_r2 + table_r3)/3) / total
-					posw = (table_r5 - (table_r1 + table_r2 + table_r3 + table_r4)/4) / total
+					posx = math.sqrt(1/2)*(spec_r1 - spec_r2) / total
+					posy = math.sqrt(2/3)*(spec_r3 - (spec_r1 + spec_r2)/2) / total
+					posz = math.sqrt(3)/2*(spec_r4 - (spec_r1 + spec_r2 + spec_r3)/3) / total
 				else:
 					posx = 0
 					posy = 0
 					posz = 0
-					posw = 0
 				if (args.verbose):
-					print("Relative quantum catches: r1=" + str(table_r1) + ", r2=" + str(table_r2) + ", r3=" + str(table_r3) + ", r4=" + str(table_r4) + ", r5=" + str(table_r5))
-					print("Position in color tetrahedron: " + str((posx, posy, posz, posw)))
+					print("Relative catches: r1=" + str(spec_r1) + ", r2=" + str(spec_r2) + ", r3=" + str(spec_r3) + ", r4=" + str(spec_r4))
+					print("Position in color tetrahedron: " + str((posx, posy, posz)))
 			elif (dimension == 3):
-				total = table_r1 + table_r2 + table_r3
+				total = spec_r1 + spec_r2 + spec_r3
 				if (total > 0):
-					posx = math.sqrt(1/2)*(table_r1 - table_r2) / total
-					posy = math.sqrt(2/3)*(table_r3 - (table_r1 + table_r2)/2) / total
+					posx = math.sqrt(1/2)*(spec_r1 - spec_r2) / total
+					posy = math.sqrt(2/3)*(spec_r3 - (spec_r1 + spec_r2)/2) / total
 				else:
 					posx = 0
 					posy = 0
 				if (args.verbose):
-					print("Relative quantum catches: r1=" + str(table_r1) + ", r2=" + str(table_r2) + ", r3=" + str(table_r3))
+					print("Relative catches: r1=" + str(spec_r1) + ", r2=" + str(spec_r2) + ", r3=" + str(spec_r3))
 					print("Position in color triangle: " + str((posx, posy)))
 			elif (dimension == 2):
-				if (table_r1 + table_r2 > 0): posx = (table_r1 - table_r2) / (table_r1 + table_r2)
+				if (spec_r1 + spec_r2 > 0): posx = (spec_r1 - spec_r2) / (spec_r1 + spec_r2)
 				else: posx = 0
 				if (args.verbose):
-					print("Relative quantum catches: r1=" + str(table_r1) + ", r2=" + str(table_r2))
+					print("Relative catches: r1=" + str(spec_r1) + ", r2=" + str(spec_r2))
 					print("Position on color line: " + str(posx))
 			elif (dimension == 1 and args.verbose):
 				# monochromacy
-				print("Relative quantum catch: " + str(table_r1))
+				print("Relative catch: " + str(spec_r1))
 
-			if (dimension == 4):
+			if (dimension > 3):
 				if (text[i] == ''):
 					ax.plot(posx, posy, posz, marker=markers[i], mec=mec, color=colors[i], linestyle='')
 				else:
 					ax.plot(posx, posy, posz, marker=markers[i], mec=mec, color=colors[i], label=text[i], linestyle='')
-			elif (dimension < 4):
+			else:
 				if (text[i] == ''):
 					plt.plot(posx, posy, marker=markers[i], mec=mec, color=colors[i], linestyle='')
 				else:
@@ -1681,12 +1550,6 @@ def triangle(spectra=[], reflect=True, markers=[], colors=[], text=[], legend=Fa
 			posxlist.append(posx)
 			posylist.append(posy)
 			poszlist.append(posz)
-			poswlist.append(posw)
-	
-		# cmap needs the whole list at once
-		if (dimension > 4):
-			img = ax.scatter(posxlist, posylist, poszlist, c=poswlist, cmap=plt.viridis())
-			fig.colorbar(img)
 	
 	if (dimension > 3):
 		# positioning text is awkward, I have a better idea...
@@ -1696,7 +1559,7 @@ def triangle(spectra=[], reflect=True, markers=[], colors=[], text=[], legend=Fa
 		ax.plot(*r4v, 'o', color='purple')
 	
 	if (not axes): plt.axis('off')
-	if (legend and dimension < 5): plt.legend()
+	if (legend): plt.legend()
 	plt.show()
 
 if (type(args.csplot) == list):
