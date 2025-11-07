@@ -51,6 +51,8 @@ start_time = time.time()
 
 # arguments
 parser = argparse.ArgumentParser()
+parser.add_argument("--start", type=int, default=300, help="start wavelength")
+parser.add_argument("--end", type=int, default=700, help="end wavelength")
 parser.add_argument("-r", "--receptors", "--target", nargs="+", type=int, default=[562], help="receptor peak sensitivities")
 parser.add_argument("--rcsv", nargs="+", default="none", help="custom receptors from CSV file(s)")
 parser.add_argument("--weber", type=float, default=0.05, help="base Weber fraction")
@@ -58,7 +60,7 @@ parser.add_argument("--weberr2", type=float, default=0, help="override Weber fra
 parser.add_argument("--weberr3", type=float, default=0, help="override Weber fraction for receptor 3")
 parser.add_argument("--weberr4", type=float, default=0, help="override Weber fraction for receptor 4")
 parser.add_argument("--weberb", type=float, default=0.11, help="achromatic Weber fraction")
-parser.add_argument("--rf", nargs="+", type=float, default=[1,1,1,1,1], help="number of receptors of each type per receptive field")
+parser.add_argument("--rf", nargs="+", type=float, default=[1,1,1,1], help="number of receptors of each type per receptive field")
 parser.add_argument("--media", "--filter", type=str, default="none", help="ocular media transmittance")
 parser.add_argument("--qn", help="use quantum noise in color differences", action="store_true")
 parser.add_argument("--r1s", type=float, default=1, help="contribution of receptor 1 to spectral sensitivity")
@@ -67,9 +69,9 @@ parser.add_argument("--vonkries", help="enable von Kries transform", action="sto
 parser.add_argument("--sensitivity", help="show spectral sensitivity function", action="store_true")
 parser.add_argument("--white", default="d65", help="set illuminant")
 parser.add_argument("--wratten", help="Kodak Wratten camera filters", action="store_true")
-parser.add_argument("--wv2", help="use tabulated Kodak Wratten data from Kodak Photographic Filters Handbook (1990)", action="store_true")
+parser.add_argument("--w1990", help="use tabulated Kodak Wratten data from Kodak Photographic Filters Handbook (1990)", action="store_true")
 parser.add_argument("--ndswap", help="use flat transmittance instead of neutral density curves", action="store_true")
-parser.add_argument("--grayswap", help="set gray to yellow/green average", action="store_true")
+parser.add_argument("--grayswap", help="set gray to yellow/green average luminance", action="store_true")
 parser.add_argument("--wcheck", help="find Wratten filter brightness matches", action="store_true")
 parser.add_argument("--wcheck2", help="plot brightness matches and show radiance/luminance", action="store_true")
 parser.add_argument("--wopt1", help="test varying spectral sensitivity (probability)", action="store_true")
@@ -80,17 +82,17 @@ parser.add_argument("--vpt", help="plot visual pigment templates", action="store
 parser.add_argument("--plot", nargs="+", help="plot spectra from CSV files")
 parser.add_argument("--ylabel", default="Reflectance", help="Y-axis label")
 parser.add_argument("--colorplot", help="use generated colors for plots", action="store_true")
-parser.add_argument("--csplot", "--triangle", nargs="*", help="create a Maxwell-style color space plot")
+parser.add_argument("--csplot", "--triangle", default=0, nargs="*", help="create a Maxwell-style color space plot")
 parser.add_argument("--labels", nargs="+", default=['','',''], help="labels to use in triangle and line plots")
 parser.add_argument("--fcmode", help="switch default false color mode", default="none")
 parser.add_argument("--s2tmode", help="switch default color transform mode", default="c")
 parser.add_argument("--munsell", help="Munsell color cards", action="store_true")
 parser.add_argument("--mcheck", help="plots and brightness", action="store_true")
-parser.add_argument("--mv2", help="use alternative Munsell spectra", action="store_true")
-parser.add_argument("--mv3", help="use alternative Munsell spectra for <420nm only", action="store_true")
-parser.add_argument("--mv4", help="remove wavelengths <400nm from Munsell spectra", action="store_true")
-parser.add_argument("--mopt1", help="find optimal visual pigments for Munsell cards (dichromacy)", action="store_true")
-parser.add_argument("--mopt2", help="find optimal visual pigments for Munsell cards (trichromacy)", action="store_true")
+parser.add_argument("--matte", help="use Joensuu matte spectra", action="store_true")
+parser.add_argument("--glossy2", help="use Joensuu glossy spectra", action="store_true")
+parser.add_argument("--nouv", help="remove wavelengths <400nm from Munsell spectra", action="store_true")
+parser.add_argument("--mopt1", help="find optimal visual pigments for Munsell cards (blue-orange)", action="store_true")
+parser.add_argument("--mopt2", help="find optimal visual pigments for Munsell cards (green-orange)", action="store_true")
 parser.add_argument("--mopt3", help="find L-M chromatic spread/overlap of Munsell cards", action="store_true")
 parser.add_argument("--summation", type=float, default=1, help="spatial summation")
 parser.add_argument("--dt", type=float, default=1/22.4, help="integration time (s)")
@@ -106,8 +108,8 @@ parser.add_argument("--height", type=float, default=0, help="height of stimulus 
 parser.add_argument("--square", help="make stimulus a square/rectangle instead of circle/ellipse", action="store_true")
 parser.add_argument("--watts", type=float, default=12, help="illuminant power in watts")
 parser.add_argument("--w2p", help="compare watt and photon illuminant spectra", action="store_true")
-parser.add_argument("--lux", "--lx", type=float, default=-1, help="illuminance in lux")
-parser.add_argument("--edi", type=float, default=-1, help="illuminance in EDI (equivalent daylight illuminance)")
+parser.add_argument("--lux", "--lx", type=float, default=0, help="illuminance in lux")
+parser.add_argument("--edi", type=float, default=0, help="illuminance in EDI (equivalent daylight illuminance)")
 parser.add_argument("--ct", type=int, default=2856, help="color temperature of blackbody illuminant")
 parser.add_argument("--selfscreen", help="add pigment self-screening", action="store_true")
 parser.add_argument("--subjects", type=int, default=1, help="number of subjects")
@@ -126,13 +128,27 @@ parser.add_argument("--ingamma", default=-1, type=float, help="input gamma")
 parser.add_argument("--outgamma", default=-1, type=float, help="output gamma")
 parser.add_argument("--interactions", default=1, type=int, help="interactions between terms for curve fitting")
 parser.add_argument("--luminance", help="type of luminance adjustment", default="default")
+parser.add_argument("--log", help="use logarithmic sensitivity curves", action="store_true")
+parser.add_argument("--wldisc", help="plot wavelength discrimination function", action="store_true")
 args = parser.parse_args()
 
-# X values representing wavelengths 300-700 nm, used by multiple functions
-x_10nm = np.empty(41)
-for i in range(41): x_10nm[i] = i*10 + 300
-x_1nm = np.empty(401)
-for i in range(401): x_1nm[i] = i + 300
+# set wavelength range (default 300-700 nm)
+# If the chosen illuminant is a predefined array, you can't set the interval
+# beyond its range. The default is D65 and is limited to 300-830 nm. The
+# equal-energy (e) and blackbody/incandescent (i) illuminants will work with
+# any range. You can even use negative numbers, but there's no reason to
+# do this because there's no such thing as a negative wavelength:
+# https://www.physicsforums.com/threads/can-the-angular-wave-number-k-or-frequency-w-be-negative.855011/
+start = args.start
+end = args.end
+range1 = int(1 + args.end - args.start)
+range10 = int(1 + (args.end - args.start) / 10)
+
+# X values representing wavelength interval, used by multiple functions
+x_10nm = np.empty(range10)
+for i in range(range10): x_10nm[i] = i*10 + start
+x_1nm = np.empty(range1)
+for i in range(range1): x_1nm[i] = i + start
 
 # receptor peak sensitivities
 receptors = args.receptors
@@ -156,30 +172,37 @@ read CSV files
 This function allows for using arbitrary CSV files as visual pigments, ocular
 media, illuminants, or reflectance spectra. By default, only the first two
 columns are read and the first column is interpreted as wavelength, and it
-returns the second column interpolated to 1-nm increments from 300-700 nm.
+returns the second column interpolated to 1-nm increments from the chosen range.
 Additional columns can be read by setting numcols to a value higher than 2.
 It would be nice to automatically detect how many columns there are, but that
 works best if the first row is a header and the rest are values, and the files
 I'm working with aren't like that. Interpolation can be disabled by setting
-interp=False, in which case all the columns will be returned as-is.
+interp=False, in which case all the columns will be returned as-is and you
+can do what you want with them.
+
+Sometimes the file is "horizontal" with rows instead of columns. You can
+return a list of rows by setting h=True (numcols should be set to the row
+length). In this case, every row will be included but any non-numeric
+values will be skipped.
 
 If the range of data doesn't cover 300-700, values not included are filled with
 0. If the data is the log of what you really want (e.g. absorption vs.
 transmission), you should set log=True so negative infinity is used instead
 (10**-inf = 0, but 10**0 = 1).
 """
-def csv2spec(filename, numcols=2, log=False, interp=True):
+def csv2spec(filename, numcols=2, log=False, interp=True, exmin=False, exmax=False, h=False):
 	if (args.verbose): print("Reading CSV file: " + filename)
 	# use negative infinity as "zero" for logarithmic data
 	zero = 0
 	if (log): zero = -np.inf
-	with open(filename, newline='') as csvfile:
+	with open('csvfiles/' + filename, newline='') as csvfile:
 		fieldnames = []
 		cols = []
 		for i in range(numcols):
 			name = 'col' + str(i)
 			fieldnames.append(name)
-			cols.append([])
+			# only add placeholders for "vertical" files
+			if (not h): cols.append([])
 		reader = csv.DictReader(csvfile, fieldnames=fieldnames)
 		# This bit uses an exception (can be either ValueError or
 		# TypeError) to ignore headers and other extra text. This kind
@@ -187,49 +210,77 @@ def csv2spec(filename, numcols=2, log=False, interp=True):
 		# only way to get the behavior I want when reading PlotDigitizer
 		# files.
 		for row in reader:
-			try:
-				if (len(row) > 1 and row[fieldnames[numcols-1]] != None):
-					for i in range(min(len(row), numcols)):
+			if (h): # horizontal
+				newcol = []
+				for i in range(min(len(row), numcols)):
+					try:
 						if (row[fieldnames[i]] == ''):
-							cols[i].append(zero)
+							newcol.append(zero)
 						else:
 							f = float(row[fieldnames[i]])
-							cols[i].append(f)
-			except:
-				if (args.warnings):
-					print("The following row of " + filename + " was ignored: "
-					+ str(row))
+							newcol.append(f)
+					except:
+						if (args.warnings):
+							print("Warning (csv2spec): "
+							      + "The following entry in "
+							      + filename + " was ignored: "
+							      + str(row[fieldnames[i]]))
+				cols.append(newcol)
+			else:
+				try:
+					if (len(row) > 1 and row[fieldnames[numcols-1]] != None):
+						for i in range(min(len(row), numcols)):
+							if (row[fieldnames[i]] == ''):
+								cols[i].append(zero)
+							else:
+								f = float(row[fieldnames[i]])
+								cols[i].append(f)
+				except:
+					if (args.warnings):
+						print("Warning (csv2spec): The following row of "
+							+ filename + " was ignored: "
+							+ str(row))
 
 	# interpolate to 300-700
 	if (interp):
 		wl = cols[0]
 		values = []
-		for i in range(1, numcols):
-			interp = np.interp(x_1nm, wl, cols[i])
+		left = zero
+		right = zero
+		for i in range(1, len(cols)):
+			if (exmin): left = cols[i][0]
+			if (exmax): right = cols[i][-1]
+			interp = np.interp(x_1nm, wl, cols[i], left=left, right=right)
 			values.append(interp)
-
-		# remove extrapolation
-		wl_min = min(*wl)
-		wl_max = max(*wl)
-		
-		if (wl_min > 300):
-			for i in range(math.floor(wl_min) - 300):
-				for j in range(numcols-1): values[j][i] = zero
-		if (wl_max < 700):
-			for i in range(math.ceil(wl_max) - 300, 401):
-				for j in range(numcols-1): values[j][i] = zero
 
 		if (numcols == 2): return values[0]
 		return values
 
 	return cols
 
+# create Gaussian-peak spectrum with a specified peak wavelength and FWHM (full
+# width at half maximum)
+# Stolen from WolframAlpha:
+# * https://mathworld.wolfram.com/NormalDistribution.html
+# * https://mathworld.wolfram.com/GaussianFunction.html
+def gaussian(peak, fwhm):
+	spec = np.empty(range1)
+	sigma = fwhm / (2*math.sqrt(2*math.log(2)))
+	for i in range(range1): spec[i] = math.exp((-1/2)*((i+start - peak)/sigma)**2)
+	return spec
+
+# create "optimal color" spectrum
+def optimal(start=0, end=range1):
+	spec = np.zeros(range1)
+	for i in range(start, end): spec[i] = 1
+	return spec
+
 # types of ocular media
-# The presets don't include transmission/absorption below a certain wavelength
-# (310 nm for mouse, 390 nm for human), so it's set to 0 by csv2spec().
+# Wavelengths below the available range are set to 0, and wavelengths above it
+# are set to 1.
 
 # mouse (Jacobs & Williams 2007)
-mouse_1nm = csv2spec('mouse.csv')
+mouse_1nm = csv2spec('mouse.csv', exmax=True)
 
 # divide by 100
 mouse_1nm /= 100
@@ -239,40 +290,40 @@ mouse_10nm = mouse_1nm[::10]
 
 # human macular pigment and ocular media
 # http://www.cvrl.org/maclens.htm (CVRL functions, 1 nm)
-mac = csv2spec('macss_1.csv', log=True)
-lens = csv2spec('lensss_1.csv', log=True)
-for i in range(401):
+mac = csv2spec('macss_1.csv', log=True, exmax=True)
+lens = csv2spec('lensss_1.csv', log=True, exmax=True)
+for i in range(range1):
 	mac[i] = 10**-abs(mac[i])
 	lens[i] = 10**-abs(lens[i])
 
 # choose media type
-media_1nm = np.ones(401)
-media_10nm = np.ones(41)
+media_1nm = np.ones(range1)
+media_10nm = np.ones(range10)
 if (args.media == "mouse"):
 	media_1nm = mouse_1nm
 	media_10nm = mouse_10nm
 elif (args.media == "cvrl"): media_1nm = lens
 elif (args.media == "cvrlmac"): media_1nm = mac*lens
 elif (args.media != "none"):
-	media_1nm = csv2spec(args.media)
-	media_1nm /= media_1nm[400]
+	media_1nm = csv2spec(args.media, exmax=True)
+	media_1nm /= media_1nm[-1]
 	media_10nm = media_1nm[::10]
 
 # quantal human cone fundamentals -- http://www.cvrl.org/cones.htm
 cie2 = csv2spec('ss2_10q_1.csv', numcols=4, log=True)
-cie2_l = np.zeros(401)
-cie2_m = np.zeros(401)
-cie2_s = np.zeros(401)
-for i in range(401):
+cie2_l = np.zeros(range1)
+cie2_m = np.zeros(range1)
+cie2_s = np.zeros(range1)
+for i in range(range1):
 	cie2_l[i] = 10**cie2[0][i]
 	cie2_m[i] = 10**cie2[1][i]
 	cie2_s[i] = 10**cie2[2][i]
 
 cie10 = csv2spec('ss10q_1.csv', numcols=4, log=True)
-cie10_l = np.zeros(401)
-cie10_m = np.zeros(401)
-cie10_s = np.zeros(401)
-for i in range(401):
+cie10_l = np.zeros(range1)
+cie10_m = np.zeros(range1)
+cie10_s = np.zeros(range1)
+for i in range(range1):
 	cie10_l[i] = 10**cie10[0][i]
 	cie10_m[i] = 10**cie10[1][i]
 	cie10_s[i] = 10**cie10[2][i]
@@ -300,9 +351,9 @@ def vpt(w, lmax, od=-1):
 	try:
 		alpha = 1 / (math.exp(A*(a - lmax/w)) + math.exp(B*(b - lmax/w)) + math.exp(C*(c - lmax/w)) + D)
 		beta = Abeta * math.exp(-((w - lmbeta) / b1)**2)
-	except OverflowError:
-		if (args.warnings): print("Warning (vpt): OverflowError, clipping to 2.2250738585072014e-308")
-		return 2.2250738585072014e-308
+	except:
+		print("Warning (vpt): invalid value replaced with 0")
+		return 0
 	"""
 	self-screening
 
@@ -354,11 +405,11 @@ vbird = [bird_l,bird_m,bird_sv,bird_v]
 
 # set receptors and luminosity
 rlist = []
-r1_1nm = np.zeros(401)
-r2_1nm = np.zeros(401)
-r3_1nm = np.zeros(401)
-r4_1nm = np.zeros(401)
-luminosity = np.ones(401)
+r1_1nm = np.zeros(range1)
+r2_1nm = np.zeros(range1)
+r3_1nm = np.zeros(range1)
+r4_1nm = np.zeros(range1)
+luminosity = np.ones(range1)
 
 # CIE 2-deg fundamentals
 if (args.preset == "cie2"):
@@ -375,16 +426,16 @@ elif (args.rcsv != "none"):
 	for i in range(len(args.rcsv)):
 		rlist.append(csv2spec(args.rcsv[i]))
 else:
-	for i in range(401):
-		w = i+300
-		luminosity[i] = (args.r1s*vpt(w, receptors[0])) * media_1nm[w-300]
+	for i in range(range1):
+		w = i+start
+		luminosity[i] = (args.r1s*vpt(w, receptors[0])) * media_1nm[w-start]
 
 	for i in range(dimension):
 		# whole list
-		yvalues = np.empty(401)
+		yvalues = np.empty(range1)
 		peak = args.receptors[i] # peak sensitivity
-		for j in range(401):
-			yvalues[j] = vpt(j+300, peak)
+		for j in range(range1):
+			yvalues[j] = vpt(j+start, peak)
 		rlist.append(yvalues)
 
 dimension = len(rlist)
@@ -405,14 +456,17 @@ def blackbody(nm, t):
 	wl = nm / 1000000000 # wavelength (m)
 	try:
 		value = 1e-9*2*h*c**2*wl**-5 / (math.exp((h*c) / (k*wl*t)) - 1)
-	except OverflowError:
-		if (args.warnings): print("Warning (blackbody): math overflow, returning 1")
+	except:
+		print("Warning (blackbody): invalid value replaced with 1")
 		return 1
 	return value
 
 # watts to photons/second (The Optics of Life, p. 12)
-watts2photons = np.empty(401)
-for i in range(401): watts2photons[i] = 1e-9*(i+300) / (h*c)
+watts2photons = np.empty(range1)
+for i in range(range1): watts2photons[i] = 1e-9*(i+start) / (h*c)
+
+# offset for slicing arrays
+offset = args.start - 300
 
 # human photopic luminosity function
 # https://cie.co.at/datatable/cie-spectral-luminous-efficiency-photopic-vision
@@ -421,7 +475,7 @@ cie_photopic_full = csv2spec('CIE_sle_photopic.csv', interp=False)
 for i in range(60):
 	cie_photopic_full[0].insert(0, 359-i)
 	cie_photopic_full[1].insert(0, 0)
-cie_photopic = np.array(cie_photopic_full[1][:401])
+cie_photopic = np.array(cie_photopic_full[1][offset:range1+offset])
 
 # The luminous efficiency function relates to watts rather than photons, so
 # we convert it for compatibility.
@@ -433,20 +487,20 @@ luminosity /= max(*luminosity)
 # illuminants
 
 # E for easy
-e_1nm = np.ones(401)
+e_1nm = np.ones(range1)
 
 # D65 300-830
 # http://cie.co.at/datatable/cie-standard-illuminant-d65
 d65_full = csv2spec("CIE_std_illum_D65.csv", interp=False)
-d65_1nm = np.array(d65_full[1][:401])
+d65_1nm = np.array(d65_full[1][offset:range1+offset])
 
 # CIE A
 a_1nm = csv2spec("CIE_std_illum_A_1nm.csv")
 
 # black body with specified color temperature
-blackbody_1nm = np.empty(401)
-for i in range(401):
-	blackbody_1nm[i] = blackbody(i+300, args.ct)
+blackbody_1nm = np.empty(range1)
+for i in range(range1):
+	blackbody_1nm[i] = blackbody(i+start, args.ct)
 
 # white point
 if (args.white == "d65"):
@@ -512,7 +566,7 @@ integral = sum(np.array(d65_full[1]) * np.array(cie_photopic_full[1])) * 683.002
 # This can be changed to lux by setting --lux or EDI (equivalent daylight
 # illuminance) by setting --edi. For an explanation of EDI, see:
 # https://bmcbiol.biomedcentral.com/articles/10.1186/s12915-024-02038-1
-if (args.lux != -1 or args.edi != -1):
+if (args.lux or args.edi):
 	# lux scaling factor
 	# I previously wrote that this has units of nanometers, but the integral we
 	# just found doesn't include them because it's implicitly multiplied by the
@@ -527,7 +581,7 @@ if (args.lux != -1 or args.edi != -1):
 	# We can also scale other illuminants this way.
 	if (args.white == 'd65'): wp_watts = d65_watts
 	else:
-		if (args.lux != -1):
+		if (args.lux):
 			lxscale = args.lux / (sum(wp_1nm * cie_photopic) * 683.002)
 			wp_watts = lxscale * wp_1nm / math.pi
 		else:
@@ -611,7 +665,7 @@ if (args.cmf or (args.fcmode == 'cmf')):
 		r1_max = 0
 		r2_max = 0
 		r3_max = 0
-		for i in range(401):
+		for i in range(range1):
 			total = r1_1nm[i] + r2_1nm[i] + r3_1nm[i]
 			if (total > 0):
 				r1_cur = r1_1nm[i]/total
@@ -619,13 +673,13 @@ if (args.cmf or (args.fcmode == 'cmf')):
 				r3_cur = r3_1nm[i]/total
 			if (r1_cur > r1_max):
 				r1_max = r1_cur
-				p1 = i+300
+				p1 = i+start
 			if (r2_cur > r2_max):
 				r2_max = r2_cur
-				p2 = i+300
+				p2 = i+start
 			if (r3_cur > r3_max):
 				r3_max = r3_cur
-				p3 = i+300
+				p3 = i+start
 		if (args.verbose):
 			print("Optimized primary wavelengths: "
 				+ str(p1) + ", " + str(p2)
@@ -640,16 +694,16 @@ def cmf():
 	if (dimension > 3):
 		# sensitivity to primaries
 		matrix_a = np.array([
-			[r1_1nm[p1-300]*media_1nm[p1-300], r1_1nm[p2-300]*media_1nm[p2-300], r1_1nm[p3-300]*media_1nm[p3-300], r1_1nm[p4-300]*media_1nm[p4-300]],
-			[r2_1nm[p1-300]*media_1nm[p1-300], r2_1nm[p2-300]*media_1nm[p2-300], r2_1nm[p3-300]*media_1nm[p3-300], r2_1nm[p4-300]*media_1nm[p4-300]],
-			[r3_1nm[p1-300]*media_1nm[p1-300], r3_1nm[p2-300]*media_1nm[p2-300], r3_1nm[p3-300]*media_1nm[p3-300], r3_1nm[p4-300]*media_1nm[p4-300]],
-			[r4_1nm[p1-300]*media_1nm[p1-300], r4_1nm[p2-300]*media_1nm[p2-300], r4_1nm[p3-300]*media_1nm[p3-300], r4_1nm[p4-300]*media_1nm[p4-300]],
+			[r1_1nm[p1-start]*media_1nm[p1-start], r1_1nm[p2-start]*media_1nm[p2-start], r1_1nm[p3-start]*media_1nm[p3-start], r1_1nm[p4-start]*media_1nm[p4-start]],
+			[r2_1nm[p1-start]*media_1nm[p1-start], r2_1nm[p2-start]*media_1nm[p2-start], r2_1nm[p3-start]*media_1nm[p3-start], r2_1nm[p4-start]*media_1nm[p4-start]],
+			[r3_1nm[p1-start]*media_1nm[p1-start], r3_1nm[p2-start]*media_1nm[p2-start], r3_1nm[p3-start]*media_1nm[p3-start], r3_1nm[p4-start]*media_1nm[p4-start]],
+			[r4_1nm[p1-start]*media_1nm[p1-start], r4_1nm[p2-start]*media_1nm[p2-start], r4_1nm[p3-start]*media_1nm[p3-start], r4_1nm[p4-start]*media_1nm[p4-start]],
 		])
 
 		# sensitivity to each wavelength from 300 to 700 nm in 1 nm increments
-		matrix_c = np.empty((4, 401)) # 400x4 matrix -- this is height x width, not width x height
+		matrix_c = np.empty((4, range1)) # 400x4 matrix -- this is height x width, not width x height
 
-		for i in range(401):
+		for i in range(range1):
 		# p1 row
 			matrix_c[0][i] = r1_1nm[i] * media_1nm[i]
 		# p2 row
@@ -664,7 +718,7 @@ def cmf():
 
 		# adjust to reference white
 		#watts = 0
-		#for i in range(401): watts += wp_1nm[i] # scale to 1 watt
+		#for i in range(range1): watts += wp_1nm[i] # scale to 1 watt
 		p1w = sum(matrix_m[0] * wp_1nm)
 		p2w = sum(matrix_m[1] * wp_1nm)
 		p3w = sum(matrix_m[2] * wp_1nm)
@@ -681,15 +735,15 @@ def cmf():
 	elif (dimension == 3):
 		# sensitivity to primaries
 		matrix_a = np.array([
-			[r1_1nm[p1-300]*media_1nm[p1-300], r1_1nm[p2-300]*media_1nm[p2-300], r1_1nm[p3-300]*media_1nm[p3-300]],
-			[r2_1nm[p1-300]*media_1nm[p1-300], r2_1nm[p2-300]*media_1nm[p2-300], r2_1nm[p3-300]*media_1nm[p3-300]],
-			[r3_1nm[p1-300]*media_1nm[p1-300], r3_1nm[p2-300]*media_1nm[p2-300], r3_1nm[p3-300]*media_1nm[p3-300]],
+			[r1_1nm[p1-start]*media_1nm[p1-start], r1_1nm[p2-start]*media_1nm[p2-start], r1_1nm[p3-start]*media_1nm[p3-start]],
+			[r2_1nm[p1-start]*media_1nm[p1-start], r2_1nm[p2-start]*media_1nm[p2-start], r2_1nm[p3-start]*media_1nm[p3-start]],
+			[r3_1nm[p1-start]*media_1nm[p1-start], r3_1nm[p2-start]*media_1nm[p2-start], r3_1nm[p3-start]*media_1nm[p3-start]],
 		])
 
 		# sensitivity to each wavelength from 300 to 700 nm in 1 nm increments
-		matrix_c = np.empty((3, 401)) # 400x3 matrix -- this is height x width, not width x height
+		matrix_c = np.empty((3, range1)) # 400x3 matrix -- this is height x width, not width x height
 
-		for i in range(401):
+		for i in range(range1):
 		# red row
 			matrix_c[0][i] = r1_1nm[i] * media_1nm[i]
 		# green row
@@ -702,7 +756,7 @@ def cmf():
 
 		# adjust to reference white
 		#watts = 0
-		#for i in range(401): watts += wp_1nm[i] # scale to 1 watt
+		#for i in range(range1): watts += wp_1nm[i] # scale to 1 watt
 		rw = sum(matrix_m[0] * wp_1nm)
 		gw = sum(matrix_m[1] * wp_1nm)
 		bw = sum(matrix_m[2] * wp_1nm)
@@ -718,14 +772,14 @@ def cmf():
 
 		# sensitivity to primaries
 		matrix_a = np.array([
-			[r1_1nm[p1-300] * media_1nm[p1-300], r1_1nm[p2-300] * media_1nm[p2-300]],
-			[r2_1nm[p1-300] * media_1nm[p1-300], r2_1nm[p2-300] * media_1nm[p2-300]],
+			[r1_1nm[p1-start] * media_1nm[p1-start], r1_1nm[p2-start] * media_1nm[p2-start]],
+			[r2_1nm[p1-start] * media_1nm[p1-start], r2_1nm[p2-start] * media_1nm[p2-start]],
 		])
 
 		# sensitivity to each wavelength from 300 to 700 nm in 1 nm increments
-		matrix_c = np.empty((2, 401)) # 400x2 matrix
+		matrix_c = np.empty((2, range1)) # 400x2 matrix
 
-		for i in range(401):
+		for i in range(range1):
 		# red row
 			matrix_c[0][i] = r1_1nm[i] * media_1nm[i]
 		# blue row
@@ -736,7 +790,7 @@ def cmf():
 
 		# adjust to reference white
 		#watts = 0
-		#for i in range(401): watts += wp_1nm[i] # scale to 1 watt
+		#for i in range(range1): watts += wp_1nm[i] # scale to 1 watt
 		rw = sum(matrix_m[0] * wp_1nm)
 		gw = 0
 		bw = sum(matrix_m[1] * wp_1nm)
@@ -795,31 +849,26 @@ def spec2rgb(spec, reflect=True, mode=args.fcmode, scale=1, average=False):
 	rgb_b = 0
 	
 	# interpolate
-	if(len(spec) < 401): spec = np.interp(x_1nm, x_10nm, spec)
+	if(len(spec) < range1): spec = np.interp(x_1nm, x_10nm, spec)
 	
 	# combine SPD with illuminant
 	if (reflect and mode != 'none'): spec = spec * wp_1nm
 	
 	# remove nans
-	for i in range(401):
+	for i in range(range1):
 		if (np.isnan(spec[i])): spec[i] = 0
 	
 	if (mode == "lms"):
 		# LMS
-		for i in range(spec.shape[0]):
-			rgb_r += r1_1nm[i] * spec[i] * media_1nm[i]
-			rgb_g += r2_1nm[i] * spec[i] * media_1nm[i]
-			rgb_b += r3_1nm[i] * spec[i] * media_1nm[i]
+		rgb_r = sum(r1_1nm * spec * media_1nm)
+		rgb_g = sum(r2_1nm * spec * media_1nm)
+		rgb_b = sum(r3_1nm * spec * media_1nm)
 	
 		# von Kries transform
 		if (args.vonkries):
-			wpr1 = 0
-			wpr2 = 0
-			wpr3 = 0
-			for i in range(401):
-				wpr1 += r1_1nm[i] * wp_1nm[i] * media_1nm[i]
-				wpr2 += r2_1nm[i] * wp_1nm[i] * media_1nm[i]
-				wpr3 += r3_1nm[i] * wp_1nm[i] * media_1nm[i]
+			wpr1 = sum(r1_1nm * wp_1nm * media_1nm)
+			wpr2 = sum(r2_1nm * wp_1nm * media_1nm)
+			wpr3 = sum(r3_1nm * wp_1nm * media_1nm)
 		
 			rgb_r /= wpr1
 			if (wpr2 > 0): rgb_g /= wpr2
@@ -859,64 +908,16 @@ def spec2rgb(spec, reflect=True, mode=args.fcmode, scale=1, average=False):
 		# SpectralColor objects are limited to 340-830 nm in 10-nm
 		# intervals. We have to choose whether to use every tenth
 		# value or the average of the 10 values surrounding it.
-		downsample = np.zeros(37)
-		if (average):
-			for i in range(37):
-				v = 40+i*10
-				mean = np.mean(spec[v-5:v+5])
-				if (mean > 0): downsample[i] = mean
-		else: downsample = spec[40::10]
-		spectral = SpectralColor(spec_340nm=downsample[0],
-		spec_350nm=downsample[1],
-		spec_360nm=downsample[2],
-		spec_370nm=downsample[3],
-		spec_380nm=downsample[4],
-		spec_390nm=downsample[5],
-		spec_400nm=downsample[6],
-		spec_410nm=downsample[7],
-		spec_420nm=downsample[8],
-		spec_430nm=downsample[9],
-		spec_440nm=downsample[10],
-		spec_450nm=downsample[11],
-		spec_460nm=downsample[12],
-		spec_470nm=downsample[13],
-		spec_480nm=downsample[14],
-		spec_490nm=downsample[15],
-		spec_500nm=downsample[16],
-		spec_510nm=downsample[17],
-		spec_520nm=downsample[18],
-		spec_530nm=downsample[19],
-		spec_540nm=downsample[20],
-		spec_550nm=downsample[21],
-		spec_560nm=downsample[22],
-		spec_570nm=downsample[23],
-		spec_580nm=downsample[24],
-		spec_590nm=downsample[25],
-		spec_600nm=downsample[26],
-		spec_610nm=downsample[27],
-		spec_620nm=downsample[28],
-		spec_630nm=downsample[29],
-		spec_640nm=downsample[30],
-		spec_650nm=downsample[31],
-		spec_660nm=downsample[32],
-		spec_670nm=downsample[33],
-		spec_680nm=downsample[34],
-		spec_690nm=downsample[35],
-		spec_700nm=downsample[36],
-		spec_710nm=0,
-		spec_720nm=0,
-		spec_730nm=0,
-		spec_740nm=0,
-		spec_750nm=0,
-		spec_760nm=0,
-		spec_770nm=0,
-		spec_780nm=0,
-		spec_790nm=0,
-		spec_800nm=0,
-		spec_810nm=0,
-		spec_820nm=0,
-		spec_830nm=0,
-		illuminant='d65')
+		downsample = np.zeros(50)
+		for i in range(50):
+			v = (340 - start)+i*10
+			if (v > 0 and v <= len(spec)):
+				if (average):
+					mean = np.mean(spec[v-5:v+5])
+					downsample[i] = mean
+				else:
+					downsample[i] = spec[v]
+		spectral = SpectralColor(*downsample)
 		
 		srgb = convert_color(spectral, sRGBColor)
 		rgb_tuple = srgb.get_value_tuple()
@@ -946,8 +947,8 @@ def spec2rgb(spec, reflect=True, mode=args.fcmode, scale=1, average=False):
 # find radiance/luminance of a spectrum
 def spec2radiance(spec, reflect=True):
 	# interpolate
-	if(len(spec) < 401): spec = np.interp(x_1nm, x_10nm, spec)
-	for i in range(401):
+	if(len(spec) < range1): spec = np.interp(x_1nm, x_10nm, spec)
+	for i in range(range1):
 		if (not spec[i] > 0): spec[i] = 0
 
 	radiance = spec
@@ -1058,7 +1059,7 @@ but after checking their reference, it looks like they used the whole
 length instead of the outer segment. Oops.
 * outer segment width: 1.73 um (chicken), 6.1 um (goldfish red single
 cones), 1.2 um (mouse; Nikonov et al. 2006, Fu & Yau 2007)
-* optical density: 0.015 (coral reef triggerfish, birds)
+* optical density: 0.015 (birds)
 * focal length: 8300 um = 8.3 mm (chickens), 2.6 mm (mouse; Geng et al. 2011),
 22.3 mm (human; "), 2.5 mm (triggerfish)
 * pupil size: 4900-3500 um = 4.9-3.5 mm (chicken), 2 mm (mouse), 6 mm (human)
@@ -1072,10 +1073,10 @@ curve (p. 110, 4.12), but then I added it a second time. Look at the final
 equation again (p. 111, 4.13). This means we only need the sensitivity array
 and k and l can be folded in to it.
 """
-abs_r1 = np.zeros(401)
-abs_r2 = np.zeros(401)
-abs_r3 = np.zeros(401)
-abs_r4 = np.zeros(401)
+abs_r1 = np.zeros(range1)
+abs_r2 = np.zeros(range1)
+abs_r3 = np.zeros(range1)
+abs_r4 = np.zeros(range1)
 
 def abs_catch(w, r, rf):
 	v = args.summation
@@ -1084,8 +1085,6 @@ def abs_catch(w, r, rf):
 	D = args.pupil / 1000
 	K = 0.5
 	dt = args.dt
-##	k = args.od
-##	l = args.osl
 
 	# solid angle
 	if (args.width == 0): # receptor
@@ -1097,7 +1096,7 @@ def abs_catch(w, r, rf):
 			R = args.width*args.height/(args.sdist**2)
 		if (not args.square): R *= math.pi
 
-	i = w-300
+	i = w-start
 	aq = (math.pi/4)*(R)*(D**2)*K*dt*r[i] * wp_1nm[i] * media_1nm[i]
 
 	"""
@@ -1114,74 +1113,83 @@ def abs_catch(w, r, rf):
 	return aq
 
 # fill arrays
-for i in range(401):
-	w = i+300
+for i in range(range1):
+	w = i+start
 	abs_r1[i] = abs_catch(w, r1_1nm, rf[0])
 	if (dimension > 1): abs_r2[i] = abs_catch(w, r2_1nm, rf[1])
 	if (dimension > 2): abs_r3[i] = abs_catch(w, r3_1nm, rf[2])
 	if (dimension > 3): abs_r4[i] = abs_catch(w, r4_1nm, rf[3])
 
 """
-contrast sensitivity (Vorobyev and Osorio (1998); Vorobyev and Osorio (2001))
+color contrast using the RNL (receptor noise-limited) model
 
-Without quantum noise, this tends to make unrealistic predictions when the value
-for one or more cone signals is very small.
+Originally described here:
+* Vorobyev & Osorio 1998 https://doi.org/10.1098/rspb.1998.0302
+* Vorobyev et al. 2001 https://doi.org/10.1016/S0042-6989(00)00288-1
+
+The default is neural noise, and quantum noise can be added by setting --qn
+or quantum_noise=True. When using only neural noise, the results can be
+counterintuitive, e.g. when trying to model wavelength discrimination.
+In particular, it doesn't matter how small one receptor signal is relative
+to the others, like with chromaticity. We only measure how large the difference
+is relative to the reference and whether it's close to the differences in the
+other receptors. Quantum noise accounts for this by setting a threshold below
+which a signal can't be detected. One model of wavelength discrimination has
+thresholds partly depend on difference from the background light:
+https://doi.org/10.1242/jeb.130484
+
+If the spectra are supposed to be emissive rather than reflective, set
+reflect=False (only works for neural noise).
 """
-def color_contrast(spec1, spec2, quantum_noise=args.qn, r1=r1_1nm, r2=r2_1nm, abs1_r1=abs_r1, abs1_r2=abs_r2):
-	# interpolate 1-nm intervals if we're provided with 10-nm
-	if (len(spec1) < 401): spec1 = np.interp(x_1nm, x_10nm, spec1)
-	if (len(spec2) < 401): spec2 = np.interp(x_1nm, x_10nm, spec2)
-	
-	# background light
-	wpr1 = 0
-	wpr2 = 0
-	wpr3 = 0
-	wpr4 = 0
-	
-	qr11 = 0
-	qr21 = 0
-	qr31 = 0
-	qr41 = 0
-	qr12 = 0
-	qr22 = 0
-	qr32 = 0
-	qr42 = 0
-	for i in range(401):
-		if (spec1[i] > 0): # zero/nan check
-			qr11 += r1[i] * spec1[i] * wp_1nm[i] * media_1nm[i]
-			qr21 += r2[i] * spec1[i] * wp_1nm[i] * media_1nm[i]
-			qr31 += r3_1nm[i] * spec1[i] * wp_1nm[i] * media_1nm[i]
-			qr41 += r4_1nm[i] * spec1[i] * wp_1nm[i] * media_1nm[i]
-		else: spec1[i] = 0 # replace nans and negative numbers with 0
-		wpr1 += r1[i] * wp_1nm[i] * media_1nm[i]
-		wpr2 += r2[i] * wp_1nm[i] * media_1nm[i]
-		wpr3 += r3_1nm[i] * wp_1nm[i] * media_1nm[i]
-		wpr4 += r4_1nm[i] * wp_1nm[i] * media_1nm[i]
-	for i in range(401):
-		w = i + 300
-		if (spec2[i] > 0):
-			qr12 += r1[i] * spec2[i] * wp_1nm[i] * media_1nm[i]
-			qr22 += r2[i] * spec2[i] * wp_1nm[i] * media_1nm[i]
-			qr32 += r3_1nm[i] * spec2[i] * wp_1nm[i] * media_1nm[i]
-			qr42 += r4_1nm[i] * spec2[i] * wp_1nm[i] * media_1nm[i]
-		else: spec2[i] = 0
-	
-	# normalize
-	if (args.vonkries):
-		qr11 = qr11 / wpr1
-		if (dimension > 1): qr21 = qr21 / wpr2
-		if (dimension > 2): qr31 = qr31 / wpr3
-		if (dimension > 3): qr41 = qr41 / wpr4
-		qr12 = qr12 / wpr1
-		if (dimension > 1): qr22 = qr22 / wpr2
-		if (dimension > 2): qr32 = qr32 / wpr3
-		if (dimension > 3): qr42 = qr42 / wpr4
+def color_contrast(spec1, spec2, quantum_noise=args.qn,
+                   r1=r1_1nm, r2=r2_1nm,
+                   abs1_r1=abs_r1, abs1_r2=abs_r2, reflect=True):
+	# interpolate 1-nm intervals if we're provided with something else
+	if (len(spec1) < range1): spec1 = np.interp(x_1nm, x_10nm, spec1)
+	if (len(spec2) < range1): spec2 = np.interp(x_1nm, x_10nm, spec2)
+
+	# spectrum 1
+	qr11 = r1 * spec1 * media_1nm
+	qr21 = r2 * spec1 * media_1nm
+	qr31 = r3_1nm * spec1 * media_1nm
+	qr41 = r4_1nm * spec1 * media_1nm
+
+	# spectrum 2
+	qr12 = r1 * spec2 * media_1nm
+	qr22 = r2 * spec2 * media_1nm
+	qr32 = r3_1nm * spec2 * media_1nm
+	qr42 = r4_1nm * spec2 * media_1nm
+
+        # reflective or emissive
+	if (reflect):
+		qr11 *= wp_1nm
+		qr21 *= wp_1nm
+		qr31 *= wp_1nm
+		qr41 *= wp_1nm
+		qr12 *= wp_1nm
+		qr22 *= wp_1nm
+		qr32 *= wp_1nm
+		qr42 *= wp_1nm
+
+	qr11 = sum(qr11)
+	qr21 = sum(qr21)
+	qr31 = sum(qr31)
+	qr41 = sum(qr41)
+	qr12 = sum(qr12)
+	qr22 = sum(qr22)
+	qr32 = sum(qr32)
+	qr42 = sum(qr42)
 	
 	# differences
-	dfr1 = math.log(qr11 / qr12)
-	dfr2 = math.log(qr21 / qr22)
-	if (dimension > 2): dfr3 = math.log(qr31 / qr32)
-	if (dimension > 3): dfr4 = math.log(qr41 / qr42)
+	dfr1 = 0
+	dfr2 = 0
+	dfr3 = 0
+	dfr4 = 0
+	# zero check
+	if (qr11>0 and qr12>0): dfr1 = math.log(qr11/qr12)
+	if (qr21>0 and qr22>0): dfr2 = math.log(qr21/qr22)
+	if (dimension > 2 and qr31>0 and qr32>0): dfr3 = math.log(qr31/qr32)
+	if (dimension > 3 and qr41>0 and qr42>0): dfr4 = math.log(qr41/qr42)
 	
 	# quantum noise
 	if (quantum_noise):
@@ -1193,11 +1201,20 @@ def color_contrast(spec1, spec2, quantum_noise=args.qn, r1=r1_1nm, r2=r2_1nm, ab
 		aqr22 = sum(abs1_r2 * spec2)
 		aqr32 = sum(abs_r3 * spec2)
 		aqr42 = sum(abs_r4 * spec2)
-		
-		er1 = math.sqrt((1 / aqr11 + 1 / aqr12) + 2*wr1**2)
-		er2 = math.sqrt((1 / aqr21 + 1 / aqr22) + 2*wr2**2)
-		if (dimension > 2): er3 = math.sqrt((1 / aqr31 + 1 / aqr32) + 2*wr3**2)
-		if (dimension > 3): er4 = math.sqrt((1 / aqr41 + 1 / aqr42) + 2*wr4**2)
+
+                # large placeholder numbers
+		er1 = 1e50
+		er2 = 1e50
+		er3 = 1e50
+		er4 = 1e50
+		if (aqr11>0 and aqr12>0):
+			er1 = math.sqrt((1 / aqr11 + 1 / aqr12) + 2*wr1**2)
+		if (aqr21>0 and aqr22>0):
+			er2 = math.sqrt((1 / aqr21 + 1 / aqr22) + 2*wr2**2)
+		if (dimension > 2 and aqr31>0 and aqr32>0):
+			er3 = math.sqrt((1 / aqr31 + 1 / aqr32) + 2*wr3**2)
+		if (dimension > 3 and aqr41>0 and aqr42>0):
+			er4 = math.sqrt((1 / aqr41 + 1 / aqr42) + 2*wr4**2)
 		
 		if (args.verbose):
 			catch1 = "Absolute catch (1): r1=" + str(aqr11) + ", r2=" + str(aqr21)
@@ -1234,10 +1251,10 @@ def color_contrast(spec1, spec2, quantum_noise=args.qn, r1=r1_1nm, r2=r2_1nm, ab
 		+ (er1*er3)**2*(dfr2 - dfr4)**2
 		+ (er1*er2)**2*(dfr3 - dfr4)**2) / ((er1*er2*er3)**2 + (er1*er2*er4)**2
 		+ (er1*er3*er4)**2 + (er2*er3*er4)**2)
-	elif (dimension == 3):
+	elif (dimension == 3 and dfr3 > 0):
 		delta_s = (er3**2*(dfr1 - dfr2)**2
 		+ er2**2*(dfr1 - dfr3)**2
-		+ er1**2*(dfr3 - dfr2)**2) / ((er1*er2)**2 + (er1*er3)**2 + (er2*er3)**2)
+		+ er1**2*(dfr2 - dfr3)**2) / ((er1*er2)**2 + (er1*er3)**2 + (er2*er3)**2)
 	else:
 		delta_s = (dfr1 - dfr2)**2 / (er1**2 + er2**2)
 	return math.sqrt(delta_s)
@@ -1246,18 +1263,19 @@ def color_contrast(spec1, spec2, quantum_noise=args.qn, r1=r1_1nm, r2=r2_1nm, ab
 # I've changed it to a signed value because we care about the direction.
 def brightness_contrast(spec1, spec2, r1=luminosity, compare=-1):
 	# interpolate 1-nm intervals if we're provided with 10-nm
-	if (len(spec1) < 401): spec1 = np.interp(x_1nm, x_10nm, spec1)
-	if (len(spec2) < 401): spec2 = np.interp(x_1nm, x_10nm, spec2)
+	if (len(spec1) < range1): spec1 = np.interp(x_1nm, x_10nm, spec1)
+	if (len(spec2) < range1): spec2 = np.interp(x_1nm, x_10nm, spec2)
 
 	q1 = sum(r1 * spec1 * wp_1nm)
 	if (compare != -1): q2 = compare
 	else: q2 = sum(r1 * spec2 * wp_1nm)
-	
-	df = math.log(q1 / q2)
+
+	df = 0
+	if (q1>0 and q2>0): df = math.log(q1/q2)
 	delta_s = df / args.weberb # not an absolute value
 	return delta_s
 
-"""
+""" 
 plot any spectra
 
 Like --vpt, --plot can plot anything you want, except the original Y values are
@@ -1286,39 +1304,49 @@ and it's too awkward to assign colors to them that "make sense".
 if (args.vpt):
 	for i in range(dimension):
 		yvalues = rlist[i] * media_1nm
-		ymax = max(*yvalues)
+		yvalues /= max(*yvalues)
+		if (args.log):
+			for j in range(range1):
+				if (yvalues[j] > 0): yvalues[j] = math.log(yvalues[j],10)
+				else: yvalues[j] = -np.inf
 
 		if (args.colorplot):
-			spec = np.zeros(401)
+			spec = np.zeros(range1)
 			peak = yvalues.argmax(axis=0)
 			spec[peak] = 100
 			color = spec2rgb(spec, average=True)
 		else: color = 'k'
-		
-		plt.plot(x_1nm, yvalues/ymax, color=color)
+
+		plt.plot(x_1nm, yvalues, color=color)
 
 	plt.xlabel("Wavelength (nm)")
-	plt.ylabel("Relative sensitivity")
+	if (args.log): plt.ylabel("Log relative sensitivity")
+	else: plt.ylabel("Relative sensitivity")
 	plt.show()
 
 # show luminous efficiency function and lens filtering
 # 16/10/2025 changed the argument name from luminosity to sensitivity
 # because we have another argument named luminance.
 if (args.sensitivity):
-	ms = 300
+	ms = start
 	msy = 0
-	for i in range(401):
-		if (luminosity[i] > msy):
+	y = luminosity
+	for i in range(range1):
+		if (y[i] > msy):
 			msy = luminosity[i]
-			ms = i+300
+			ms = i+start
+		if (args.log):
+			if (y[i] > 0): y[i] = math.log(y[i], 10)
+			else: y[i] = -np.inf
 	print("Maximum sensitivity: " + str(ms))
 	print("")
 	
-	plt.plot(x_1nm, luminosity, 'k')
+	plt.plot(x_1nm, y, 'k')
 	if (args.media != "none"):
 		plt.plot(x_1nm, media_1nm, ':k')
 	plt.xlabel("Wavelength (nm)")
-	plt.ylabel("Relative sensitivity")
+	if (args.log): plt.ylabel("Log relative sensitivity")
+	else: plt.ylabel("Relative sensitivity")
 	plt.show()
 
 """
@@ -1356,11 +1384,10 @@ def triangle(spectra=[], reflect=True, markers=[], colors=[], text=[], legend=Fa
 	wr2 = 0
 	wr3 = 0
 	wr4 = 0
-	xvalues = np.empty(41)
-	yvalues = np.zeros(41)
-	zvalues = np.zeros(41)
-	wvalues = np.zeros(41)
-	labels = np.empty(41)
+	xvalues = np.empty(range10)
+	yvalues = np.zeros(range10)
+	zvalues = np.zeros(range10)
+	labels = np.empty(range10)
 	
 	# triangle
 	if (dimension > 3):
@@ -1400,19 +1427,19 @@ def triangle(spectra=[], reflect=True, markers=[], colors=[], text=[], legend=Fa
 		plt.ylim(-1, 1)
 
 	# gamut
-	for i in range(41):
-		w = i*10 + 300
+	for i in range(range10):
+		w = i*10 + start
 		wr1 += r1_1nm[i*10] * wp_10nm[i] * media_10nm[i]
 		wr2 += r2_1nm[i*10] * wp_10nm[i] * media_10nm[i]
 		wr3 += r3_1nm[i*10] * wp_10nm[i] * media_10nm[i]
 		wr4 += r4_1nm[i*10] * wp_10nm[i] * media_10nm[i]
-	for i in range(41):
-		w = i*10 + 300
+	for i in range(range10):
+		w = i*10 + start
 		labels[i] = w
-		r1 = r1_1nm[i*10] * wp_10nm[i] * media_10nm[i]
-		r2 = r2_1nm[i*10] * wp_10nm[i] * media_10nm[i]
-		r3 = r3_1nm[i*10] * wp_10nm[i] * media_10nm[i]
-		r4 = r4_1nm[i*10] * wp_10nm[i] * media_10nm[i]
+		r1 = r1_1nm[i*10] * media_10nm[i]
+		r2 = r2_1nm[i*10] * media_10nm[i]
+		r3 = r3_1nm[i*10] * media_10nm[i]
+		r4 = r4_1nm[i*10] * media_10nm[i]
 		if (args.vonkries):
 			r1 = r1 / wr1
 			if (wr2 > 0): r2 = r2 / wr2
@@ -1459,7 +1486,7 @@ def triangle(spectra=[], reflect=True, markers=[], colors=[], text=[], legend=Fa
 		posxlist = []
 		posylist = []
 		poszlist = []
-		for i in range(401):
+		for i in range(range1):
 			wpr1 += r1_1nm[i] * wp_1nm[i] * media_1nm[i]
 			wpr2 += r2_1nm[i] * wp_1nm[i] * media_1nm[i]
 			wpr3 += r3_1nm[i] * wp_1nm[i] * media_1nm[i]
@@ -1474,17 +1501,17 @@ def triangle(spectra=[], reflect=True, markers=[], colors=[], text=[], legend=Fa
 			spec_r4 = 0
 			
 			# interpolate
-			if(len(spec) < 401): spec = np.interp(x_1nm, x_10nm, spec)
+			if(len(spec) < range1): spec = np.interp(x_1nm, x_10nm, spec)
 			
 			# combine SPD with illuminant
 			if (reflect):
-				for j in range(401): spec[j] *= wp_1nm[j]
+				for j in range(range1): spec[j] *= wp_1nm[j]
 			
 			# remove nans
-			for j in range(401):
+			for j in range(range1):
 				if (np.isnan(spec[j])): spec[j] = 0
 			
-			for j in range(401):
+			for j in range(range1):
 				spec_r1 += r1_1nm[j] * spec[j] * media_1nm[j]
 				spec_r2 += r2_1nm[j] * spec[j] * media_1nm[j]
 				spec_r3 += r3_1nm[j] * spec[j] * media_1nm[j]
@@ -1562,8 +1589,8 @@ def triangle(spectra=[], reflect=True, markers=[], colors=[], text=[], legend=Fa
 	if (legend): plt.legend()
 	plt.show()
 
-if (type(args.csplot) == list):
-	if (args.csplot == []):
+if (args.csplot):
+	if (args.csplot[0] == 'blank'):
 		triangle(numbers=True, gamut=True)
 	else:
 		spectra = []
@@ -1578,9 +1605,9 @@ if (type(args.csplot) == list):
 """
 function for modeling color discrimination trials
 
-This outputs a probability for both success (defined as at least the criterion) and failure (less
-than the criterion) because the behavioral results include both. We use
-different thresholds for "success" for the different sets of discriminations.
+This outputs a probability for both success (defined as at least the criterion) and
+failure (less than the criterion) because the behavioral results include both.
+We use different thresholds for "success" for the different sets of discriminations.
 In Friedman (1967) the criterion was 35 out of 40 for the color pairs and 68
 of 80 for the color/gray pairs. In Gutierrez et al. (2011) significant
 performance is defined as more than 62.5% and the total number of trials
@@ -1684,7 +1711,7 @@ def brightness_disc(first, second, correct=35*args.subjects, trials=40*args.subj
 
 # Optimize visual pigments for a certain task. Now a function so I don't
 # have to keep rewriting it.
-def color_opt(first, second, r2=300):
+def color_opt(first, second, r2=start):
 	if (len(args.receptors) > 1): r2 = args.receptors[1]
 	w_range = args.receptors[0] - r2 + 1 # inclusive
 	mediany = np.empty(w_range)
@@ -1699,11 +1726,11 @@ def color_opt(first, second, r2=300):
 	
 	for i in range(w_range):
 		w = r2 + i
-		r2_cur = np.empty(401)
-		for j in range(401): r2_cur[j] = vpt(j+300, w)
-		abs_r2 = np.empty(401)
-		for j in range(401):
-			abs_r2[j] = abs_catch(j+300, r2_cur, rf[1])
+		r2_cur = np.empty(range1)
+		for j in range(range1): r2_cur[j] = vpt(j+start, w)
+		abs_r2 = np.empty(range1)
+		for j in range(range1):
+			abs_r2[j] = abs_catch(j+start, r2_cur, rf[1])
 		if (len(first) > 1 and len(second) > 1):
 			values = color_disc(first, second, r2=r2_cur*media_1nm, abs1_r2=abs_r2, output=False)
 			if (args.verbose): print(str(w) + " nm: " + str(median[i]))
@@ -1731,27 +1758,27 @@ def color_opt(first, second, r2=300):
 	return(mediany, miny, maxy, best_median, best_min, best_max)
 
 # the other big ones
-def color_vary(spectrum, r2=300):
+def color_vary(spec, r2=start):
 	if (len(args.receptors) > 1): r2 = args.receptors[1]
 	w_range = args.receptors[0] - r2 + 1 # inclusive
 
 	color = np.empty(w_range)
 	for i in range(w_range):
 		w = r2 + i
-		r2_cur = np.empty(401)
-		for j in range(401): r2_cur[j] = vpt(j+300, w)
+		r2_cur = np.empty(range1)
+		for j in range(range1): r2_cur[j] = vpt(j+start, w)
 		if (args.verbose): print(w)
 		wpr1 = 0
 		wpr2 = 0
 		r1_color = 0
 		r2_color = 0
 
-		for j in range(401):
+		for j in range(range1):
 			wpr1 += r1_1nm[j] * media_1nm[j] * wp_1nm[j]
 			wpr2 += r2_cur[j] * media_1nm[j] * wp_1nm[j]
-			if (spectrum[j] > 0):
-				r1_color += r1_1nm[j] * media_1nm[j] * spectrum[j] * wp_1nm[j]
-				r2_color += r2_cur[j] * media_1nm[j] * spectrum[j] * wp_1nm[j]
+			if (spec[j] > 0):
+				r1_color += r1_1nm[j] * media_1nm[j] * spec[j] * wp_1nm[j]
+				r2_color += r2_cur[j] * media_1nm[j] * spec[j] * wp_1nm[j]
 		r1_color /= wpr1
 		r2_color /= wpr2
 
@@ -1761,7 +1788,7 @@ def color_vary(spectrum, r2=300):
 
 	return color
 
-def brightness_vary(spectrum, r2=300):
+def brightness_vary(spec, r2=start):
 	if (len(args.receptors) > 1): r2 = args.receptors[1]
 	w_range = args.receptors[0] - r2 + 1 # inclusive
 	
@@ -1769,16 +1796,47 @@ def brightness_vary(spectrum, r2=300):
 	for i in range(w_range):
 		w = r2 + i
 		if (args.verbose): print(w)
-		r2_cur = np.empty(401)
-		for j in range(401): r2_cur[j] = vpt(j+300, w)
+		r2_cur = np.empty(range1)
+		for j in range(range1): r2_cur[j] = vpt(j+start, w)
 		
 		r2_brightness = 0
-		for j in range(spectrum.shape[0]):
-			r2_brightness += r2_cur[j] * media_1nm[j] * spectrum[j] * wp_1nm[j]
+		for j in range(range1):
+			r2_brightness += r2_cur[j] * media_1nm[j] * spec[j] * wp_1nm[j]
 		
 		brightness[i] = r2_brightness
 
 	return brightness
+
+"""
+Wavelength discrimination. Uses the average distance to the two wavelengths
+on either side.
+
+Examples of what wavelength discrimination models normally look like:
+
+* https://doi.org/10.1371/journal.pone.0019248
+* https://doi.org/10.1242/jeb.130484
+
+With neural noise only, this predicts much higher discrimination than those
+models. They're both using something other than standard RNL. If we add
+quantum noise, though, it does look a lot like them.
+"""
+if (args.wldisc):
+	disc = np.full(range1, np.inf)
+	for i in range(1,range1-1):
+		wl = np.zeros(range1)
+		wlprev = np.zeros(range1)
+		wlnext = np.zeros(range1)
+		wl[i] = 100
+		wlprev[i-1] = 100
+		wlnext[i+1] = 100
+		dprev = color_contrast(wl, wlprev, reflect=False)
+		dnext = color_contrast(wl, wlnext, reflect=False)
+		total = (dprev + dnext)/2
+		if (total > 0): disc[i] = 1/total
+
+	plt.plot(x_1nm, disc, 'k')
+	plt.ylim(0,50)
+	plt.show()
 
 # print execution time
 #print("%s seconds" % (time.time() - start_time))
