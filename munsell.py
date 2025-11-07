@@ -2,7 +2,7 @@
 Munsell color cards: 5B, 7.5B, 10YR, 5GY
 
 Reflectance spectra from here: https://www.munsellcolourscienceforpainters.com/MunsellResources/SpectralReflectancesOf2007MunsellBookOfColorGlossy.txt
-I can't find any Munsell reflectance spectra that go below 380 nm, so we'l
+I can't find any Munsell reflectance spectra that go below 380 nm, so we'll
 just have to make do with this.
 
 Note Python variables can't begin with a digit, so the arrays begin with "m"
@@ -446,3 +446,4 @@ if (args.mopt3):
 	plt.ylabel("Chromaticity")
 	plt.legend()
 	plt.show()
+
