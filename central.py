@@ -82,7 +82,7 @@ parser.add_argument("--vpt", help="plot visual pigment templates", action="store
 parser.add_argument("--plot", nargs="+", help="plot spectra from CSV files")
 parser.add_argument("--ylabel", default="Reflectance", help="Y-axis label")
 parser.add_argument("--colorplot", help="use generated colors for plots", action="store_true")
-parser.add_argument("--csplot", "--triangle", default=0, nargs="*", help="create a Maxwell-style color space plot")
+parser.add_argument("--csplot", "--triangle", nargs="+", help="create a Maxwell-style color space plot")
 parser.add_argument("--labels", nargs="+", default=['','',''], help="labels to use in triangle and line plots")
 parser.add_argument("--fcmode", help="switch default false color mode", default="none")
 parser.add_argument("--s2tmode", help="switch default color transform mode", default="c")
@@ -90,7 +90,6 @@ parser.add_argument("--munsell", help="Munsell color cards", action="store_true"
 parser.add_argument("--mcheck", help="plots and brightness", action="store_true")
 parser.add_argument("--matte", help="use Joensuu matte spectra", action="store_true")
 parser.add_argument("--glossy2", help="use Joensuu glossy spectra", action="store_true")
-parser.add_argument("--nouv", help="remove wavelengths <400nm from Munsell spectra", action="store_true")
 parser.add_argument("--mopt1", help="find optimal visual pigments for Munsell cards (blue-orange)", action="store_true")
 parser.add_argument("--mopt2", help="find optimal visual pigments for Munsell cards (green-orange)", action="store_true")
 parser.add_argument("--mopt3", help="find L-M chromatic spread/overlap of Munsell cards", action="store_true")
@@ -1251,7 +1250,7 @@ def color_contrast(spec1, spec2, quantum_noise=args.qn,
 		+ (er1*er3)**2*(dfr2 - dfr4)**2
 		+ (er1*er2)**2*(dfr3 - dfr4)**2) / ((er1*er2*er3)**2 + (er1*er2*er4)**2
 		+ (er1*er3*er4)**2 + (er2*er3*er4)**2)
-	elif (dimension == 3 and dfr3 > 0):
+	elif (dimension == 3):
 		delta_s = (er3**2*(dfr1 - dfr2)**2
 		+ er2**2*(dfr1 - dfr3)**2
 		+ er1**2*(dfr2 - dfr3)**2) / ((er1*er2)**2 + (er1*er3)**2 + (er2*er3)**2)
