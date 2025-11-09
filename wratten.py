@@ -132,11 +132,14 @@ if (args.ndswap):
 	nd40_1nm = np.full(c.range1, 10**(-4))
 
 """
-Find brightness matches for human vision. Since we begin with colors that are much
-brighter than blue 47, I intended to choose the "brightest" ND filter or pair of filters that produces
-an achromatic contrast less than 1, but in practice there is be only one match for each
-color. This depends on the specified vision system and illuminant like everything else, so
-we have to set --media human2 --white i (L, M and S don't matter). The current matches are:
+Find brightness matches for human vision. Since we begin with colors that are
+much brighter than blue 47, I intended to choose the "brightest" ND filter or
+pair of filters that produces an achromatic contrast less than 1, but in
+practice there is only one match for each color. This depends on the
+specified vision system and illuminant like everything else, so we have to
+set --white i --preset cie2 (or cie10, just need the CIE luminosity function).
+The current matches are:
+
 * red: 1.0 + 0.5
 * yellow: 2.0
 * green: 1.0 + 0.3
@@ -1350,4 +1353,3 @@ if (args.wopt4):
 	plt.ylabel("Contrast")
 	plt.legend()
 	plt.show()
-
