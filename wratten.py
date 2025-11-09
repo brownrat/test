@@ -13,8 +13,6 @@ import math
 import matplotlib.pyplot as plt
 import statistics
 import time
-import scipy
-from scipy.integrate import quad
 args = c.args
 r1 = args.receptors[0]
 r2 = 362
@@ -1352,3 +1350,4 @@ if (args.wopt4):
 	plt.ylabel("Contrast")
 	plt.legend()
 	plt.show()
+
